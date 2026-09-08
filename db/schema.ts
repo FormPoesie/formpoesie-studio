@@ -1,4 +1,11 @@
-import { integer, real, sqliteTable, text, uniqueIndex, index } from 'drizzle-orm/sqlite-core';
+import {
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+  index,
+} from 'drizzle-orm/sqlite-core';
 
 const timestamps = {
   createdAt: text('created_at').notNull(),
@@ -27,7 +34,9 @@ export const costProfiles = sqliteTable('cost_profiles', {
   name: text('name').notNull(),
   machinePerHour: real('machine_per_hour'),
   electricityPerHour: real('electricity_per_hour'),
-  electricityIncluded: integer('electricity_included', { mode: 'boolean' }).notNull().default(false),
+  electricityIncluded: integer('electricity_included', { mode: 'boolean' })
+    .notNull()
+    .default(false),
   laborPerHour: real('labor_per_hour'),
   overheadPerOrder: real('overhead_per_order'),
   targetMargin: real('target_margin'),
@@ -55,57 +64,82 @@ export const shippingProfiles = sqliteTable('shipping_profiles', {
   ...timestamps,
 });
 
-export const products = sqliteTable('products', {
-  id: text('id').primaryKey(),
-  modelName: text('model_name').notNull(),
-  productType: text('product_type').notNull(),
-  sku: text('sku'),
-  buyerWorld: text('buyer_world').notNull(),
-  description: text('description'),
-  material: text('material'),
-  materialStatus: text('material_status').notNull().default('open'),
-  widthMm: real('width_mm'),
-  heightMm: real('height_mm'),
-  depthMm: real('depth_mm'),
-  dimensionsStatus: text('dimensions_status').notNull().default('open'),
-  designOrigin: text('design_origin'),
-  etsyEligibility: text('etsy_eligibility').notNull().default('open'),
-  status: text('status').notNull().default('draft'),
-  factsJson: text('facts_json').notNull().default('{}'),
-  ...timestamps,
-}, (table) => [index('idx_products_status').on(table.status), uniqueIndex('idx_products_sku').on(table.sku)]);
+export const products = sqliteTable(
+  'products',
+  {
+    id: text('id').primaryKey(),
+    modelName: text('model_name').notNull(),
+    productType: text('product_type').notNull(),
+    sku: text('sku'),
+    buyerWorld: text('buyer_world').notNull(),
+    description: text('description'),
+    material: text('material'),
+    materialStatus: text('material_status').notNull().default('open'),
+    widthMm: real('width_mm'),
+    heightMm: real('height_mm'),
+    depthMm: real('depth_mm'),
+    dimensionsStatus: text('dimensions_status').notNull().default('open'),
+    designOrigin: text('design_origin'),
+    etsyEligibility: text('etsy_eligibility').notNull().default('open'),
+    status: text('status').notNull().default('draft'),
+    factsJson: text('facts_json').notNull().default('{}'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_products_status').on(table.status),
+    uniqueIndex('idx_products_sku').on(table.sku),
+  ],
+);
 
-export const variants = sqliteTable('variants', {
-  id: text('id').primaryKey(),
-  productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
-  name: text('name').notNull(),
-  sku: text('sku'),
-  color: text('color'),
-  material: text('material'),
-  setSize: integer('set_size').notNull().default(1),
-  weightGrams: real('weight_grams'),
-  printHours: real('print_hours'),
-  activeMinutes: real('active_minutes'),
-  failureRate: real('failure_rate').notNull().default(0.08),
-  confirmed: integer('confirmed', { mode: 'boolean' }).notNull().default(false),
-  ...timestamps,
-}, (table) => [index('idx_variants_product').on(table.productId)]);
+export const variants = sqliteTable(
+  'variants',
+  {
+    id: text('id').primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    sku: text('sku'),
+    color: text('color'),
+    material: text('material'),
+    setSize: integer('set_size').notNull().default(1),
+    weightGrams: real('weight_grams'),
+    printHours: real('print_hours'),
+    activeMinutes: real('active_minutes'),
+    failureRate: real('failure_rate').notNull().default(0.08),
+    confirmed: integer('confirmed', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    ...timestamps,
+  },
+  (table) => [index('idx_variants_product').on(table.productId)],
+);
 
-export const originalAssets = sqliteTable('original_assets', {
-  id: text('id').primaryKey(),
-  productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
-  variantId: text('variant_id').references(() => variants.id, { onDelete: 'set null' }),
-  objectKey: text('object_key').notNull(),
-  filename: text('filename').notNull(),
-  contentType: text('content_type').notNull(),
-  view: text('view').notNull().default('unknown'),
-  qualityStatus: text('quality_status').notNull().default('pending'),
-  ...timestamps,
-}, (table) => [index('idx_original_assets_product').on(table.productId)]);
+export const originalAssets = sqliteTable(
+  'original_assets',
+  {
+    id: text('id').primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    variantId: text('variant_id').references(() => variants.id, {
+      onDelete: 'set null',
+    }),
+    objectKey: text('object_key').notNull(),
+    filename: text('filename').notNull(),
+    contentType: text('content_type').notNull(),
+    view: text('view').notNull().default('unknown'),
+    qualityStatus: text('quality_status').notNull().default('pending'),
+    ...timestamps,
+  },
+  (table) => [index('idx_original_assets_product').on(table.productId)],
+);
 
 export const imagePlans = sqliteTable('image_plans', {
   id: text('id').primaryKey(),
-  productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  productId: text('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
   kind: text('kind').notNull(),
   rolesJson: text('roles_json').notNull(),
   lockedRolesJson: text('locked_roles_json').notNull().default('[]'),
@@ -115,8 +149,12 @@ export const imagePlans = sqliteTable('image_plans', {
 
 export const generatedAssets = sqliteTable('generated_assets', {
   id: text('id').primaryKey(),
-  productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
-  originalAssetId: text('original_asset_id').references(() => originalAssets.id),
+  productId: text('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
+  originalAssetId: text('original_asset_id').references(
+    () => originalAssets.id,
+  ),
   objectKey: text('object_key'),
   role: text('role').notNull(),
   title: text('title').notNull(),
@@ -131,7 +169,9 @@ export const generatedAssets = sqliteTable('generated_assets', {
 
 export const researchRuns = sqliteTable('research_runs', {
   id: text('id').primaryKey(),
-  productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  productId: text('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
   language: text('language').notNull(),
   market: text('market').notNull(),
   source: text('source').notNull(),
@@ -143,7 +183,9 @@ export const researchRuns = sqliteTable('research_runs', {
 
 export const keywordCandidates = sqliteTable('keyword_candidates', {
   id: text('id').primaryKey(),
-  researchRunId: text('research_run_id').notNull().references(() => researchRuns.id, { onDelete: 'cascade' }),
+  researchRunId: text('research_run_id')
+    .notNull()
+    .references(() => researchRuns.id, { onDelete: 'cascade' }),
   phrase: text('phrase').notNull(),
   demand: real('demand'),
   competition: real('competition'),
@@ -155,7 +197,9 @@ export const keywordCandidates = sqliteTable('keyword_candidates', {
 
 export const listingDrafts = sqliteTable('listing_drafts', {
   id: text('id').primaryKey(),
-  productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  productId: text('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
   state: text('state').notNull().default('local'),
   mode: text('mode').notNull().default('autopilot'),
   category: text('category'),
@@ -167,22 +211,37 @@ export const listingDrafts = sqliteTable('listing_drafts', {
   ...timestamps,
 });
 
-export const localeContents = sqliteTable('locale_contents', {
-  id: text('id').primaryKey(),
-  draftId: text('draft_id').notNull().references(() => listingDrafts.id, { onDelete: 'cascade' }),
-  locale: text('locale').notNull(),
-  titlesJson: text('titles_json').notNull(),
-  selectedTitle: integer('selected_title').notNull().default(0),
-  description: text('description').notNull(),
-  tagsJson: text('tags_json').notNull(),
-  lockedJson: text('locked_json').notNull().default('[]'),
-  ...timestamps,
-}, (table) => [uniqueIndex('idx_locale_contents_draft_locale').on(table.draftId, table.locale)]);
+export const localeContents = sqliteTable(
+  'locale_contents',
+  {
+    id: text('id').primaryKey(),
+    draftId: text('draft_id')
+      .notNull()
+      .references(() => listingDrafts.id, { onDelete: 'cascade' }),
+    locale: text('locale').notNull(),
+    titlesJson: text('titles_json').notNull(),
+    selectedTitle: integer('selected_title').notNull().default(0),
+    description: text('description').notNull(),
+    tagsJson: text('tags_json').notNull(),
+    lockedJson: text('locked_json').notNull().default('[]'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('idx_locale_contents_draft_locale').on(
+      table.draftId,
+      table.locale,
+    ),
+  ],
+);
 
 export const pricingScenarios = sqliteTable('pricing_scenarios', {
   id: text('id').primaryKey(),
-  productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
-  variantId: text('variant_id').references(() => variants.id, { onDelete: 'cascade' }),
+  productId: text('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
+  variantId: text('variant_id').references(() => variants.id, {
+    onDelete: 'cascade',
+  }),
   directPrice: real('direct_price').notNull(),
   etsyPrice: real('etsy_price').notNull(),
   floorPrice: real('floor_price').notNull(),
@@ -196,7 +255,9 @@ export const pricingScenarios = sqliteTable('pricing_scenarios', {
 
 export const generationJobs = sqliteTable('generation_jobs', {
   id: text('id').primaryKey(),
-  productId: text('product_id').references(() => products.id, { onDelete: 'cascade' }),
+  productId: text('product_id').references(() => products.id, {
+    onDelete: 'cascade',
+  }),
   kind: text('kind').notNull(),
   status: text('status').notNull(),
   attempt: integer('attempt').notNull().default(0),
@@ -216,22 +277,30 @@ export const integrationConnections = sqliteTable('integration_connections', {
 
 export const exportRecords = sqliteTable('export_records', {
   id: text('id').primaryKey(),
-  productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  productId: text('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
   format: text('format').notNull(),
   objectKey: text('object_key'),
   manifestJson: text('manifest_json').notNull(),
   ...timestamps,
 });
 
-export const changeHistory = sqliteTable('change_history', {
-  id: text('id').primaryKey(),
-  entityType: text('entity_type').notNull(),
-  entityId: text('entity_id').notNull(),
-  action: text('action').notNull(),
-  beforeJson: text('before_json'),
-  afterJson: text('after_json'),
-  createdAt: text('created_at').notNull(),
-}, (table) => [index('idx_change_history_entity').on(table.entityType, table.entityId)]);
+export const changeHistory = sqliteTable(
+  'change_history',
+  {
+    id: text('id').primaryKey(),
+    entityType: text('entity_type').notNull(),
+    entityId: text('entity_id').notNull(),
+    action: text('action').notNull(),
+    beforeJson: text('before_json'),
+    afterJson: text('after_json'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_change_history_entity').on(table.entityType, table.entityId),
+  ],
+);
 
 export const accountSecrets = sqliteTable('account_secrets', {
   accountId: text('account_id').primaryKey(),
@@ -292,4 +361,14 @@ export const activityEvents = sqliteTable(
     payloadJson: text('payload_json').notNull().default('{}'),
   },
   (table) => [index('idx_activity_events_occurred_at').on(table.occurredAt)],
+);
+
+export const inventoryVenueClassifications = sqliteTable(
+  'inventory_venue_classifications',
+  {
+    marketId: text('market_id').primaryKey(),
+    kind: text('kind').notNull().default('market'),
+    ...timestamps,
+  },
+  (table) => [index('idx_inventory_venue_kind').on(table.kind)],
 );

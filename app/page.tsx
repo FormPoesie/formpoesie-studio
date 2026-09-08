@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ClipboardList,
   CircleHelp,
+  CircleDollarSign,
   CreditCard,
   Download,
   ExternalLink,
@@ -32,7 +33,10 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  Truck,
   Upload,
+  Warehouse,
+  MapPin,
   X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -50,7 +54,10 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import type { InventoryItem } from '@/lib/inventory-bridge';
-import { InventoryWorkspace } from '@/components/inventory-workspace';
+import {
+  InventoryWorkspace,
+  type InventoryArea,
+} from '@/components/inventory-workspace';
 
 type ProductRow = {
   id: string;
@@ -200,6 +207,10 @@ const initialForm = {
 const nav = [
   ['Übersicht', Boxes],
   ['Produkte', Leaf],
+  ['Märkte', MapPin],
+  ['Regalflächen', Warehouse],
+  ['Verkäufe & Kasse', CircleDollarSign],
+  ['Druck & Versand', Truck],
   ['Entwürfe', FilePenLine],
   ['Recherche', Search],
   ['Bildstudio', ImageIcon],
@@ -249,6 +260,10 @@ export default function Home() {
   const [activeProduct, setActiveProduct] = useState<Created | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [inventoryArea, setInventoryArea] = useState<InventoryArea>('overview');
+  const [draftModule, setDraftModule] = useState<'research' | 'images' | null>(
+    null,
+  );
   const [contentCalendarOpen, setContentCalendarOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -304,11 +319,13 @@ export default function Home() {
     setContentCalendarOpen(false);
     setAccountsOpen(false);
     setTrashOpen(false);
+    setDraftModule(null);
   }
 
-  function openInventory() {
+  function openInventory(area: InventoryArea = 'overview') {
     setActiveProduct(null);
     closeModules();
+    setInventoryArea(area);
     setInventoryOpen(true);
     void loadInventory();
   }
@@ -604,7 +621,7 @@ export default function Home() {
     }
   }
 
-  async function openProduct(row: ProductRow) {
+  async function openProduct(row: ProductRow, targetStep = 'fakten') {
     closeModules();
     const response = await fetch(
       '/api/products?id=' + encodeURIComponent(row.id),
@@ -682,7 +699,7 @@ export default function Home() {
         }),
       ),
     );
-    setActiveStep('fakten');
+    setActiveStep(targetStep);
   }
 
   async function moveToTrash(row: ProductRow) {
@@ -939,7 +956,10 @@ export default function Home() {
             </div>
           </div>
         </div>
-        <nav className="mt-10 space-y-1" aria-label="Hauptnavigation">
+        <nav
+          className="mt-8 min-h-0 flex-1 space-y-0.5 overflow-y-auto"
+          aria-label="Hauptnavigation"
+        >
           {nav.map(([label, Icon]) => (
             <button
               key={label}
@@ -948,7 +968,15 @@ export default function Home() {
                   setActiveProduct(null);
                   closeModules();
                 } else if (label === 'Produkte') {
-                  openInventory();
+                  openInventory('products');
+                } else if (label === 'Märkte') {
+                  openInventory('markets');
+                } else if (label === 'Regalflächen') {
+                  openInventory('shelves');
+                } else if (label === 'Verkäufe & Kasse') {
+                  openInventory('sales');
+                } else if (label === 'Druck & Versand') {
+                  openInventory('online');
                 } else if (label === 'Entwürfe') {
                   setActiveProduct(null);
                   closeModules();
@@ -970,18 +998,9 @@ export default function Home() {
                   closeModules();
                   setAccountsOpen(true);
                 } else if (label === 'Recherche' || label === 'Bildstudio') {
-                  if (activeProduct) {
-                    setActiveStep(
-                      label === 'Recherche' ? 'recherche' : 'bilder',
-                    );
-                  } else {
-                    setNotice(
-                      'Wähle zuerst einen Entwurf aus. Danach öffnet sich ' +
-                        label +
-                        ' direkt.',
-                    );
-                    closeModules();
-                  }
+                  setActiveProduct(null);
+                  closeModules();
+                  setDraftModule(label === 'Recherche' ? 'research' : 'images');
                 }
               }}
               className={
@@ -992,8 +1011,25 @@ export default function Home() {
                   !inventoryOpen &&
                   !contentCalendarOpen &&
                   !accountsOpen &&
+                  !draftModule &&
                   !trashOpen) ||
-                (label === 'Produkte' && inventoryOpen) ||
+                (label === 'Produkte' &&
+                  inventoryOpen &&
+                  inventoryArea === 'products') ||
+                (label === 'Märkte' &&
+                  inventoryOpen &&
+                  inventoryArea === 'markets') ||
+                (label === 'Regalflächen' &&
+                  inventoryOpen &&
+                  inventoryArea === 'shelves') ||
+                (label === 'Verkäufe & Kasse' &&
+                  inventoryOpen &&
+                  inventoryArea === 'sales') ||
+                (label === 'Druck & Versand' &&
+                  inventoryOpen &&
+                  inventoryArea === 'online') ||
+                (label === 'Recherche' && draftModule === 'research') ||
+                (label === 'Bildstudio' && draftModule === 'images') ||
                 (label === 'News-Kalender' && calendarOpen) ||
                 (label === 'Content-Kalender' && contentCalendarOpen) ||
                 (label === 'Konten & Abos' && accountsOpen)
@@ -1049,6 +1085,7 @@ export default function Home() {
             {activeProduct ||
             calendarOpen ||
             inventoryOpen ||
+            draftModule ||
             contentCalendarOpen ||
             accountsOpen ||
             trashOpen ? (
@@ -1061,14 +1098,26 @@ export default function Home() {
                 : calendarOpen
                   ? 'News-Kalender'
                   : inventoryOpen
-                    ? 'Inventar'
-                    : contentCalendarOpen
-                      ? 'Content-Kalender'
-                      : accountsOpen
-                        ? 'Konten & Abos'
-                        : trashOpen
-                          ? 'Papierkorb'
-                          : 'Interne Arbeitsfläche'}
+                    ? inventoryArea === 'markets'
+                      ? 'Märkte'
+                      : inventoryArea === 'shelves'
+                        ? 'Regalflächen'
+                        : inventoryArea === 'sales'
+                          ? 'Verkäufe & Kasse'
+                          : inventoryArea === 'online'
+                            ? 'Druck & Versand'
+                            : 'Inventar'
+                    : draftModule === 'research'
+                      ? 'Recherche'
+                      : draftModule === 'images'
+                        ? 'Bildstudio'
+                        : contentCalendarOpen
+                          ? 'Content-Kalender'
+                          : accountsOpen
+                            ? 'Konten & Abos'
+                            : trashOpen
+                              ? 'Papierkorb'
+                              : 'Interne Arbeitsfläche'}
             </span>
           </button>
           <div className="flex items-center gap-3">
@@ -1125,11 +1174,26 @@ export default function Home() {
         {calendarOpen ? (
           <NewsCalendar />
         ) : inventoryOpen ? (
-          <InventoryWorkspace onCreateListing={createFromInventory} />
+          <InventoryWorkspace
+            initialArea={inventoryArea}
+            onCreateListing={createFromInventory}
+          />
+        ) : draftModule ? (
+          <DraftModuleLanding
+            kind={draftModule}
+            products={products}
+            onOpen={(row) =>
+              void openProduct(
+                row,
+                draftModule === 'research' ? 'recherche' : 'bilder',
+              )
+            }
+            onInventory={() => openInventory('products')}
+          />
         ) : contentCalendarOpen ? (
           <ContentCalendar />
         ) : accountsOpen ? (
-          <AccountsHub onInventory={openInventory} />
+          <AccountsHub onInventory={() => openInventory('overview')} />
         ) : trashOpen ? (
           <TrashBin rows={trashedProducts} onRestore={restoreProduct} />
         ) : !activeProduct ? (
@@ -1139,7 +1203,7 @@ export default function Home() {
             onOpen={openProduct}
             inventoryConnected={inventoryConnected}
             inventoryCount={inventoryItems.length}
-            onInventory={openInventory}
+            onInventory={() => openInventory('overview')}
             onCalendar={() => setCalendarOpen(true)}
             onContentCalendar={() => {
               closeModules();
@@ -3169,6 +3233,91 @@ function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
         </aside>
       </div>
     </section>
+  );
+}
+
+function DraftModuleLanding({
+  kind,
+  products,
+  onOpen,
+  onInventory,
+}: {
+  kind: 'research' | 'images';
+  products: ProductRow[];
+  onOpen: (row: ProductRow) => void;
+  onInventory: () => void;
+}) {
+  const isResearch = kind === 'research';
+  const Icon = isResearch ? Search : ImageIcon;
+  return (
+    <div className="mx-auto max-w-[1260px] px-4 py-8 md:px-8">
+      <section className="rounded-[30px] border bg-white/60 p-6 md:p-8">
+        <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
+          <div>
+            <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+              Etsy-Produktion
+            </p>
+            <h1 className="mt-2 font-heading text-4xl md:text-5xl">
+              {isResearch ? 'Recherche' : 'Bildstudio'}
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
+              {isResearch
+                ? 'Öffne einen Entwurf direkt in der Keyword-, Markt- und Wettbewerbsrecherche.'
+                : 'Öffne die vollständige Bildserie eines Entwurfs, lade Produktfotos hoch und verwalte die Etsy-Motive.'}
+            </p>
+          </div>
+          <Button variant="outline" onClick={onInventory}>
+            <Package className="size-4" /> Aus Inventar anlegen
+          </Button>
+        </div>
+        <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {products.map((product) => (
+            <button
+              type="button"
+              key={product.id}
+              onClick={() => onOpen(product)}
+              className="group rounded-2xl border bg-white/70 p-5 text-left transition hover:-translate-y-0.5 hover:border-[var(--fp-primary)] hover:shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <span className="grid size-10 place-items-center rounded-xl bg-[var(--fp-mist)]">
+                  <Icon className="size-5" />
+                </span>
+                <Badge variant="outline">
+                  {isResearch
+                    ? product.status === 'draft'
+                      ? 'Recherche öffnen'
+                      : product.status
+                    : `${product.asset_count || 0} Bilder`}
+                </Badge>
+              </div>
+              <h2 className="mt-5 font-heading text-2xl leading-tight">
+                {product.model_name}
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {[product.product_type, product.buyer_world]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+              <span className="mt-5 inline-flex items-center gap-2 text-sm font-medium text-[var(--fp-primary)]">
+                {isResearch ? 'Recherche bearbeiten' : 'Bildserie bearbeiten'}
+                <ArrowRight className="size-4 transition group-hover:translate-x-1" />
+              </span>
+            </button>
+          ))}
+        </div>
+        {!products.length ? (
+          <div className="mt-7 rounded-2xl border border-dashed p-8 text-center">
+            <p className="text-sm text-muted-foreground">
+              Noch kein Etsy-Entwurf vorhanden. Lege ihn aus einem
+              Inventarartikel an.
+            </p>
+            <Button className="mt-4" onClick={onInventory}>
+              Zum Inventar
+            </Button>
+          </div>
+        ) : null}
+      </section>
+    </div>
   );
 }
 

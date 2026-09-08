@@ -26,6 +26,7 @@ import {
   Truck,
   UserRound,
   Warehouse,
+  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,11 +42,12 @@ import { Textarea } from '@/components/ui/textarea';
 import type { InventoryItem } from '@/lib/inventory-bridge';
 
 type Row = Record<string, unknown>;
-type Area =
+export type InventoryArea =
   | 'overview'
   | 'products'
   | 'materials'
   | 'markets'
+  | 'shelves'
   | 'online'
   | 'sales'
   | 'months'
@@ -55,7 +57,7 @@ type Area =
 type AreaData = Record<string, unknown>;
 
 const sections: Array<{
-  id: Area;
+  id: InventoryArea;
   label: string;
   icon: typeof Boxes;
 }> = [
@@ -63,6 +65,7 @@ const sections: Array<{
   { id: 'products', label: 'Artikel', icon: Package },
   { id: 'materials', label: 'Material', icon: Warehouse },
   { id: 'markets', label: 'Märkte', icon: MapPin },
+  { id: 'shelves', label: 'Regalflächen', icon: Warehouse },
   { id: 'online', label: 'Online', icon: Truck },
   { id: 'sales', label: 'Verkäufe', icon: ShoppingBag },
   { id: 'months', label: 'Monate', icon: CalendarDays },
@@ -237,10 +240,12 @@ function Field({
 
 export function InventoryWorkspace({
   onCreateListing,
+  initialArea = 'overview',
 }: {
   onCreateListing: (item: InventoryItem) => void;
+  initialArea?: InventoryArea;
 }) {
-  const [active, setActive] = useState<Area>('overview');
+  const [active, setActive] = useState<InventoryArea>(initialArea);
   const [data, setData] = useState<Record<string, AreaData>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -255,14 +260,19 @@ export function InventoryWorkspace({
   const [saving, setSaving] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<Row | null>(null);
 
-  const fetchArea = useCallback(async (area: Exclude<Area, 'overview'>) => {
-    const response = await fetch('/api/inventory/workspace?area=' + area);
-    const result = (await response.json()) as AreaData & { error?: string };
-    if (!response.ok)
-      throw new Error(result.error || 'Daten konnten nicht geladen werden.');
-    setData((current) => ({ ...current, [area]: result }));
-    return result;
-  }, []);
+  const fetchArea = useCallback(
+    async (area: Exclude<InventoryArea, 'overview'>) => {
+      const response = await fetch('/api/inventory/workspace?area=' + area);
+      const result = (await response.json()) as AreaData & { error?: string };
+      if (!response.ok)
+        throw new Error(result.error || 'Daten konnten nicht geladen werden.');
+      setData((current) => ({ ...current, [area]: result }));
+      return result;
+    },
+    [],
+  );
+
+  useEffect(() => setActive(initialArea), [initialArea]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -370,11 +380,12 @@ export function InventoryWorkspace({
           date: string(row.date),
           endDate: string(row.endDate) || null,
           status: 'geplant',
+          venueKind: string(row.venueKind, 'market'),
         },
       }),
     });
     if (!response.ok) setError('Markt konnte nicht kopiert werden.');
-    else await fetchArea('markets');
+    else await refresh();
   }
 
   const productData = data.products || {};
@@ -481,9 +492,20 @@ export function InventoryWorkspace({
         <Markets
           data={data.markets || {}}
           onEdit={(row) => openEditor('markets', row)}
-          onNew={() => openEditor('markets')}
+          onNew={() => openEditor('markets', { venueKind: 'market' })}
           onOpen={setSelectedMarket}
           onCopy={(row) => void copyMarket(row)}
+          onTrash={(row) => void moveToTrash('markets', row.id)}
+        />
+      ) : null}
+      {active === 'shelves' ? (
+        <Markets
+          data={data.shelves || {}}
+          kind="shelf"
+          onEdit={(row) => openEditor('markets', row)}
+          onNew={() => openEditor('markets', { venueKind: 'shelf' })}
+          onOpen={setSelectedMarket}
+          onCopy={(row) => void copyMarket({ ...row, venueKind: 'shelf' })}
           onTrash={(row) => void moveToTrash('markets', row.id)}
         />
       ) : null}
@@ -494,7 +516,13 @@ export function InventoryWorkspace({
           onEdit={(row) => openEditor('online_sales', row)}
         />
       ) : null}
-      {active === 'sales' ? <Sales data={data.sales || {}} /> : null}
+      {active === 'sales' ? (
+        <Sales
+          data={data.sales || {}}
+          onOpenMarketCash={() => setActive('markets')}
+          onOpenShelfCash={() => setActive('shelves')}
+        />
+      ) : null}
       {active === 'months' ? <Months data={data.months || {}} /> : null}
       {active === 'account' ? <Account data={data.account || {}} /> : null}
       {active === 'trash' ? (
@@ -512,10 +540,12 @@ export function InventoryWorkspace({
       />
       <MarketDetail
         market={selectedMarket}
-        data={data.markets || {}}
+        data={data[active] || data.markets || {}}
         products={products}
         onClose={() => setSelectedMarket(null)}
-        onChanged={() => void fetchArea('markets')}
+        onChanged={() =>
+          void fetchArea(active === 'shelves' ? 'shelves' : 'markets')
+        }
       />
     </div>
   );
@@ -532,7 +562,7 @@ function Overview({
   materials: Row[];
   markets: Row[];
   online: Row[];
-  onGo: (area: Area) => void;
+  onGo: (area: InventoryArea) => void;
 }) {
   const activeMarkets = markets.filter(
     (item) => string(item.status) !== 'abgeschlossen',
@@ -896,6 +926,7 @@ function Materials({
 
 function Markets({
   data,
+  kind = 'market',
   onEdit,
   onNew,
   onOpen,
@@ -903,26 +934,33 @@ function Markets({
   onTrash,
 }: {
   data: AreaData;
+  kind?: 'market' | 'shelf';
   onEdit: (row: Row) => void;
   onNew: () => void;
   onOpen: (row: Row) => void;
   onCopy: (row: Row) => void;
   onTrash: (row: Row) => void;
 }) {
-  const items = rows(data.markets);
+  const items = rows(data.markets).filter(
+    (item) => string(item.venueKind, 'market') === kind,
+  );
   return (
     <section className="mt-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-heading text-2xl">
-            Aktuelle und vergangene Märkte
+            {kind === 'shelf'
+              ? 'Aktuelle und vergangene Regalflächen'
+              : 'Aktuelle und vergangene Märkte'}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Bestand, Verkäufe, Ausgaben und Bedarf pro Markt.
+            Bestand, Verkäufe, Ausgaben und Bedarf pro{' '}
+            {kind === 'shelf' ? 'Mietregal' : 'Markt'}.
           </p>
         </div>
         <Button onClick={onNew}>
-          <Plus className="size-4" /> Markt
+          <Plus className="size-4" />{' '}
+          {kind === 'shelf' ? 'Regalfläche' : 'Markt'}
         </Button>
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -969,7 +1007,7 @@ function Markets({
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => onOpen(market)}>
-                  Öffnen
+                  <CircleDollarSign className="size-4" /> Öffnen / Kasse
                 </Button>
                 <Button variant="ghost" onClick={() => onEdit(market)}>
                   <Pencil className="size-4" /> Bearbeiten
@@ -986,6 +1024,12 @@ function Markets({
           );
         })}
       </div>
+      {!items.length ? (
+        <div className="mt-4 rounded-2xl border border-dashed bg-white/45 p-8 text-center text-sm text-muted-foreground">
+          Noch keine {kind === 'shelf' ? 'Regalfläche' : 'Märkte'} in diesem
+          Bereich.
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1001,6 +1045,24 @@ function saleTotal(sale: Row) {
   );
 }
 
+function onlineSaleRevenue(sale: Row) {
+  return number(sale.salePriceCents) * Math.max(0, number(sale.quantity, 1));
+}
+
+function onlineSaleCost(sale: Row) {
+  const perUnit =
+    number(sale.filamentCostCents) +
+    number(sale.electricityCostCents) +
+    number(sale.machineCostCents) +
+    number(sale.licenseCostCents) +
+    number(sale.depreciationCostCents) +
+    number(sale.accessoryCostCents);
+  return (
+    perUnit * Math.max(0, number(sale.quantity, 1)) +
+    Math.max(0, number(sale.shippingCostCents))
+  );
+}
+
 function OnlineSales({
   items,
   onToggle,
@@ -1010,10 +1072,86 @@ function OnlineSales({
   onToggle: (row: Row, key: 'isPrinted' | 'isShipped') => void;
   onEdit: (row: Row) => void;
 }) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<'all' | 'print' | 'shipping' | 'pickup'>(
+    'all',
+  );
+  const [copied, setCopied] = useState('');
+  const visible = items.filter((item) => {
+    const pickup = string(item.shippingMethod).toLowerCase() === 'abholung';
+    if (filter === 'print' && boolean(item.isPrinted)) return false;
+    if (filter === 'shipping' && (boolean(item.isShipped) || pickup))
+      return false;
+    if (filter === 'pickup' && (!pickup || boolean(item.isShipped)))
+      return false;
+    return [
+      item.articleName,
+      item.productName,
+      item.orderKey,
+      item.channel,
+      item.shippingRecipient,
+    ]
+      .join(' ')
+      .toLocaleLowerCase('de')
+      .includes(search.trim().toLocaleLowerCase('de'));
+  });
+
+  async function copyShippingMessage(item: Row) {
+    const recipient = string(item.shippingRecipient).trim();
+    const greeting = recipient
+      ? `Hallo ${recipient.split(/\s+/)[0]},`
+      : 'Hallo,';
+    const article = string(
+      item.articleName || item.productName,
+      'deine Bestellung',
+    );
+    const pickup = string(item.shippingMethod).toLowerCase() === 'abholung';
+    const message = pickup
+      ? `${greeting}\n\n„${article}“ ist fertig und kann jetzt abgeholt werden. Melde dich gern kurz, damit wir einen passenden Zeitpunkt abstimmen können.\n\nLiebe Grüße\nFormPoesie`
+      : `${greeting}\n\ndeine Bestellung „${article}“ ist fertig und wurde versendet. Sie ist jetzt auf dem Weg zu dir.\n\nVielen Dank für deine Bestellung und viel Freude damit.\n\nLiebe Grüße\nFormPoesie`;
+    await navigator.clipboard.writeText(message);
+    setCopied(string(item.id));
+    window.setTimeout(() => setCopied(''), 1800);
+  }
+
   return (
     <section className="mt-6">
+      <div className="rounded-[24px] border bg-white/65 p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
+            <Input
+              className="bg-white pl-9"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Artikel, Empfänger oder Bestellung suchen"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ['all', 'Alle'],
+                ['print', 'Offen: Druck'],
+                ['shipping', 'Offen: Versand'],
+                ['pickup', 'Offen: Abholung'],
+              ] as const
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                variant={filter === value ? 'default' : 'outline'}
+                onClick={() => setFilter(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          {visible.length} von {items.length} Verkaufspositionen
+        </p>
+      </div>
       <div className="grid gap-3">
-        {items.map((item) => (
+        {visible.map((item) => (
           <article
             key={string(item.id)}
             className="grid gap-4 rounded-2xl border bg-white/65 p-4 lg:grid-cols-[1fr_1fr_auto]"
@@ -1062,19 +1200,11 @@ function OnlineSales({
               </div>
               <div>
                 <div className="text-muted-foreground">Kosten</div>
-                {cents(
-                  number(item.productionCostCents) +
-                    number(item.shippingCostCents),
-                )}
+                {cents(onlineSaleCost(item))}
               </div>
               <div>
                 <div className="text-muted-foreground">Ergebnis</div>
-                {cents(
-                  number(item.salePriceCents) * number(item.quantity, 1) -
-                    number(item.productionCostCents) *
-                      number(item.quantity, 1) -
-                    number(item.shippingCostCents),
-                )}
+                {cents(onlineSaleRevenue(item) - onlineSaleCost(item))}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -1084,8 +1214,12 @@ function OnlineSales({
               >
                 <Check className="size-4" /> Gedruckt
               </Button>
-              <Button variant="ghost" onClick={() => onCopy(market)}>
-                <ClipboardList className="size-4" /> Kopieren
+              <Button
+                variant="ghost"
+                onClick={() => void copyShippingMessage(item)}
+              >
+                <ClipboardList className="size-4" />{' '}
+                {copied === string(item.id) ? 'Kopiert' : 'Versandnachricht'}
               </Button>
               <Button
                 variant={boolean(item.isShipped) ? 'default' : 'outline'}
@@ -1104,11 +1238,76 @@ function OnlineSales({
   );
 }
 
-function Sales({ data }: { data: AreaData }) {
+function Sales({
+  data,
+  onOpenMarketCash,
+  onOpenShelfCash,
+}: {
+  data: AreaData;
+  onOpenMarketCash: () => void;
+  onOpenShelfCash: () => void;
+}) {
   const items = rows(data.sales);
+  const [cashDate, setCashDate] = useState(() =>
+    new Intl.DateTimeFormat('sv-SE').format(new Date()),
+  );
+  const activeSales = items.filter(
+    (sale) =>
+      !boolean(sale.isCancelled) && string(sale.date).slice(0, 10) === cashDate,
+  );
+  const sumFor = (paymentMethod: string | null) =>
+    activeSales
+      .filter((sale) =>
+        paymentMethod === null
+          ? !string(sale.paymentMethod)
+          : string(sale.paymentMethod) === paymentMethod,
+      )
+      .reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const total = activeSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const online = rows(data.onlineSales);
   return (
     <section className="mt-6">
+      <div className="rounded-[26px] border bg-white/65 p-5 md:p-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+              Kassenabschluss
+            </p>
+            <h2 className="mt-1 font-heading text-3xl">Tageskasse</h2>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <Field
+              label="Tag"
+              type="date"
+              value={cashDate}
+              onChange={setCashDate}
+            />
+            <Button onClick={onOpenMarketCash}>
+              <MapPin className="size-4" /> Markt-Kasse
+            </Button>
+            <Button variant="outline" onClick={onOpenShelfCash}>
+              <Warehouse className="size-4" /> Regal-Kasse
+            </Button>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <Stat value={cents(sumFor('BAR'))} label="Bargeld" />
+          <Stat value={cents(sumFor('PAYPAL'))} label="PayPal" />
+          <Stat value={cents(sumFor('KARTE'))} label="Karte" />
+          <Stat value={cents(sumFor(null))} label="ohne Zahlungsart" />
+          <Stat value={cents(total)} label={`${activeSales.length} Verkäufe`} />
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Sonstige Zahlungen: {cents(sumFor('SONSTIGES'))}. Online-Verkäufe (
+          {online.length}) werden separat geführt und nicht als Bargeld
+          angenommen.
+        </p>
+      </div>
       <div className="grid gap-3">
+        <div className="mt-5 flex items-center justify-between">
+          <h2 className="font-heading text-2xl">Markt- und Regalverkäufe</h2>
+          <Badge variant="outline">{items.length}</Badge>
+        </div>
         {items.map((sale) => (
           <article
             key={string(sale.id)}
@@ -1144,6 +1343,43 @@ function Sales({ data }: { data: AreaData }) {
             ) : null}
           </article>
         ))}
+        <div className="mt-5 flex items-center justify-between">
+          <h2 className="font-heading text-2xl">Online-Verkäufe</h2>
+          <Badge variant="outline">{online.length}</Badge>
+        </div>
+        {online.map((sale) => (
+          <article
+            key={`online-${string(sale.id)}`}
+            className="rounded-2xl border bg-white/65 p-4"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-medium">
+                  {string(sale.articleName, 'Online-Verkauf')}
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {date(sale.date)} · {string(sale.channel, 'Online')} ·{' '}
+                  {string(sale.shippingRecipient, 'kein Empfänger')}
+                </p>
+              </div>
+              <div className="text-lg font-semibold">
+                {cents(onlineSaleRevenue(sale))}
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge variant="outline">{number(sale.quantity, 1)} Stück</Badge>
+              <Badge variant="outline">
+                {boolean(sale.isPrinted) ? 'gedruckt' : 'Druck offen'}
+              </Badge>
+              <Badge variant="outline">
+                {boolean(sale.isShipped) ? 'erledigt' : 'Versand offen'}
+              </Badge>
+              <Badge variant="outline">
+                Ergebnis {cents(onlineSaleRevenue(sale) - onlineSaleCost(sale))}
+              </Badge>
+            </div>
+          </article>
+        ))}
       </div>
     </section>
   );
@@ -1173,11 +1409,7 @@ function Months({ data }: { data: AreaData }) {
         );
         const revenue =
           monthSales.reduce((sum, item) => sum + saleTotal(item), 0) +
-          monthOnline.reduce(
-            (sum, item) =>
-              sum + number(item.salePriceCents) * number(item.quantity, 1),
-            0,
-          );
+          monthOnline.reduce((sum, item) => sum + onlineSaleRevenue(item), 0);
         const costs =
           monthSales.reduce(
             (sum, item) =>
@@ -1190,14 +1422,7 @@ function Months({ data }: { data: AreaData }) {
                 0,
               ),
             0,
-          ) +
-          monthOnline.reduce(
-            (sum, item) =>
-              sum +
-              number(item.productionCostCents) * number(item.quantity, 1) +
-              number(item.shippingCostCents),
-            0,
-          );
+          ) + monthOnline.reduce((sum, item) => sum + onlineSaleCost(item), 0);
         const other = expenses
           .filter((item) => monthKey(item.date || item.invoiceDate) === key)
           .reduce(
@@ -1572,6 +1797,19 @@ function EntityEditor({
           ) : null}
           {isMarket ? (
             <>
+              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                Bereich
+                <select
+                  className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                  value={string(form.venueKind, 'market')}
+                  onChange={(event) =>
+                    setValue('venueKind', event.target.value)
+                  }
+                >
+                  <option value="market">Markt</option>
+                  <option value="shelf">Regalfläche / Mietregal</option>
+                </select>
+              </label>
               {input('name', 'Marktname')}
               {input('location', 'Ort')}
               {input('date', 'Beginn', 'date')}
@@ -2116,20 +2354,21 @@ function MarketDetail({
   const [stockQuantity, setStockQuantity] = useState('1');
   const [saleVariantId, setSaleVariantId] = useState('');
   const [saleQuantity, setSaleQuantity] = useState('1');
-  const [paymentMethod, setPaymentMethod] = useState('BAR');
+  const [paymentMethod, setPaymentMethod] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   if (!market) return null;
+  const currentMarket = market;
   const articles = rows(data.articles).filter(
-    (item) => string(item.marketId) === string(market.id),
+    (item) => string(item.marketId) === string(currentMarket.id),
   );
   const sales = rows(data.sales).filter(
-    (item) => string(item.marketId) === string(market.id),
+    (item) => string(item.marketId) === string(currentMarket.id),
   );
   const expenses = rows(data.expenses).filter(
-    (item) => string(item.marketId) === string(market.id),
+    (item) => string(item.marketId) === string(currentMarket.id),
   );
   const demands = rows(data.demands).filter(
-    (item) => string(item.marketId) === string(market.id),
+    (item) => string(item.marketId) === string(currentMarket.id),
   );
   const revenue = sales.reduce((sum, item) => sum + saleTotal(item), 0);
   const costs = expenses.reduce(
@@ -2139,11 +2378,13 @@ function MarketDetail({
   const stockProduct = products.find(
     (item) => string(item.id) === stockProductId,
   );
-  const saleVariants = articles.flatMap((article) =>
-    rows(article.variants).map((variant) => ({
-      ...variant,
-      articleName: string(article.name),
-    })),
+  const saleVariants: Row[] = articles.flatMap((article) =>
+    rows(article.variants).map(
+      (variant): Row => ({
+        ...variant,
+        articleName: string(article.name),
+      }),
+    ),
   );
 
   async function rpc(name: string, args: Row) {
@@ -2167,7 +2408,7 @@ function MarketDetail({
     if (!stockProductId || Number(stockQuantity) <= 0) return;
     await rpc('markt_buchen', {
       p_operation_id: crypto.randomUUID(),
-      p_market_id: number(market.id),
+      p_market_id: number(currentMarket.id),
       p_product_id: Number(stockProductId),
       p_menge: Math.trunc(Number(stockQuantity)),
       p_variant_id: stockVariantId ? Number(stockVariantId) : null,
@@ -2182,8 +2423,8 @@ function MarketDetail({
     if (!variant || quantity <= 0) return;
     await rpc('verkauf_buchen', {
       p_operation_id: crypto.randomUUID(),
-      p_market_id: number(market.id),
-      p_date: new Date().toISOString().slice(0, 10),
+      p_market_id: number(currentMarket.id),
+      p_date: new Intl.DateTimeFormat('sv-SE').format(new Date()),
       p_discount_cents: 0,
       p_pricing_mode: 'ITEMIZED',
       p_total_price_cents: null,
@@ -2224,7 +2465,7 @@ function MarketDetail({
     );
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `${string(market.name, 'markt')}.csv`;
+    anchor.download = `${string(currentMarket.name, 'markt')}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -2238,18 +2479,18 @@ function MarketDetail({
       <DialogContent className="max-h-[92vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">
-            {string(market.name)}
+            {string(currentMarket.name)}
           </DialogTitle>
           <DialogDescription>
-            {string(market.location)} · {date(market.date)} –{' '}
-            {date(market.endDate || market.date)}
+            {string(currentMarket.location)} · {date(currentMarket.date)} –{' '}
+            {date(currentMarket.endDate || currentMarket.date)}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={exportCsv}>
             <CircleDollarSign className="size-4" /> CSV exportieren
           </Button>
-          <Badge variant="outline">{string(market.status)}</Badge>
+          <Badge variant="outline">{string(currentMarket.status)}</Badge>
         </div>
         <div className="grid gap-3 sm:grid-cols-4">
           <Stat value={articles.length} label="Marktartikel" />
@@ -2386,10 +2627,11 @@ function MarketDetail({
                 value={paymentMethod}
                 onChange={(event) => setPaymentMethod(event.target.value)}
               >
+                <option value="">Zahlungsart nicht erfasst</option>
                 <option value="BAR">Bar</option>
                 <option value="KARTE">Karte</option>
                 <option value="PAYPAL">PayPal</option>
-                <option value="">Nicht erfasst</option>
+                <option value="SONSTIGES">Sonstiges</option>
               </select>
               <Button
                 className="sm:col-span-2"

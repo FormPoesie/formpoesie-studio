@@ -4,6 +4,7 @@ import {
   inventoryHeaders,
   readCookie,
 } from '@/lib/inventory-bridge';
+import { env } from 'cloudflare:workers';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -222,6 +223,28 @@ async function query(accessToken: string, table: string, params: string) {
   return inventoryFetch(accessToken, `${table}?${params}`);
 }
 
+async function classifyMarkets(value: unknown) {
+  const markets = Array.isArray(value) ? (value as JsonRecord[]) : [];
+  const result = await env.DB.prepare(
+    'SELECT market_id, kind FROM inventory_venue_classifications',
+  ).all<{ market_id: string; kind: string }>();
+  const saved = new Map(
+    (result.results || []).map((row) => [String(row.market_id), row.kind]),
+  );
+  return markets.map((market) => ({
+    ...market,
+    venueKind:
+      saved.get(String(market.id)) ||
+      (/place\s*to\s*be|mietregal|regal/i.test(
+        `${typeof market.name === 'string' ? market.name : ''} ${
+          typeof market.location === 'string' ? market.location : ''
+        }`,
+      )
+        ? 'shelf'
+        : 'market'),
+  }));
+}
+
 async function loadArea(accessToken: string, area: string, request: Request) {
   if (area === 'products') {
     const [products, families, designers, components, accessories, materials] =
@@ -292,18 +315,14 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     ]);
     return { materials, brands, storageLocations };
   }
-  if (area === 'markets') {
+  if (area === 'markets' || area === 'shelves') {
     const [markets, demands, articles, sales, expenses] = await Promise.all([
       query(
         accessToken,
         'markets',
         'select=*&deleted_at=is.null&order=date.desc',
       ),
-      query(
-        accessToken,
-        'market_demands',
-        'select=*&deleted_at=is.null&order=id.desc',
-      ),
+      query(accessToken, 'market_demands', 'select=*&order=id.desc'),
       query(
         accessToken,
         'articles',
@@ -324,7 +343,13 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'select=*&deleted_at=is.null&order=created_at.desc',
       ),
     ]);
-    return { markets, demands, articles, sales, expenses };
+    return {
+      markets: await classifyMarkets(markets),
+      demands,
+      articles,
+      sales,
+      expenses,
+    };
   }
   if (area === 'online') {
     const onlineSales = await query(
@@ -484,6 +509,25 @@ export async function POST(request: Request) {
       method: 'POST',
       body: JSON.stringify(createValues),
     });
+    if (body.entity === 'markets') {
+      const created = Array.isArray(result)
+        ? (result[0] as JsonRecord | undefined)
+        : undefined;
+      const marketId = created?.id;
+      const kind = body.values.venueKind === 'shelf' ? 'shelf' : 'market';
+      if (typeof marketId === 'string' || typeof marketId === 'number') {
+        const instant = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO inventory_venue_classifications
+             (market_id, kind, created_at, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(market_id) DO UPDATE SET
+             kind = excluded.kind, updated_at = excluded.updated_at`,
+        )
+          .bind(String(marketId), kind, instant, instant)
+          .run();
+      }
+    }
     return Response.json({ saved: true, result }, { status: 201 });
   } catch (error) {
     return Response.json(
@@ -523,6 +567,23 @@ export async function PATCH(request: Request) {
         body: JSON.stringify(updateValues),
       },
     );
+    if (body.entity === 'markets' && body.values.venueKind) {
+      const instant = new Date().toISOString();
+      await env.DB.prepare(
+        `INSERT INTO inventory_venue_classifications
+           (market_id, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(market_id) DO UPDATE SET
+           kind = excluded.kind, updated_at = excluded.updated_at`,
+      )
+        .bind(
+          String(body.id),
+          body.values.venueKind === 'shelf' ? 'shelf' : 'market',
+          instant,
+          instant,
+        )
+        .run();
+    }
     return Response.json({ saved: true, result });
   } catch (error) {
     return Response.json(
