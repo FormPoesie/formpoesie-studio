@@ -18,6 +18,12 @@ export const metadata: Metadata = {
   title: 'FormPoesie Masterbrain',
   description:
     'Zentrale Arbeitsfläche für Inventar, Etsy-Listings, Produktbilder und den automatisierten News-Kalender.',
+  icons: {
+    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg',
+  },
+  manifest: '/manifest.webmanifest',
 };
 
 export default function RootLayout({
