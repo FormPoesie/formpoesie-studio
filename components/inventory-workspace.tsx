@@ -291,8 +291,8 @@ export function InventoryWorkspace({
   }, [active, fetchArea]);
 
   useEffect(() => {
-    if (active === 'overview' || !data[active]) void refresh();
-  }, [active, data, refresh]);
+    void refresh();
+  }, [refresh]);
 
   const openEditor = (entity: string, row: Row = {}) => {
     setEditor({ entity, row });
@@ -345,6 +345,17 @@ export function InventoryWorkspace({
     });
     if (!response.ok) setError('Status konnte nicht gespeichert werden.');
     else await fetchArea('online');
+  }
+
+  async function patchEntity(entity: string, id: unknown, values: Row) {
+    const response = await fetch('/api/inventory/workspace', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entity, id, values }),
+    });
+    const result = (await response.json()) as { error?: string };
+    if (!response.ok) setError(result.error || 'Änderung fehlgeschlagen.');
+    else await refresh();
   }
 
   async function copyMarket(row: Row) {
@@ -449,9 +460,7 @@ export function InventoryWorkspace({
           onNew={() => openEditor('products')}
           onTrash={(row) => void moveToTrash('products', row.id)}
           onArchive={(row) => {
-            openEditor('products', row);
-            setForm({
-              ...row,
+            void patchEntity('products', row.id, {
               archivedAt: row.archivedAt ? null : new Date().toISOString(),
             });
           }}
@@ -851,6 +860,16 @@ function Materials({
                 </dd>
               </div>
             </dl>
+            {rows(item.locations).length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {rows(item.locations).map((location) => (
+                  <Badge key={string(location.id)} variant="outline">
+                    {string(object(location.storageLocation).name, 'Lagerort')}:{' '}
+                    {number(location.quantity)} {string(item.unit)}
+                  </Badge>
+                ))}
+              </div>
+            ) : null}
             <div className="mt-4 flex gap-2">
               <Button
                 variant="outline"
@@ -1040,6 +1059,22 @@ function OnlineSales({
               <div>
                 <div className="text-muted-foreground">Versand</div>
                 {string(item.shippingMethod, '–')}
+              </div>
+              <div>
+                <div className="text-muted-foreground">Kosten</div>
+                {cents(
+                  number(item.productionCostCents) +
+                    number(item.shippingCostCents),
+                )}
+              </div>
+              <div>
+                <div className="text-muted-foreground">Ergebnis</div>
+                {cents(
+                  number(item.salePriceCents) * number(item.quantity, 1) -
+                    number(item.productionCostCents) *
+                      number(item.quantity, 1) -
+                    number(item.shippingCostCents),
+                )}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -1456,6 +1491,10 @@ function EntityEditor({
                 product={editor.row}
                 materials={rows(data.products?.materials)}
                 onChanged={onClose}
+              />
+              <RelationsSummary
+                product={editor.row}
+                data={data.products || {}}
               />
             </>
           ) : null}
@@ -1940,6 +1979,74 @@ function ManufacturingEditor({
   );
 }
 
+function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
+  const allProducts = rows(data.products);
+  const variants = rows(product.variants);
+  const components = rows(data.components).filter(
+    (item) => string(item.parentProductId) === string(product.id),
+  );
+  const accessories = rows(data.accessories).filter(
+    (item) => string(item.productId) === string(product.id),
+  );
+  const productName = (id: unknown) =>
+    string(
+      allProducts.find((item) => string(item.id) === string(id))?.name,
+      '#' + string(id),
+    );
+  const variantName = (id: unknown) =>
+    string(variants.find((item) => string(item.id) === string(id))?.name);
+  return (
+    <div className="sm:col-span-2 grid gap-3 lg:grid-cols-2">
+      <section className="rounded-2xl border bg-white/55 p-4">
+        <h3 className="font-medium">Bauteile & Stückliste</h3>
+        <div className="mt-3 space-y-2">
+          {components.map((item) => (
+            <div
+              key={string(item.id)}
+              className="rounded-xl border p-3 text-sm"
+            >
+              <div className="font-medium">
+                {number(item.quantity, 1)} ×{' '}
+                {productName(item.componentProductId)}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {[
+                  string(item.slot),
+                  string(item.inventoryTrackingMode),
+                  string(item.consumedAt),
+                  variantName(item.parentVariantId),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </div>
+            </div>
+          ))}
+          {!components.length ? (
+            <p className="text-sm text-muted-foreground">
+              Keine Bauteile zugeordnet.
+            </p>
+          ) : null}
+        </div>
+      </section>
+      <section className="rounded-2xl border bg-white/55 p-4">
+        <h3 className="font-medium">Passendes Zubehör</h3>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {accessories.map((item) => (
+            <Badge key={string(item.id)} variant="outline">
+              {productName(item.accessoryProductId)}
+            </Badge>
+          ))}
+          {!accessories.length ? (
+            <p className="text-sm text-muted-foreground">
+              Kein Zubehör zugeordnet.
+            </p>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ImageUpload({
   productId,
   onUploaded,
@@ -2076,7 +2183,7 @@ function MarketDetail({
     await rpc('verkauf_buchen', {
       p_operation_id: crypto.randomUUID(),
       p_market_id: number(market.id),
-      p_date: new Date().toISOString(),
+      p_date: new Date().toISOString().slice(0, 10),
       p_discount_cents: 0,
       p_pricing_mode: 'ITEMIZED',
       p_total_price_cents: null,
@@ -2175,6 +2282,29 @@ function MarketDetail({
             <p className="mt-3 text-sm">
               {demands.length} geplante Produktionspositionen
             </p>
+            <div className="mt-3 space-y-2">
+              {demands.map((demand) => (
+                <div
+                  key={string(demand.id)}
+                  className="rounded-xl border p-3 text-sm"
+                >
+                  <span className="font-medium">
+                    {number(demand.quantity)} ×{' '}
+                    {string(
+                      products.find(
+                        (item) => string(item.id) === string(demand.productId),
+                      )?.name,
+                      'Artikel #' + string(demand.productId),
+                    )}
+                  </span>
+                  {demand.note ? (
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {string(demand.note)}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
             <p className="mt-2 text-sm">
               {expenses.length} Ausgaben · {cents(costs)}
             </p>

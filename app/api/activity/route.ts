@@ -17,7 +17,10 @@ export async function GET(request: Request) {
     env.DB.prepare(
       `SELECT id, kind, title, detail, source_url AS sourceUrl,
               occurred_at AS occurredAt
-       FROM activity_events ORDER BY occurred_at DESC LIMIT 40`,
+       FROM activity_events
+       WHERE kind != 'calendar-news'
+          OR json_extract(payload_json, '$.erfasstAm') = date('now')
+       ORDER BY occurred_at DESC LIMIT 40`,
     ).all<Activity>(),
     env.DB.prepare(
       `SELECT key, value, updated_at AS updatedAt
