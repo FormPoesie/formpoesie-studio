@@ -69,7 +69,6 @@ const sections: Array<{
   { id: 'markets', label: 'Märkte', icon: MapPin },
   { id: 'shelves', label: 'Regalflächen', icon: Warehouse },
   { id: 'cash', label: 'Kasse', icon: CircleDollarSign },
-  { id: 'online', label: 'Druck & Versand', icon: Truck },
   { id: 'sales', label: 'Verkaufshistorie', icon: ShoppingBag },
   { id: 'months', label: 'Monate', icon: CalendarDays },
   { id: 'account', label: 'Konto', icon: UserRound },
@@ -261,6 +260,7 @@ export function InventoryWorkspace({
   );
   const [form, setForm] = useState<Row>({});
   const [saving, setSaving] = useState(false);
+  const [editorMessage, setEditorMessage] = useState('');
   const [selectedMarket, setSelectedMarket] = useState<Row | null>(null);
 
   const fetchArea = useCallback(
@@ -310,6 +310,7 @@ export function InventoryWorkspace({
   const openEditor = (entity: string, row: Row = {}) => {
     setEditor({ entity, row });
     setForm({ ...row });
+    setEditorMessage('');
   };
 
   const setValue = (key: string, value: unknown) =>
@@ -325,14 +326,46 @@ export function InventoryWorkspace({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entity: editor.entity, id, values: form }),
     });
-    const result = (await response.json()) as { error?: string };
+    const result = (await response.json()) as {
+      error?: string;
+      result?: Row[];
+    };
     setSaving(false);
     if (!response.ok) {
       setError(result.error || 'Speichern fehlgeschlagen.');
       return;
     }
+    if (editor.entity === 'products') {
+      const productResult = await fetchArea('products');
+      const savedId = id ?? rows(result.result)[0]?.id;
+      const saved = rows(productResult.products).find(
+        (item) => string(item.id) === string(savedId),
+      );
+      if (saved) {
+        setEditor({ entity: 'products', row: saved });
+        setForm({ ...saved });
+        setEditorMessage(
+          id == null
+            ? 'Artikel gespeichert. Du kannst jetzt Varianten und Filamente hinzufügen.'
+            : 'Artikeländerungen gespeichert.',
+        );
+      }
+      return;
+    }
     setEditor(null);
     await refresh();
+  }
+
+  async function refreshProductEditor(productId: unknown) {
+    const productResult = await fetchArea('products');
+    const saved = rows(productResult.products).find(
+      (item) => string(item.id) === string(productId),
+    );
+    if (saved) {
+      setEditor({ entity: 'products', row: saved });
+      setForm({ ...saved });
+      setEditorMessage('Herstellungsdaten gespeichert.');
+    }
   }
 
   async function moveToTrash(entity: string, id: unknown, restore = false) {
@@ -466,6 +499,8 @@ export function InventoryWorkspace({
           online={online}
           cashTasks={cashTasks}
           onGo={setActive}
+          onToggle={toggleOnline}
+          onEditTask={(row) => openEditor('online_sales', row)}
         />
       ) : null}
       {active === 'products' ? (
@@ -551,8 +586,10 @@ export function InventoryWorkspace({
         setValue={setValue}
         data={data}
         saving={saving}
+        message={editorMessage}
         onSave={() => void saveEntity()}
         onClose={() => setEditor(null)}
+        onProductChanged={(productId) => void refreshProductEditor(productId)}
       />
       <MarketDetail
         market={selectedMarket}
@@ -574,6 +611,8 @@ function Overview({
   online,
   cashTasks,
   onGo,
+  onToggle,
+  onEditTask,
 }: {
   products: Row[];
   materials: Row[];
@@ -581,6 +620,8 @@ function Overview({
   online: Row[];
   cashTasks: Row[];
   onGo: (area: InventoryArea) => void;
+  onToggle: (row: Row, key: 'isPrinted' | 'isShipped') => Promise<void>;
+  onEditTask: (row: Row) => void;
 }) {
   const activeMarkets = markets.filter(
     (item) => string(item.status) !== 'abgeschlossen',
@@ -589,7 +630,9 @@ function Overview({
   const printTasks = fulfillment.filter((item) => !boolean(item.isPrinted));
   const shippingTasks = fulfillment.filter(
     (item) =>
-      !boolean(item.isShipped) && string(item.shippingMethod) !== 'abholung',
+      !boolean(item.isShipped) &&
+      string(item.shippingMethod) !== 'abholung' &&
+      string(item.fulfillmentMode) !== 'pickup',
   );
   const lowMaterials = materials.filter((item) =>
     ['niedrig', 'fast_leer', 'leer'].includes(string(item.status)),
@@ -620,21 +663,7 @@ function Overview({
           <ClipboardList className="size-5 text-[var(--fp-primary)]" />
           <h2 className="font-heading text-2xl">Heute zu erledigen</h2>
         </div>
-        <div className="mt-4 grid gap-3 lg:grid-cols-3">
-          <Task
-            icon={Factory}
-            count={printTasks.length}
-            title="Drucken"
-            detail="verkaufte Artikel noch nicht gedruckt"
-            onClick={() => onGo('online')}
-          />
-          <Task
-            icon={Truck}
-            count={shippingTasks.length}
-            title="Versenden"
-            detail="gedruckte oder offene Bestellungen"
-            onClick={() => onGo('online')}
-          />
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
           <Task
             icon={Warehouse}
             count={lowMaterials.length}
@@ -642,6 +671,34 @@ function Overview({
             detail="niedrig, fast leer oder leer"
             onClick={() => onGo('materials')}
           />
+          <details className="group rounded-2xl border bg-white/60 open:bg-white">
+            <summary className="flex cursor-pointer list-none items-center gap-3 p-4">
+              <span className="grid size-11 place-items-center rounded-xl bg-[var(--fp-mist)]">
+                <Truck className="size-5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium">Druck & Versand</span>
+                <span className="block text-xs text-muted-foreground">
+                  {printTasks.length} zu drucken · {shippingTasks.length} zu
+                  versenden
+                </span>
+              </span>
+              <Badge>{printTasks.length + shippingTasks.length}</Badge>
+              <span className="text-sm transition group-open:rotate-180">
+                ⌄
+              </span>
+            </summary>
+            <div className="border-t px-4 pb-4">
+              <OnlineSales
+                items={fulfillment.filter(
+                  (item) =>
+                    !boolean(item.isPrinted) || !boolean(item.isShipped),
+                )}
+                onToggle={onToggle}
+                onEdit={onEditTask}
+              />
+            </div>
+          </details>
         </div>
       </section>
     </div>
@@ -2161,16 +2218,20 @@ function EntityEditor({
   setValue,
   data,
   saving,
+  message,
   onSave,
   onClose,
+  onProductChanged,
 }: {
   editor: { entity: string; row: Row } | null;
   form: Row;
   setValue: (key: string, value: unknown) => void;
   data: Record<string, AreaData>;
   saving: boolean;
+  message: string;
   onSave: () => void;
   onClose: () => void;
+  onProductChanged: (productId: unknown) => void;
 }) {
   if (!editor) return null;
   const input = (key: string, label: string, type = 'text') => (
@@ -2303,7 +2364,7 @@ function EntityEditor({
                     materials={rows(data.products?.materials)}
                     products={rows(data.products?.products)}
                     components={rows(data.products?.components)}
-                    onChanged={onClose}
+                    onChanged={() => onProductChanged(editor.row.id)}
                   />
                   <RelationsSummary
                     product={editor.row}
@@ -2441,6 +2502,11 @@ function EntityEditor({
             </>
           ) : null}
         </div>
+        {message ? (
+          <p className="rounded-xl border border-[var(--fp-primary)]/25 bg-white/65 px-3 py-2 text-sm text-[var(--fp-primary)]">
+            {message}
+          </p>
+        ) : null}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
             Abbrechen
@@ -2473,10 +2539,17 @@ function ManufacturingEditor({
   materials: Row[];
   products: Row[];
   components: Row[];
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
 }) {
   const variants = rows(product.variants);
   const filaments = rows(product.filaments);
+  const variantGroups = Array.from(
+    variants.reduce((groups, variant) => {
+      const label = string(variant.name, 'Standard').trim() || 'Standard';
+      groups.set(label, [...(groups.get(label) || []), variant]);
+      return groups;
+    }, new Map<string, Row[]>()),
+  );
   const [editing, setEditing] = useState<{
     entity: 'product_variants' | 'product_filaments';
     row: Row;
@@ -2505,6 +2578,11 @@ function ManufacturingEditor({
     setEditing({ entity, row });
     setValues({ ...defaults, ...row });
     setMessage('');
+    window.requestAnimationFrame(() =>
+      document
+        .getElementById('manufacturing-editor-' + string(product.id))
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
   }
 
   async function save() {
@@ -2568,7 +2646,8 @@ function ManufacturingEditor({
         ),
       );
     }
-    onChanged();
+    await onChanged();
+    setEditing(null);
   }
 
   return (
@@ -2582,7 +2661,7 @@ function ManufacturingEditor({
             size="sm"
             onClick={() => open('product_variants')}
           >
-            <Plus className="size-3.5" /> Ausführung
+            <Plus className="size-3.5" /> Neue Variante
           </Button>
           <Button
             type="button"
@@ -2590,94 +2669,155 @@ function ManufacturingEditor({
             size="sm"
             onClick={() => open('product_filaments')}
           >
-            <Plus className="size-3.5" /> Filament
+            <Plus className="size-3.5" /> Neues Filament
           </Button>
         </div>
       </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
-        {variants.map((variant) => {
-          const cost = variantCostBreakdown(
-            product,
-            variant,
-            products,
-            components,
-          );
+      <div className="mt-3 space-y-2">
+        {variantGroups.map(([label, group]) => {
+          const appearances = [
+            ...new Set(
+              group
+                .map((variant) => string(variant.appearance, 'Standard'))
+                .filter(Boolean),
+            ),
+          ];
           return (
-            <button
-              type="button"
-              key={string(variant.id)}
-              onClick={() => open('product_variants', variant)}
-              className="rounded-xl border p-3 text-left text-sm transition hover:border-[var(--fp-primary)]"
+            <details
+              key={label}
+              className="group rounded-xl border bg-white/55 open:bg-white"
             >
-              <div className="flex items-center justify-between gap-2 font-medium">
-                {string(variant.name, 'Standard')}
-                <Pencil className="size-3.5" />
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {[
-                  string(variant.appearance),
-                  string(variant.size),
-                  string(object(variant.material).name),
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-3 text-xs">
-                <span>{number(variant.quantity)} Stück</span>
-                <span>
-                  {cost.netGrams} g + {cost.wasteGrams} g Ausschuss
+              <summary className="flex cursor-pointer list-none items-center gap-3 p-3.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">{label}</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {group.length}{' '}
+                    {group.length === 1 ? 'Variante' : 'Varianten'}
+                    {appearances.length ? ` · ${appearances.join(', ')}` : ''}
+                  </span>
                 </span>
-                <span>{cents(variant.priceCents)}</span>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-[#f3ede4] p-2 text-xs">
-                <span>
-                  Kosten <strong>{cents(cost.totalCents)}</strong>
+                <Badge variant="outline">
+                  {group.reduce(
+                    (sum, variant) => sum + number(variant.quantity),
+                    0,
+                  )}{' '}
+                  Stück
+                </Badge>
+                <span className="text-sm transition group-open:rotate-180">
+                  ⌄
                 </span>
-                <span>
-                  Marge{' '}
-                  <strong>
-                    {cost.marginPercent == null
-                      ? 'unklar'
-                      : `${cost.marginPercent.toFixed(1)} %`}
-                  </strong>
-                </span>
-                <span>Material {cents(cost.filamentCents)}</span>
-                <span>Ausschuss {cents(cost.wasteCents)}</span>
-                <span>Maschine {cents(cost.machineCents)}</span>
-                <span>Strom {cents(cost.electricityCents)}</span>
-                <span>Zusatz {cents(cost.extraCents)}</span>
-                <span>Bauteile {cents(cost.componentsCents)}</span>
+              </summary>
+              <div className="grid gap-2 border-t p-3 md:grid-cols-2">
+                {group.map((variant) => {
+                  const cost = variantCostBreakdown(
+                    product,
+                    variant,
+                    products,
+                    components,
+                  );
+                  return (
+                    <article
+                      key={string(variant.id)}
+                      className="rounded-xl border bg-[var(--fp-paper)]/45 p-3 text-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium">
+                            {string(variant.appearance, 'Standard')}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {[
+                              string(variant.size),
+                              string(object(variant.material).name),
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`${label} – ${string(variant.appearance, 'Standard')} bearbeiten`}
+                          onClick={() => open('product_variants', variant)}
+                        >
+                          <Pencil className="size-3.5" /> Bearbeiten
+                        </Button>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                        <span>{number(variant.quantity)} Stück</span>
+                        <span>
+                          {cost.netGrams} g + {cost.wasteGrams} g Ausschuss
+                        </span>
+                        <span>{cents(variant.priceCents)}</span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-[#f3ede4] p-2 text-xs">
+                        <span>
+                          Gesamtkosten <strong>{cents(cost.totalCents)}</strong>
+                        </span>
+                        <span>
+                          Marge{' '}
+                          <strong>
+                            {cost.marginPercent == null
+                              ? 'unklar'
+                              : `${cost.marginPercent.toFixed(1)} %`}
+                          </strong>
+                        </span>
+                        <span>Material {cents(cost.filamentCents)}</span>
+                        <span>Ausschuss {cents(cost.wasteCents)}</span>
+                        <span>Maschine {cents(cost.machineCents)}</span>
+                        <span>Strom {cents(cost.electricityCents)}</span>
+                        <span>Zusatz {cents(cost.extraCents)}</span>
+                        <span>Bauteile {cents(cost.componentsCents)}</span>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
-            </button>
+            </details>
           );
         })}
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {filaments.map((item) => (
-          <button
-            type="button"
-            key={string(item.id)}
-            onClick={() => open('product_filaments', item)}
-            className="rounded-full border bg-white px-3 py-1 text-xs hover:border-[var(--fp-primary)]"
-          >
-            {string(item.part, 'Filament')}: {number(item.grams)} g{' '}
-            {string(object(item.material).name)}
-          </button>
-        ))}
-      </div>
+      {filaments.length ? (
+        <details className="group mt-3 rounded-xl border bg-white/45">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium">
+            Filamente & Bauteile ({filaments.length})
+            <span className="text-sm transition group-open:rotate-180">⌄</span>
+          </summary>
+          <div className="flex flex-wrap gap-2 border-t p-3">
+            {filaments.map((item) => (
+              <button
+                type="button"
+                key={string(item.id)}
+                onClick={() => open('product_filaments', item)}
+                className="rounded-full border bg-white px-3 py-1 text-xs hover:border-[var(--fp-primary)]"
+              >
+                {string(item.part, 'Filament')}: {number(item.grams)} g{' '}
+                {string(object(item.material).name)}
+              </button>
+            ))}
+          </div>
+        </details>
+      ) : null}
       {!variants.length && !filaments.length ? (
         <p className="mt-2 text-sm text-muted-foreground">
           Noch keine Ausführungen oder Filamente hinterlegt.
         </p>
       ) : null}
       {editing ? (
-        <div className="mt-4 rounded-2xl border bg-[#f8f4ed] p-4">
+        <div
+          id={'manufacturing-editor-' + string(product.id)}
+          className="mt-4 scroll-mt-6 rounded-2xl border bg-[#f8f4ed] p-4"
+        >
           <div className="flex items-center justify-between gap-2">
             <h4 className="font-medium">
               {editing.entity === 'product_variants'
-                ? 'Ausführung'
-                : 'Filament'}{' '}
-              bearbeiten
+                ? editing.row.id
+                  ? 'Variante bearbeiten'
+                  : 'Neue Variante'
+                : editing.row.id
+                  ? 'Filament bearbeiten'
+                  : 'Neues Filament'}
             </h4>
             <Button
               type="button"

@@ -33,7 +33,6 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
-  Truck,
   Upload,
   Warehouse,
   MapPin,
@@ -208,7 +207,6 @@ const navPrimary = [
   ['Übersicht', Boxes],
   ['Produkte', Leaf],
   ['Kasse', CircleDollarSign],
-  ['Druck & Versand', Truck],
   ['Etsy Workflow', Sparkles],
 ] as const;
 
@@ -350,7 +348,6 @@ export default function Home() {
       closeModules();
     } else if (label === 'Produkte') openInventory('products');
     else if (label === 'Kasse') openInventory('cash');
-    else if (label === 'Druck & Versand') openInventory('online');
     else if (label === 'Märkte') openInventory('markets');
     else if (label === 'Regalflächen') openInventory('shelves');
     else if (label === 'Verkaufshistorie') openInventory('sales');
@@ -388,7 +385,6 @@ export default function Home() {
     const inventoryTarget: Record<string, InventoryArea> = {
       Produkte: 'products',
       Kasse: 'cash',
-      'Druck & Versand': 'online',
       Märkte: 'markets',
       Regalflächen: 'shelves',
       Verkaufshistorie: 'sales',
@@ -1225,7 +1221,7 @@ export default function Home() {
           <EtsyWorkflowHub
             products={products}
             onOpen={(row, step) => void openProduct(row, step)}
-            onInventory={() => openInventory('products')}
+            onStart={() => beginCreate('inventory')}
           />
         ) : contentCalendarOpen ? (
           <ContentCalendar />
@@ -3283,11 +3279,11 @@ function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
 function EtsyWorkflowHub({
   products,
   onOpen,
-  onInventory,
+  onStart,
 }: {
   products: ProductRow[];
   onOpen: (row: ProductRow, step: string) => void;
-  onInventory: () => void;
+  onStart: () => void;
 }) {
   return (
     <div className="mx-auto max-w-[1260px] px-4 py-8 md:px-8">
@@ -3305,8 +3301,8 @@ function EtsyWorkflowHub({
               und bleiben hier als ein durchgängiger Ablauf zusammen.
             </p>
           </div>
-          <Button variant="outline" onClick={onInventory}>
-            <Package className="size-4" /> Aus Inventar anlegen
+          <Button onClick={onStart}>
+            <Sparkles className="size-4" /> Workflow starten
           </Button>
         </div>
         <div className="mt-7 grid gap-3 md:grid-cols-3">
@@ -3385,8 +3381,8 @@ function EtsyWorkflowHub({
               Noch kein Etsy-Entwurf vorhanden. Lege ihn aus einem
               Inventarartikel an.
             </p>
-            <Button className="mt-4" onClick={onInventory}>
-              Zum Inventar
+            <Button className="mt-4" onClick={onStart}>
+              Inventarartikel auswählen
             </Button>
           </div>
         ) : null}
