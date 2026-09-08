@@ -107,9 +107,27 @@ const entityFields: Record<string, Set<string>> = {
   ]),
   markets: new Set(['name', 'location', 'date', 'end_date', 'status']),
   online_sales: new Set([
+    'product_id',
+    'article_name',
+    'size',
+    'quantity',
+    'date',
+    'channel',
+    'order_key',
     'printer',
+    'print_minutes',
     'print_deadline',
+    'filament_material_id',
+    'filament_grams',
+    'filament_cost_cents',
+    'electricity_cost_cents',
+    'machine_cost_cents',
+    'accessory_cost_cents',
+    'license_cost_cents',
+    'depreciation_cost_cents',
+    'sale_price_cents',
     'shipping_method',
+    'shipping_cost_cents',
     'shipping_deadline',
     'shipping_recipient',
     'shipping_label_uri',
@@ -338,7 +356,22 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     ]);
     return { materials, brands, storageLocations };
   }
-  if (area === 'markets' || area === 'shelves' || area === 'cash') {
+  if (area === 'cash') {
+    const [products, components] = await Promise.all([
+      query(
+        accessToken,
+        'products',
+        'select=' +
+          encodeURIComponent(
+            '*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))',
+          ) +
+          '&deleted_at=is.null&archived_at=is.null&order=name.asc',
+      ),
+      query(accessToken, 'product_components', 'select=*&order=id.asc'),
+    ]);
+    return { products, components };
+  }
+  if (area === 'markets' || area === 'shelves') {
     const [markets, demands, articles, sales, expenses] = await Promise.all([
       query(
         accessToken,
@@ -368,11 +401,10 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     ]);
     return {
       markets: await classifyMarkets(markets),
-      demands: area === 'cash' ? [] : demands,
+      demands,
       articles,
-      sales: area === 'cash' ? [] : sales,
-      expenses: area === 'cash' ? [] : expenses,
-      onlineSales: [],
+      sales,
+      expenses,
     };
   }
   if (area === 'online') {
@@ -519,13 +551,130 @@ export async function POST(request: Request) {
   if (!accessToken || !user)
     return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
   const body = (await request.json()) as {
+    action?: string;
     entity?: string;
     values?: JsonRecord;
     rpc?: string;
     args?: JsonRecord;
     createFulfillment?: boolean;
+    order?: JsonRecord;
+    items?: JsonRecord[];
   };
   try {
+    if (body.action === 'create_online_order') {
+      const allowedChannels = new Set([
+        'Abholung',
+        'eBay',
+        'eBay Kleinanzeigen',
+        'Vinted',
+        'Etsy',
+        'Bestellformular',
+      ]);
+      const channel = scalarText(body.order?.channel).trim();
+      const saleDate = scalarText(body.order?.date).trim();
+      const submitted = Array.isArray(body.items) ? body.items : [];
+      if (!allowedChannels.has(channel))
+        return Response.json(
+          {
+            error:
+              'Dieser Verkaufsort ist in der allgemeinen Kasse nicht freigegeben.',
+          },
+          { status: 400 },
+        );
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(saleDate) || !submitted.length)
+        return Response.json(
+          {
+            error:
+              'Verkaufsdatum und mindestens ein Artikel sind erforderlich.',
+          },
+          { status: 400 },
+        );
+
+      let orderKey = '';
+      const createdIds: string[] = [];
+      for (const [index, item] of submitted.entries()) {
+        const productId = Number(item.productId);
+        const quantity = Math.trunc(Number(item.quantity));
+        if (!Number.isInteger(productId) || productId <= 0 || quantity <= 0)
+          throw new Error(`Artikel ${index + 1} enthält ungültige Daten.`);
+        const values = {
+          product_id: productId,
+          article_name: scalarText(item.articleName, 'Artikel').trim(),
+          size: scalarText(item.size).trim() || null,
+          quantity,
+          date: saleDate,
+          channel,
+          ...(orderKey ? { order_key: orderKey } : {}),
+          printer:
+            scalarText(item.printer || body.order?.printer).trim() || null,
+          print_minutes: Math.max(
+            0,
+            Math.trunc(Number(item.printMinutes) || 0),
+          ),
+          filament_material_id:
+            Number(item.filamentMaterialId) > 0
+              ? Number(item.filamentMaterialId)
+              : null,
+          filament_grams: Math.max(
+            0,
+            Math.trunc(Number(item.filamentGrams) || 0),
+          ),
+          filament_cost_cents: Math.max(
+            0,
+            Math.trunc(Number(item.filamentCostCents) || 0),
+          ),
+          electricity_cost_cents: Math.max(
+            0,
+            Math.trunc(Number(item.electricityCostCents) || 0),
+          ),
+          machine_cost_cents: Math.max(
+            0,
+            Math.trunc(Number(item.machineCostCents) || 0),
+          ),
+          accessory_cost_cents: Math.max(
+            0,
+            Math.trunc(Number(item.accessoryCostCents) || 0),
+          ),
+          license_cost_cents: 0,
+          depreciation_cost_cents: 0,
+          sale_price_cents: Math.max(
+            0,
+            Math.trunc(Number(item.salePriceCents) || 0),
+          ),
+          shipping_cost_cents:
+            index === 0
+              ? Math.max(
+                  0,
+                  Math.trunc(Number(body.order?.shippingCostCents) || 0),
+                )
+              : 0,
+          shipping_method: channel === 'Abholung' ? 'Abholung' : 'Versand',
+          shipping_recipient:
+            scalarText(body.order?.shippingRecipient).trim() || null,
+          is_printed: false,
+          is_shipped: false,
+          note: scalarText(body.order?.note).trim() || null,
+          created_by: user.id || null,
+          updated_by: user.id || null,
+        };
+        const result = await inventoryFetch(accessToken, 'online_sales', {
+          method: 'POST',
+          body: JSON.stringify(values),
+        });
+        const created = Array.isArray(result)
+          ? (result[0] as JsonRecord | undefined)
+          : undefined;
+        if (!created?.id)
+          throw new Error('Verkaufsposition wurde nicht bestätigt.');
+        createdIds.push(scalarText(created.id));
+        orderKey = scalarText(created.orderKey || created.order_key, orderKey);
+      }
+      await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
+      return Response.json(
+        { saved: true, orderKey, createdIds },
+        { status: 201 },
+      );
+    }
     if (body.rpc) {
       if (!rpcNames.has(body.rpc))
         return Response.json(
@@ -702,6 +851,17 @@ export async function PATCH(request: Request) {
   if (!values || !Object.keys(values).length)
     return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });
   try {
+    let previousOnlineSale: JsonRecord | null = null;
+    if (body.entity === 'online_sales' && 'isShipped' in body.values) {
+      const previous = await query(
+        accessToken,
+        'online_sales',
+        `select=id,is_shipped,product_id&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
+      );
+      previousOnlineSale = Array.isArray(previous)
+        ? ((previous[0] as JsonRecord | undefined) ?? null)
+        : null;
+    }
     const updateValues = entitiesWithUpdatedBy.has(body.entity)
       ? { ...values, updated_by: user.id || null }
       : values;
@@ -713,6 +873,53 @@ export async function PATCH(request: Request) {
         body: JSON.stringify(updateValues),
       },
     );
+    if (body.entity === 'online_sales' && previousOnlineSale) {
+      const wasShipped = previousOnlineSale.isShipped === true;
+      const isShipped = body.values.isShipped === true;
+      if (wasShipped !== isShipped) {
+        try {
+          let isDigital = false;
+          const productId = previousOnlineSale.productId;
+          if (productId != null) {
+            const products = await query(
+              accessToken,
+              'products',
+              `select=category&id=eq.${encodeURIComponent(scalarText(productId))}&limit=1`,
+            );
+            const category = Array.isArray(products)
+              ? scalarText((products[0] as JsonRecord | undefined)?.category)
+              : '';
+            isDigital = /stl|digital/i.test(category);
+          }
+          if (!isDigital) {
+            await inventoryFetch(
+              accessToken,
+              `rpc/${isShipped ? 'versand_buchen' : 'versand_zuruecknehmen'}`,
+              {
+                method: 'POST',
+                body: JSON.stringify({
+                  p_operation_id: crypto.randomUUID(),
+                  p_sale_id: Number(body.id),
+                }),
+              },
+            );
+          }
+        } catch (error) {
+          await inventoryFetch(
+            accessToken,
+            `online_sales?id=eq.${encodeURIComponent(String(body.id))}`,
+            {
+              method: 'PATCH',
+              body: JSON.stringify({
+                is_shipped: wasShipped,
+                updated_by: user.id || null,
+              }),
+            },
+          ).catch(() => null);
+          throw error;
+        }
+      }
+    }
     if (body.entity === 'markets' && body.values.venueKind) {
       const instant = new Date().toISOString();
       await env.DB.prepare(

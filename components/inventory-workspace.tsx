@@ -674,7 +674,10 @@ export function InventoryWorkspace({
         />
       ) : null}
       {active === 'cash' ? (
-        <CashRegister data={data.cash || {}} onBooked={() => void refresh()} />
+        <GeneralCashRegister
+          data={data.cash || {}}
+          onBooked={() => void refresh()}
+        />
       ) : null}
       {active === 'sales' ? <Sales data={data.sales || {}} /> : null}
       {active === 'months' ? (
@@ -1769,6 +1772,390 @@ type CartItem = {
   articleName: string;
   quantity: number;
 };
+
+type GeneralCartItem = {
+  product: Row;
+  variant: Row;
+  quantity: number;
+  salePriceCents: number;
+};
+
+const GENERAL_SALES_CHANNELS = [
+  'Abholung',
+  'eBay',
+  'eBay Kleinanzeigen',
+  'Vinted',
+  'Etsy',
+  'Bestellformular',
+] as const;
+
+function GeneralCashRegister({
+  data,
+  onBooked,
+}: {
+  data: AreaData;
+  onBooked: () => void;
+}) {
+  const products = rows(data.products);
+  const components = rows(data.components);
+  const [channel, setChannel] =
+    useState<(typeof GENERAL_SALES_CHANNELS)[number]>('Abholung');
+  const [saleDate, setSaleDate] = useState(() =>
+    new Intl.DateTimeFormat('sv-SE').format(new Date()),
+  );
+  const [search, setSearch] = useState('');
+  const [recipient, setRecipient] = useState('');
+  const [shippingCost, setShippingCost] = useState('');
+  const [note, setNote] = useState('');
+  const [cart, setCart] = useState<GeneralCartItem[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const choices = products
+    .flatMap((product) => {
+      const variants = rows(product.variants);
+      return (variants.length ? variants : [{}]).map((variant) => ({
+        product,
+        variant,
+      }));
+    })
+    .filter(({ product, variant }) =>
+      [
+        product.name,
+        product.category,
+        variant.name,
+        variant.appearance,
+        variant.size,
+      ]
+        .join(' ')
+        .toLocaleLowerCase('de')
+        .includes(search.trim().toLocaleLowerCase('de')),
+    );
+  const total = cart.reduce(
+    (sum, item) => sum + item.quantity * item.salePriceCents,
+    0,
+  );
+
+  function itemKey(product: Row, variant: Row) {
+    return `${string(product.id)}:${string(variant.id, 'standard')}`;
+  }
+
+  function add(product: Row, variant: Row) {
+    const key = itemKey(product, variant);
+    const price =
+      number(variant.priceCents) || number(product.defaultPriceCents);
+    setCart((current) => {
+      const match = current.find(
+        (item) => itemKey(item.product, item.variant) === key,
+      );
+      if (match)
+        return current.map((item) =>
+          item === match ? { ...item, quantity: item.quantity + 1 } : item,
+        );
+      return [
+        ...current,
+        { product, variant, quantity: 1, salePriceCents: price },
+      ];
+    });
+  }
+
+  function patchCart(key: string, values: Partial<GeneralCartItem>) {
+    setCart((current) =>
+      current
+        .map((item) =>
+          itemKey(item.product, item.variant) === key
+            ? { ...item, ...values }
+            : item,
+        )
+        .filter((item) => item.quantity > 0),
+    );
+  }
+
+  async function book() {
+    if (!cart.length || saving) return;
+    setSaving(true);
+    setMessage('');
+    const response = await fetch('/api/inventory/workspace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'create_online_order',
+        order: {
+          channel,
+          date: saleDate,
+          shippingRecipient: recipient,
+          shippingCostCents: Math.max(
+            0,
+            Math.round(Number(shippingCost.replace(',', '.')) * 100) || 0,
+          ),
+          note,
+        },
+        items: cart.map((item) => {
+          const breakdown = variantCostBreakdown(
+            item.product,
+            item.variant,
+            products,
+            components,
+          );
+          const filaments = rows(item.product.filaments).filter(
+            (row) =>
+              !string(row.productVariantId) ||
+              string(row.productVariantId) === string(item.variant.id),
+          );
+          const primaryFilament = filaments.find(
+            (row) => number(row.materialId) > 0,
+          );
+          return {
+            productId: number(item.product.id),
+            articleName: string(item.product.name, 'Artikel'),
+            size: string(
+              item.variant.size || item.variant.name || item.product.size,
+            ),
+            quantity: item.quantity,
+            printer: string(item.variant.printer || item.product.printer),
+            printMinutes: breakdown.printMinutes,
+            filamentMaterialId: number(
+              item.variant.materialId || primaryFilament?.materialId,
+            ),
+            filamentGrams: breakdown.netGrams + breakdown.wasteGrams,
+            filamentCostCents: breakdown.filamentCents + breakdown.wasteCents,
+            electricityCostCents: breakdown.electricityCents,
+            machineCostCents: breakdown.machineCents,
+            accessoryCostCents:
+              breakdown.extraCents + breakdown.componentsCents,
+            salePriceCents: item.salePriceCents,
+          };
+        }),
+      }),
+    });
+    const result = (await response.json()) as {
+      error?: string;
+      orderKey?: string;
+    };
+    setSaving(false);
+    if (!response.ok) {
+      setMessage(result.error || 'Verkauf konnte nicht gespeichert werden.');
+      return;
+    }
+    setMessage(
+      `Verkauf ${result.orderKey ? result.orderKey + ' ' : ''}gespeichert. Offene Positionen stehen auf der Übersicht unter Druck & Versand.`,
+    );
+    setCart([]);
+    setRecipient('');
+    setShippingCost('');
+    setNote('');
+    onBooked();
+  }
+
+  return (
+    <section className="mt-6 grid gap-5 xl:grid-cols-[1.35fr_.85fr]">
+      <div className="rounded-[26px] border bg-white/65 p-5 md:p-6">
+        <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+          Allgemeiner Verkauf
+        </p>
+        <h2 className="mt-1 font-heading text-3xl">Kasse</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Märkte und Regalflächen werden ausschließlich in ihrem eigenen Bereich
+          gebucht.
+        </p>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+            Verkaufsort
+            <select
+              className="h-10 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={channel}
+              onChange={(event) =>
+                setChannel(
+                  event.target.value as (typeof GENERAL_SALES_CHANNELS)[number],
+                )
+              }
+            >
+              {GENERAL_SALES_CHANNELS.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Field
+            label="Verkaufsdatum"
+            type="date"
+            value={saleDate}
+            onChange={setSaleDate}
+          />
+          <Field
+            label={
+              channel === 'Abholung'
+                ? 'Name (optional)'
+                : 'Empfänger (optional)'
+            }
+            value={recipient}
+            onChange={setRecipient}
+          />
+          {channel !== 'Abholung' ? (
+            <Field
+              label="Versandkosten in €"
+              value={shippingCost}
+              onChange={setShippingCost}
+            />
+          ) : (
+            <div />
+          )}
+        </div>
+        <div className="relative mt-4">
+          <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
+          <Input
+            className="bg-white pl-9"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Artikel oder Variante suchen"
+          />
+        </div>
+        <div className="mt-3 grid max-h-[500px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+          {choices.map(({ product, variant }) => {
+            const breakdown = variantCostBreakdown(
+              product,
+              variant,
+              products,
+              components,
+            );
+            const price =
+              number(variant.priceCents) || number(product.defaultPriceCents);
+            return (
+              <button
+                type="button"
+                key={itemKey(product, variant)}
+                onClick={() => add(product, variant)}
+                className="flex items-center gap-3 rounded-xl border bg-white/70 p-3 text-left transition hover:border-[var(--fp-primary)]"
+              >
+                <div className="size-14 shrink-0">
+                  <InventoryImage
+                    product={{
+                      ...product,
+                      variants: variant.id ? [variant] : [],
+                    }}
+                    alt={string(product.name)}
+                  />
+                </div>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">
+                    {string(product.name)}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {string(
+                      variant.name || variant.appearance || variant.size,
+                      'Standard',
+                    )}{' '}
+                    · Kosten {cents(breakdown.totalCents)}
+                  </span>
+                </span>
+                <span className="shrink-0 font-semibold">{cents(price)}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <aside className="rounded-[26px] border bg-[var(--fp-ink)] p-5 text-[var(--fp-paper)] md:p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="font-heading text-2xl">Warenkorb</h2>
+          <Badge className="bg-white/10 text-white">
+            {cart.reduce((sum, item) => sum + item.quantity, 0)} Stück
+          </Badge>
+        </div>
+        <div className="mt-5 space-y-3">
+          {cart.map((item) => {
+            const key = itemKey(item.product, item.variant);
+            return (
+              <div key={key} className="rounded-xl border border-white/15 p-3">
+                <div className="text-sm font-medium">
+                  {string(item.product.name)}
+                </div>
+                <div className="text-xs text-white/60">
+                  {string(item.variant.name || item.variant.size, 'Standard')}
+                </div>
+                <div className="mt-3 grid grid-cols-[auto_1fr] gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() =>
+                        patchCart(key, { quantity: item.quantity - 1 })
+                      }
+                    >
+                      −
+                    </Button>
+                    <span className="min-w-6 text-center text-sm">
+                      {item.quantity}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() =>
+                        patchCart(key, { quantity: item.quantity + 1 })
+                      }
+                    >
+                      +
+                    </Button>
+                  </div>
+                  <Input
+                    aria-label={`Einzelpreis ${string(item.product.name)}`}
+                    className="h-9 bg-white text-black"
+                    value={(item.salePriceCents / 100)
+                      .toFixed(2)
+                      .replace('.', ',')}
+                    onChange={(event) =>
+                      patchCart(key, {
+                        salePriceCents: Math.max(
+                          0,
+                          Math.round(
+                            Number(event.target.value.replace(',', '.')) * 100,
+                          ) || 0,
+                        ),
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            );
+          })}
+          {!cart.length ? (
+            <p className="text-sm text-white/60">
+              Wähle links einen Artikel aus.
+            </p>
+          ) : null}
+        </div>
+        <div className="mt-6 border-t border-white/15 pt-5">
+          <div className="flex items-end justify-between">
+            <span className="text-sm text-white/65">Gesamtsumme</span>
+            <span className="font-heading text-4xl">{cents(total)}</span>
+          </div>
+          <label className="mt-5 grid gap-1.5 text-xs text-white/65">
+            Notiz (optional)
+            <Textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              className="border-white/20 bg-white text-black"
+            />
+          </label>
+          <Button
+            className="mt-4 w-full bg-[var(--fp-paper)] text-[var(--fp-ink)] hover:bg-white"
+            onClick={() => void book()}
+            disabled={!cart.length || saving}
+          >
+            {saving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <CircleDollarSign className="size-4" />
+            )}{' '}
+            Verkauf speichern
+          </Button>
+          {message ? (
+            <p className="mt-3 text-xs text-white/75">{message}</p>
+          ) : null}
+        </div>
+      </aside>
+    </section>
+  );
+}
 
 function CashRegister({
   data,

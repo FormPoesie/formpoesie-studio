@@ -1753,6 +1753,10 @@ function MasterbrainInfo({
               'Gesamtkosten bestehen aus Filament, Ausschuss, Maschinenzeit, Strom, Zusatzkosten und Bauteilen. Maschinenzeit wird mit 0,10 € je Stunde berechnet; Strom abhängig vom Drucker. Marge = Verkaufspreis minus Gesamtkosten. Die Prozentmarge bezieht diese Marge auf den Verkaufspreis.',
             ],
             [
+              'Kasse & Bestand',
+              'Die allgemeine Kasse speichert Abholung, eBay, eBay Kleinanzeigen, Vinted, Etsy und Bestellformular als Onlineverkäufe. Märkte und Regalflächen haben eigene Kassen. Der Bestand eines allgemeinen Verkaufs wird erst beim Abschließen von Versand oder Abholung abgezogen.',
+            ],
+            [
               'Daten & Papierkorb',
               'Produkte lesen die gemeinsame Inventardatenbank direkt; ein Import ist nicht nötig. Etsy-Entwürfe können in den Papierkorb verschoben und wiederhergestellt werden. Markenstimme, Regeln und Farben liegen unter „Profile & Regeln“.',
             ],

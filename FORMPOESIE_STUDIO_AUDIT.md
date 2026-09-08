@@ -22,6 +22,8 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 - Persistente Massenbearbeitung für die gemeinsame Kategorie mehrerer Artikel ergänzt.
 - Abo-Status `Laufend` und `Gekündigt` getrennt; gekündigte Einträge bleiben erhalten.
 - Katalogübersicht und Bestellformular als auffindbare, responsive Bereiche ergänzt.
+- Allgemeine Kasse von Markt-/Regalbeständen getrennt. Sie schreibt Bestellungen mit mehreren Positionen in die vorhandene `online_sales`-Struktur und bietet ausschließlich Abholung, eBay, eBay Kleinanzeigen, Vinted, Etsy und Bestellformular an.
+- Druck-/Versandstatus wieder speicherbar gemacht; die Erledigung des Versands nutzt wie die ursprüngliche Inventarseite `versand_buchen`/`versand_zuruecknehmen` und setzt den Status bei einem Bestandsfehler zurück.
 
 ## Vorhanden, aber noch weiter abzusichern
 
@@ -36,7 +38,6 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 - Mehrere Bilder mit definierbarem Hauptbild.
 - Mehrere interne STL-/Druckdateien pro Artikel mit geschütztem Download.
 - Vollständige Bulk-Aktionen über Kategorie hinaus, inklusive Vorschau.
-- Allgemeine Kasse von Markt-/Regal-RPC trennen; nur Abholung, eBay, eBay Kleinanzeigen, Vinted, Etsy und Bestellformular. Das vorhandene Online-Sale-Schema muss vor realen Buchungen exakt verifiziert werden.
 - Rechnungsdaten, eindeutige Rechnungsnummer, A4-PDF, Wiederaufruf und E-Mail-Versand. Unternehmens-/Steuerdaten dürfen erst nach verifizierter Übernahme der Canva-Referenz gespeichert werden.
 - Bestandsfehler Place to Be anhand einer kontrollierten Testbuchung und Datenbankfunktion verifizieren.
 - Restbestand einer Regalfläche mit Historie in den Folgemonat übertragen.
@@ -48,7 +49,7 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 ## Sicherheits- und Datenrisiken
 
 - Keine Zugangsdaten gehören in Quellcode oder allgemeine Account-Metadaten. Der vorhandene Tresor verschlüsselt clientseitig mit AES-GCM; der Tresor-Code wird nicht gespeichert.
-- Eine allgemeine Kasse darf nicht vor Prüfung der tatsächlichen Supabase-Spalten auf den Marktverkaufs-RPC umgebogen werden. Das würde Bestände am falschen Ort verändern.
+- Vor realen Kassenbuchungen wurde die bestehende `online_sales`-Schreiblogik aus der ausgelieferten Originalanwendung geprüft und übernommen; die allgemeine Kasse verwendet keinen Markt-RPC.
 - Neue Rollenregeln müssen immer in Navigation und API gelten; reines Ausblenden ist nicht ausreichend.
 - Keine Migration darf vorhandene Artikel, Varianten, Bilder, Bestände oder Verkaufsdaten überschreiben.
 
