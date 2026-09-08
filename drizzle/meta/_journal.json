@@ -8,6 +8,13 @@
       "when": 1788835475280,
       "tag": "0000_mushy_hammerhead",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788874683386,
+      "tag": "0001_magical_karma",
+      "breakpoints": true
     }
   ]
 }

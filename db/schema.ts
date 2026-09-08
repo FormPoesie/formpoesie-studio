@@ -232,3 +232,64 @@ export const changeHistory = sqliteTable('change_history', {
   afterJson: text('after_json'),
   createdAt: text('created_at').notNull(),
 }, (table) => [index('idx_change_history_entity').on(table.entityType, table.entityId)]);
+
+export const accountSecrets = sqliteTable('account_secrets', {
+  accountId: text('account_id').primaryKey(),
+  ciphertext: text('ciphertext').notNull(),
+  iv: text('iv').notNull(),
+  salt: text('salt').notNull(),
+  iterations: integer('iterations').notNull().default(310000),
+  ...timestamps,
+});
+
+export const newsCalendarEntries = sqliteTable(
+  'news_calendar_entries',
+  {
+    id: text('id').primaryKey(),
+    topic: text('topic').notNull(),
+    category: text('category').notNull(),
+    organization: text('organization'),
+    location: text('location'),
+    eventDate: text('event_date').notNull(),
+    publishedDate: text('published_date'),
+    capturedAt: text('captured_at'),
+    sourceName: text('source_name'),
+    sourceUrl: text('source_url'),
+    summary: text('summary'),
+    whatsNew: text('whats_new'),
+    relevance: text('relevance'),
+    confidence: text('confidence'),
+    payloadJson: text('payload_json').notNull(),
+    ...timestamps,
+  },
+  (table) => [index('idx_news_calendar_event_date').on(table.eventDate)],
+);
+
+export const newsCalendarMeta = sqliteTable('news_calendar_meta', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const monitorSnapshots = sqliteTable('monitor_snapshots', {
+  accountId: text('account_id').primaryKey(),
+  profileUrl: text('profile_url').notNull(),
+  fingerprint: text('fingerprint').notNull(),
+  headline: text('headline'),
+  checkedAt: text('checked_at').notNull(),
+  changedAt: text('changed_at'),
+});
+
+export const activityEvents = sqliteTable(
+  'activity_events',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    detail: text('detail'),
+    sourceUrl: text('source_url'),
+    occurredAt: text('occurred_at').notNull(),
+    payloadJson: text('payload_json').notNull().default('{}'),
+  },
+  (table) => [index('idx_activity_events_occurred_at').on(table.occurredAt)],
+);

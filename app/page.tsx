@@ -50,6 +50,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import type { InventoryItem } from '@/lib/inventory-bridge';
+import { InventoryWorkspace } from '@/components/inventory-workspace';
 
 type ProductRow = {
   id: string;
@@ -122,7 +123,17 @@ type CalendarEntry = {
 };
 
 type CalendarArchive = {
-  meta?: { aktualisiertAm?: string; hinweis?: string };
+  meta?: {
+    aktualisiertAm?: string;
+    hinweis?: string;
+    masterbrainSync?: {
+      status?: string;
+      schedule?: string;
+      lastSyncedAt?: string;
+      lastResult?: string;
+      newCount?: number;
+    };
+  };
   eintraege: CalendarEntry[];
 };
 
@@ -137,6 +148,21 @@ type AccountItem = {
   ongoing?: boolean;
   profileUrl?: string;
   note?: string;
+  licensed?: boolean;
+  licenseExpiresAt?: string;
+  monthlyPrice?: string;
+  monitoringEnabled?: boolean;
+  lastCheckedAt?: string;
+  lastStatus?: string;
+  lastHeadline?: string;
+};
+
+type EncryptedSecret = {
+  accountId: string;
+  ciphertext: string;
+  iv: string;
+  salt: string;
+  iterations: number;
 };
 
 const initialForm = {
@@ -1099,20 +1125,7 @@ export default function Home() {
         {calendarOpen ? (
           <NewsCalendar />
         ) : inventoryOpen ? (
-          <InventoryHub
-            connected={inventoryConnected}
-            email={inventoryEmail}
-            password={inventoryPassword}
-            setEmail={setInventoryEmail}
-            setPassword={setInventoryPassword}
-            connect={connectInventory}
-            loading={inventoryLoading}
-            items={inventoryItems}
-            search={inventorySearch}
-            setSearch={setInventorySearch}
-            refresh={loadInventory}
-            createListing={createFromInventory}
-          />
+          <InventoryWorkspace onCreateListing={createFromInventory} />
         ) : contentCalendarOpen ? (
           <ContentCalendar />
         ) : accountsOpen ? (
@@ -1375,6 +1388,80 @@ function safeExternalUrl(value?: string) {
   }
 }
 
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function vaultKey(
+  passphrase: string,
+  salt: Uint8Array,
+  iterations: number,
+) {
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveKey'],
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: new Uint8Array(salt).buffer as ArrayBuffer,
+      iterations,
+    },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+async function encryptVaultSecret(
+  accountId: string,
+  password: string,
+  passphrase: string,
+): Promise<EncryptedSecret> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const iterations = 310000;
+  const key = await vaultKey(passphrase, salt, iterations);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(password),
+  );
+  return {
+    accountId,
+    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+    iv: bytesToBase64(iv),
+    salt: bytesToBase64(salt),
+    iterations,
+  };
+}
+
+async function decryptVaultSecret(secret: EncryptedSecret, passphrase: string) {
+  const key = await vaultKey(
+    passphrase,
+    base64ToBytes(secret.salt),
+    secret.iterations,
+  );
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: base64ToBytes(secret.iv) },
+    key,
+    base64ToBytes(secret.ciphertext),
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
 function AdminLogin({
   email,
   password,
@@ -1463,6 +1550,9 @@ function NewsCalendar() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [editingEntry, setEditingEntry] = useState<CalendarEntry | null>(null);
+  const [savingEntry, setSavingEntry] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1544,6 +1634,57 @@ function NewsCalendar() {
     );
   }
 
+  async function syncNow() {
+    setSyncing(true);
+    setError('');
+    try {
+      const response = await fetch('/api/calendar?sync=1');
+      const result = (await response.json()) as CalendarArchive & {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Synchronisierung fehlgeschlagen.');
+      const entries = [...result.eintraege].sort((a, b) =>
+        a.ereignisDatum.localeCompare(b.ereignisDatum),
+      );
+      setArchive({ ...result, eintraege: entries });
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Synchronisierung fehlgeschlagen.',
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function saveCalendarEntry() {
+    if (!editingEntry) return;
+    setSavingEntry(true);
+    const response = await fetch('/api/calendar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry: editingEntry }),
+    });
+    setSavingEntry(false);
+    if (!response.ok) {
+      setError('Kalendereintrag konnte nicht gespeichert werden.');
+      return;
+    }
+    setArchive((current) =>
+      current
+        ? {
+            ...current,
+            eintraege: current.eintraege.map((entry) =>
+              entry.id === editingEntry.id ? editingEntry : entry,
+            ),
+          }
+        : current,
+    );
+    setEditingEntry(null);
+  }
+
   return (
     <div className="mx-auto max-w-[1320px] px-4 py-6 md:px-8 md:py-9">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
@@ -1556,13 +1697,61 @@ function NewsCalendar() {
             News-Kalender
           </h1>
         </div>
-        <Badge
-          variant="outline"
-          className="w-fit rounded-full bg-white/50 px-4 py-2"
-        >
-          <CheckCircle2 className="size-4" /> Live im Masterbrain
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant="outline"
+            className="w-fit rounded-full bg-white/50 px-4 py-2"
+          >
+            <CheckCircle2 className="size-4" /> Automation{' '}
+            {archive?.meta?.masterbrainSync?.status === 'ACTIVE'
+              ? 'aktiv'
+              : 'wird geprüft'}
+          </Badge>
+          <Button
+            variant="outline"
+            onClick={() => void syncNow()}
+            disabled={syncing}
+          >
+            <RefreshCw
+              className={'size-4 ' + (syncing ? 'animate-spin' : '')}
+            />{' '}
+            Jetzt synchronisieren
+          </Button>
+        </div>
       </div>
+
+      <section className="mt-5 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl border bg-white/62 p-4">
+          <div className="text-xs text-muted-foreground">Rhythmus</div>
+          <div className="mt-1 font-medium">
+            {archive?.meta?.masterbrainSync?.schedule || 'Täglich um 20:00 Uhr'}
+          </div>
+        </div>
+        <div className="rounded-2xl border bg-white/62 p-4">
+          <div className="text-xs text-muted-foreground">
+            Letzte Masterbrain-Synchronisierung
+          </div>
+          <div className="mt-1 font-medium">
+            {archive?.meta?.masterbrainSync?.lastSyncedAt
+              ? new Intl.DateTimeFormat('de-DE', {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                }).format(new Date(archive.meta.masterbrainSync.lastSyncedAt))
+              : 'noch ausstehend'}
+          </div>
+        </div>
+        <div className="rounded-2xl border bg-white/62 p-4">
+          <div className="text-xs text-muted-foreground">Letztes Ergebnis</div>
+          <div className="mt-1 font-medium">
+            {archive?.meta?.masterbrainSync?.lastResult === 'success'
+              ? 'Erfolgreich'
+              : archive?.meta?.masterbrainSync?.lastResult === 'failed'
+                ? 'Fehlgeschlagen'
+                : 'Noch kein Lauf'}{' '}
+            · {archive?.meta?.masterbrainSync?.newCount || 0} neu
+          </div>
+        </div>
+      </section>
 
       <section className="mt-6 rounded-[26px] border bg-white/62 p-4 md:p-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
@@ -1754,6 +1943,14 @@ function NewsCalendar() {
                           Vertrauen: {entry.vertrauensniveau}
                         </Badge>
                       ) : null}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-auto"
+                        onClick={() => setEditingEntry(entry)}
+                      >
+                        <FilePenLine className="size-4" /> Bearbeiten
+                      </Button>
                     </div>
                     <h3 className="mt-3 font-heading text-2xl leading-tight">
                       {entry.thema}
@@ -1826,11 +2023,156 @@ function NewsCalendar() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={editingEntry !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditingEntry(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-3xl">
+              News bearbeiten
+            </DialogTitle>
+            <DialogDescription>
+              Die Änderung wird im Masterbrain gespeichert und bleibt bei der
+              nächsten Synchronisierung nachvollziehbar.
+            </DialogDescription>
+          </DialogHeader>
+          {editingEntry ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1 text-xs text-muted-foreground sm:col-span-2">
+                Thema
+                <Input
+                  className="bg-white text-foreground"
+                  value={editingEntry.thema}
+                  onChange={(event) =>
+                    setEditingEntry({
+                      ...editingEntry,
+                      thema: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                Kategorie
+                <Input
+                  className="bg-white text-foreground"
+                  value={editingEntry.kategorie}
+                  onChange={(event) =>
+                    setEditingEntry({
+                      ...editingEntry,
+                      kategorie: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                Ereignisdatum
+                <Input
+                  type="date"
+                  className="bg-white text-foreground"
+                  value={editingEntry.ereignisDatum}
+                  onChange={(event) =>
+                    setEditingEntry({
+                      ...editingEntry,
+                      ereignisDatum: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                Organisation
+                <Input
+                  className="bg-white text-foreground"
+                  value={editingEntry.organisation || ''}
+                  onChange={(event) =>
+                    setEditingEntry({
+                      ...editingEntry,
+                      organisation: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                Ort
+                <Input
+                  className="bg-white text-foreground"
+                  value={editingEntry.ort || ''}
+                  onChange={(event) =>
+                    setEditingEntry({
+                      ...editingEntry,
+                      ort: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="grid gap-1 text-xs text-muted-foreground sm:col-span-2">
+                Zusammenfassung
+                <Textarea
+                  className="bg-white text-foreground"
+                  value={editingEntry.zusammenfassung || ''}
+                  onChange={(event) =>
+                    setEditingEntry({
+                      ...editingEntry,
+                      zusammenfassung: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="grid gap-1 text-xs text-muted-foreground sm:col-span-2">
+                Was ist neu?
+                <Textarea
+                  className="bg-white text-foreground"
+                  value={editingEntry.wasIstNeu || ''}
+                  onChange={(event) =>
+                    setEditingEntry({
+                      ...editingEntry,
+                      wasIstNeu: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="grid gap-1 text-xs text-muted-foreground sm:col-span-2">
+                Quelle
+                <Input
+                  type="url"
+                  className="bg-white text-foreground"
+                  value={editingEntry.quelleUrl || ''}
+                  onChange={(event) =>
+                    setEditingEntry({
+                      ...editingEntry,
+                      quelleUrl: event.target.value,
+                    })
+                  }
+                />
+              </div>
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setEditingEntry(null)}>
+              Abbrechen
+            </Button>
+            <Button
+              onClick={() => void saveCalendarEntry()}
+              disabled={savingEntry}
+            >
+              {savingEntry ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Check className="size-4" />
+              )}{' '}
+              Speichern
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function InventoryHub({
+export function InventoryHub({
   connected,
   email,
   password,
@@ -2093,20 +2435,40 @@ function ContentCalendar() {
 
 function AccountsHub({ onInventory }: { onInventory: () => void }) {
   const [items, setItems] = useState<AccountItem[]>([]);
+  const [encryptedSecrets, setEncryptedSecrets] = useState<EncryptedSecret[]>(
+    [],
+  );
+  const [vaultPassphrase, setVaultPassphrase] = useState('');
+  const [vaultValues, setVaultValues] = useState<Record<string, string>>({});
+  const [vaultUnlocked, setVaultUnlocked] = useState(false);
+  const [vaultMessage, setVaultMessage] = useState('');
+  const [monitoring, setMonitoring] = useState(false);
+  const [monitorMessage, setMonitorMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    void fetch('/api/accounts')
-      .then(async (response) => {
-        const data = (await response.json()) as {
+    void Promise.all([fetch('/api/accounts'), fetch('/api/account-secrets')])
+      .then(async ([accountsResponse, secretsResponse]) => {
+        const accounts = (await accountsResponse.json()) as {
           items?: AccountItem[];
           error?: string;
         };
-        if (!response.ok)
-          throw new Error(data.error || 'Konten konnten nicht geladen werden.');
-        setItems(data.items || []);
+        const secrets = (await secretsResponse.json()) as {
+          secrets?: EncryptedSecret[];
+          error?: string;
+        };
+        if (!accountsResponse.ok)
+          throw new Error(
+            accounts.error || 'Konten konnten nicht geladen werden.',
+          );
+        if (!secretsResponse.ok)
+          throw new Error(
+            secrets.error || 'Passwort-Tresor konnte nicht geladen werden.',
+          );
+        setItems(accounts.items || []);
+        setEncryptedSecrets(secrets.secrets || []);
       })
       .catch((reason: unknown) =>
         setError(
@@ -2137,6 +2499,78 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
     if (!response.ok) setError('Konten konnten nicht gespeichert werden.');
   }
 
+  async function unlockVault() {
+    if (!vaultPassphrase) return;
+    setVaultMessage('');
+    try {
+      const decrypted = Object.fromEntries(
+        await Promise.all(
+          encryptedSecrets.map(async (secret) => [
+            secret.accountId,
+            await decryptVaultSecret(secret, vaultPassphrase),
+          ]),
+        ),
+      );
+      setVaultValues(decrypted);
+      setVaultUnlocked(true);
+      setVaultMessage(
+        encryptedSecrets.length
+          ? 'Tresor entsperrt.'
+          : 'Neuer Tresor bereit. Hinterlege jetzt die Passwörter.',
+      );
+    } catch {
+      setVaultUnlocked(false);
+      setVaultValues({});
+      setVaultMessage('Tresor-Code ist nicht korrekt.');
+    }
+  }
+
+  async function saveSecret(accountId: string) {
+    const value = vaultValues[accountId] || '';
+    if (!vaultUnlocked || !vaultPassphrase || !value) return;
+    const secret = await encryptVaultSecret(accountId, value, vaultPassphrase);
+    const response = await fetch('/api/account-secrets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret }),
+    });
+    if (!response.ok) {
+      setVaultMessage('Passwort konnte nicht gespeichert werden.');
+      return;
+    }
+    setEncryptedSecrets((current) => [
+      ...current.filter((item) => item.accountId !== accountId),
+      secret,
+    ]);
+    setVaultMessage('Passwort verschlüsselt gespeichert.');
+  }
+
+  async function checkDesigners() {
+    setMonitoring(true);
+    setMonitorMessage('');
+    await save();
+    const response = await fetch('/api/designer-monitor', { method: 'POST' });
+    const result = (await response.json()) as {
+      checked?: number;
+      results?: Array<{ changed?: boolean }>;
+      error?: string;
+    };
+    if (!response.ok) {
+      setMonitorMessage(result.error || 'Designer-Prüfung fehlgeschlagen.');
+    } else {
+      const refreshed = await fetch('/api/accounts');
+      const accounts = (await refreshed.json()) as { items?: AccountItem[] };
+      setItems(accounts.items || items);
+      const changed = (result.results || []).filter(
+        (item) => item.changed,
+      ).length;
+      setMonitorMessage(
+        `${result.checked || 0} Profile geprüft · ${changed} neue Änderungen`,
+      );
+    }
+    setMonitoring(false);
+  }
+
   function addDesigner() {
     setItems((current) => [
       ...current,
@@ -2146,6 +2580,9 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
         name: '',
         profileUrl: '',
         note: 'MakerWorld',
+        licensed: false,
+        monthlyPrice: '',
+        monitoringEnabled: true,
       },
     ]);
   }
@@ -2203,7 +2640,20 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
                 className="grid gap-3 rounded-2xl border bg-white/55 p-4 sm:grid-cols-[1fr_170px]"
               >
                 <div>
-                  <div className="font-medium">{item.name}</div>
+                  <div className="flex items-center gap-2 font-medium">
+                    {item.name}
+                    {safeExternalUrl(item.url) ? (
+                      <a
+                        href={safeExternalUrl(item.url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={item.name + ' öffnen'}
+                        className="text-[var(--fp-primary)]"
+                      >
+                        <ExternalLink className="size-3.5" />
+                      </a>
+                    ) : null}
+                  </div>
                   <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                     <input
                       type="checkbox"
@@ -2224,6 +2674,16 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
                     update(item.id, 'expiresAt', event.target.value)
                   }
                 />
+                <Input
+                  type="url"
+                  aria-label={'Webseite ' + item.name}
+                  placeholder="Direkter Anbieterlink"
+                  className="sm:col-span-2"
+                  value={item.url || ''}
+                  onChange={(event) =>
+                    update(item.id, 'url', event.target.value)
+                  }
+                />
               </div>
             ))}
           </div>
@@ -2233,7 +2693,20 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
           <div className="mt-4 space-y-3">
             {social.map((item) => (
               <div key={item.id} className="rounded-2xl border bg-white/55 p-4">
-                <div className="font-medium">{item.name}</div>
+                <div className="flex items-center gap-2 font-medium">
+                  {item.name}
+                  {safeExternalUrl(item.url) ? (
+                    <a
+                      href={safeExternalUrl(item.url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={item.name + ' öffnen'}
+                      className="text-[var(--fp-primary)]"
+                    >
+                      <ExternalLink className="size-3.5" />
+                    </a>
+                  ) : null}
+                </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <Input
                     aria-label={'Benutzername ' + item.name}
@@ -2252,16 +2725,108 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
                       update(item.id, 'email', event.target.value)
                     }
                   />
+                  <Input
+                    aria-label={'Webseite ' + item.name}
+                    type="url"
+                    placeholder="Direkter Anbieterlink"
+                    className="sm:col-span-2"
+                    value={item.url || ''}
+                    onChange={(event) =>
+                      update(item.id, 'url', event.target.value)
+                    }
+                  />
                 </div>
               </div>
             ))}
           </div>
-          <div className="mt-4 rounded-xl border border-[var(--fp-accent)]/45 bg-[#fff8ef] p-3 text-xs leading-5 text-muted-foreground">
-            Passwörter werden hier absichtlich nicht gespeichert. Lege sie in
-            einem Passwortmanager ab und ändere die im Chat genannten Werte.
-          </div>
         </section>
       </div>
+
+      <section className="mt-5 rounded-[26px] border bg-white/65 p-5 md:p-6">
+        <div className="flex items-start gap-3">
+          <Lock className="mt-1 size-5 text-[var(--fp-primary)]" />
+          <div className="flex-1">
+            <h2 className="font-heading text-2xl">Separater Passwort-Tresor</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Die Passwörter werden im Browser verschlüsselt. Der Tresor-Code
+              wird weder übertragen noch gespeichert und kann nicht
+              wiederhergestellt werden.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <Input
+            type="password"
+            autoComplete="new-password"
+            placeholder="Tresor-Code"
+            value={vaultPassphrase}
+            onChange={(event) => setVaultPassphrase(event.target.value)}
+            disabled={vaultUnlocked}
+          />
+          {vaultUnlocked ? (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setVaultUnlocked(false);
+                setVaultPassphrase('');
+                setVaultValues({});
+                setVaultMessage('Tresor gesperrt.');
+              }}
+            >
+              <Lock className="size-4" /> Sperren
+            </Button>
+          ) : (
+            <Button
+              onClick={() => void unlockVault()}
+              disabled={!vaultPassphrase}
+            >
+              <ShieldCheck className="size-4" /> Entsperren
+            </Button>
+          )}
+        </div>
+        {vaultMessage ? (
+          <p className="mt-2 text-xs text-muted-foreground">{vaultMessage}</p>
+        ) : null}
+        {vaultUnlocked ? (
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {[...subscriptions, ...social].map((item) => (
+              <div key={item.id} className="rounded-2xl border bg-white/55 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{item.name}</span>
+                  <Badge variant="outline">
+                    {encryptedSecrets.some(
+                      (secret) => secret.accountId === item.id,
+                    )
+                      ? 'verschlüsselt gespeichert'
+                      : 'noch leer'}
+                  </Badge>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    placeholder="Passwort"
+                    value={vaultValues[item.id] || ''}
+                    onChange={(event) =>
+                      setVaultValues((current) => ({
+                        ...current,
+                        [item.id]: event.target.value,
+                      }))
+                    }
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={() => void saveSecret(item.id)}
+                    disabled={!vaultValues[item.id]}
+                  >
+                    Speichern
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </section>
       <section className="mt-5 rounded-[26px] border bg-white/65 p-5 md:p-6">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>
@@ -2273,53 +2838,145 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
               Modellen.
             </p>
           </div>
-          <Button variant="outline" onClick={addDesigner}>
-            <Plus className="size-4" /> Designer hinzufügen
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => void checkDesigners()}
+              disabled={monitoring || !designers.length}
+            >
+              <RefreshCw
+                className={'size-4 ' + (monitoring ? 'animate-spin' : '')}
+              />{' '}
+              Jetzt prüfen
+            </Button>
+            <Button variant="outline" onClick={addDesigner}>
+              <Plus className="size-4" /> Designer hinzufügen
+            </Button>
+          </div>
         </div>
+        {monitorMessage ? (
+          <p className="mt-3 text-sm text-muted-foreground">{monitorMessage}</p>
+        ) : null}
         <div className="mt-4 space-y-3">
           {designers.map((item) => (
-            <div
-              key={item.id}
-              className="grid gap-2 rounded-2xl border bg-white/55 p-4 md:grid-cols-[140px_1fr_2fr_auto]"
-            >
-              <select
-                value={item.note || 'MakerWorld'}
-                onChange={(event) =>
-                  update(item.id, 'note', event.target.value)
-                }
-                className="h-9 rounded-lg border bg-white px-3 text-sm"
-              >
-                <option>MakerWorld</option>
-                <option>Patreon</option>
-              </select>
-              <Input
-                placeholder="Designername"
-                value={item.name}
-                onChange={(event) =>
-                  update(item.id, 'name', event.target.value)
-                }
-              />
-              <Input
-                type="url"
-                placeholder="Profil-URL"
-                value={item.profileUrl || ''}
-                onChange={(event) =>
-                  update(item.id, 'profileUrl', event.target.value)
-                }
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Designer entfernen"
-                onClick={() =>
-                  setItems((current) =>
-                    current.filter((candidate) => candidate.id !== item.id),
-                  )
-                }
-              >
-                <X className="size-4" />
-              </Button>
+            <div key={item.id} className="rounded-2xl border bg-white/55 p-4">
+              <div className="grid gap-2 md:grid-cols-[140px_1fr_2fr_auto]">
+                <select
+                  value={item.note || 'MakerWorld'}
+                  onChange={(event) =>
+                    update(item.id, 'note', event.target.value)
+                  }
+                  className="h-9 rounded-lg border bg-white px-3 text-sm"
+                >
+                  <option>MakerWorld</option>
+                  <option>Patreon</option>
+                </select>
+                <Input
+                  placeholder="Designername"
+                  value={item.name}
+                  onChange={(event) =>
+                    update(item.id, 'name', event.target.value)
+                  }
+                />
+                <div className="flex gap-2">
+                  <Input
+                    type="url"
+                    placeholder="Profil-URL"
+                    value={item.profileUrl || ''}
+                    onChange={(event) =>
+                      update(item.id, 'profileUrl', event.target.value)
+                    }
+                  />
+                  {safeExternalUrl(item.profileUrl) ? (
+                    <a
+                      href={safeExternalUrl(item.profileUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label="Profil öffnen"
+                      >
+                        <ExternalLink className="size-4" />
+                      </Button>
+                    </a>
+                  ) : null}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Designer entfernen"
+                  onClick={() =>
+                    setItems((current) =>
+                      current.filter((candidate) => candidate.id !== item.id),
+                    )
+                  }
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(item.monitoringEnabled)}
+                    onChange={(event) =>
+                      update(item.id, 'monitoringEnabled', event.target.checked)
+                    }
+                  />
+                  Überwachung aktiv
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(item.licensed)}
+                    onChange={(event) =>
+                      update(item.id, 'licensed', event.target.checked)
+                    }
+                  />
+                  Lizenz vorhanden
+                </label>
+                <Input
+                  type="date"
+                  aria-label="Lizenz gültig bis"
+                  disabled={!item.licensed}
+                  value={item.licensed ? item.licenseExpiresAt || '' : ''}
+                  onChange={(event) =>
+                    update(item.id, 'licenseExpiresAt', event.target.value)
+                  }
+                />
+                <Input
+                  inputMode="decimal"
+                  aria-label="Lizenzpreis pro Monat"
+                  placeholder="Preis pro Monat in €"
+                  value={item.monthlyPrice || ''}
+                  onChange={(event) =>
+                    update(item.id, 'monthlyPrice', event.target.value)
+                  }
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge variant="outline">
+                  {item.lastStatus === 'success'
+                    ? 'Prüfung erfolgreich'
+                    : item.lastStatus === 'failed'
+                      ? 'Prüfung fehlgeschlagen'
+                      : 'Noch nicht geprüft'}
+                </Badge>
+                <span>
+                  Letzte Prüfung:{' '}
+                  {item.lastCheckedAt
+                    ? new Intl.DateTimeFormat('de-DE', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      }).format(new Date(item.lastCheckedAt))
+                    : 'ausstehend'}
+                </span>
+                {item.lastHeadline ? (
+                  <span>· Zuletzt erkannt: {item.lastHeadline}</span>
+                ) : null}
+              </div>
             </div>
           ))}
           {!designers.length ? (
@@ -2379,6 +3036,139 @@ function TrashBin({
         ) : null}
       </div>
     </div>
+  );
+}
+
+type ActivityEvent = {
+  id: string;
+  kind: string;
+  title: string;
+  detail?: string;
+  sourceUrl?: string;
+  occurredAt: string;
+};
+
+function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [automation, setAutomation] = useState<Record<string, string>>({});
+  const [feedError, setFeedError] = useState('');
+
+  useEffect(() => {
+    void fetch('/api/activity')
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          events?: ActivityEvent[];
+          automation?: Record<string, string>;
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(
+            result.error || 'Tagesnews konnten nicht geladen werden.',
+          );
+        setEvents(result.events || []);
+        setAutomation(result.automation || {});
+      })
+      .catch((reason: unknown) =>
+        setFeedError(
+          reason instanceof Error
+            ? reason.message
+            : 'Tagesnews nicht erreichbar.',
+        ),
+      );
+  }, []);
+
+  return (
+    <section className="mt-6 overflow-hidden rounded-[28px] border bg-white/65">
+      <div className="flex flex-col justify-between gap-3 border-b p-5 sm:flex-row sm:items-center md:px-7">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+            <RefreshCw className="size-3.5" /> Tägliche Automationen
+          </div>
+          <h2 className="mt-2 font-heading text-2xl">Heute im Masterbrain</h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className="bg-white">
+            <StatusDot ok={automation.automation_status === 'ACTIVE'} />
+            {automation.automation_status === 'ACTIVE'
+              ? 'Automation aktiv'
+              : 'Status wird geprüft'}
+          </Badge>
+          <Button variant="outline" onClick={onCalendar}>
+            Kalender öffnen
+          </Button>
+        </div>
+      </div>
+      <div className="grid gap-0 lg:grid-cols-[1fr_260px]">
+        <div className="divide-y">
+          {events.slice(0, 6).map((event) => (
+            <div key={event.id} className="flex items-start gap-3 p-4 md:px-7">
+              <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-full bg-[var(--fp-mist)]">
+                {event.kind === 'designer-model' ? (
+                  <Package className="size-4" />
+                ) : (
+                  <CalendarDays className="size-4" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{event.title}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {[
+                    event.detail,
+                    new Intl.DateTimeFormat('de-DE', {
+                      dateStyle: 'short',
+                      timeStyle: 'short',
+                    }).format(new Date(event.occurredAt)),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </div>
+              </div>
+              {safeExternalUrl(event.sourceUrl) ? (
+                <a
+                  href={safeExternalUrl(event.sourceUrl)}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="Quelle öffnen"
+                >
+                  <ExternalLink className="size-4" />
+                </a>
+              ) : null}
+            </div>
+          ))}
+          {!events.length ? (
+            <p className="p-6 text-sm text-muted-foreground">
+              {feedError ||
+                'Noch keine neuen News oder Designer-Modelle seit der ersten Synchronisierung.'}
+            </p>
+          ) : null}
+        </div>
+        <aside className="border-t bg-[var(--fp-paper)]/55 p-5 text-sm lg:border-t-0 lg:border-l md:p-6">
+          <div className="text-xs text-muted-foreground">Zeitplan</div>
+          <div className="mt-1 font-medium">
+            {automation.automation_schedule || 'Täglich um 20:00 Uhr'}
+          </div>
+          <div className="mt-5 text-xs text-muted-foreground">
+            Letzte Synchronisierung
+          </div>
+          <div className="mt-1 font-medium">
+            {automation.last_synced_at
+              ? new Intl.DateTimeFormat('de-DE', {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                }).format(new Date(automation.last_synced_at))
+              : 'noch ausstehend'}
+          </div>
+          <div className="mt-5 text-xs text-muted-foreground">Letzter Lauf</div>
+          <div className="mt-1 font-medium">
+            {automation.last_result === 'success'
+              ? `Erfolgreich · ${automation.last_new_count || '0'} neu`
+              : automation.last_result === 'failed'
+                ? 'Fehlgeschlagen'
+                : 'Noch kein Ergebnis'}
+          </div>
+        </aside>
+      </div>
+    </section>
   );
 }
 
@@ -2506,6 +3296,8 @@ function Dashboard({
           </p>
         </button>
       </div>
+
+      <DailyNewsFeed onCalendar={onCalendar} />
 
       <div className="mt-9 grid gap-5 xl:grid-cols-[1.6fr_.9fr]">
         <article className="overflow-hidden rounded-[28px] bg-[var(--fp-primary)] text-white shadow-[0_18px_50px_rgba(40,45,42,.14)]">

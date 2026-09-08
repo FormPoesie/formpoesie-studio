@@ -12,6 +12,13 @@ export type AccountItem = {
   ongoing?: boolean;
   profileUrl?: string;
   note?: string;
+  licensed?: boolean;
+  licenseExpiresAt?: string;
+  monthlyPrice?: string;
+  monitoringEnabled?: boolean;
+  lastCheckedAt?: string;
+  lastStatus?: string;
+  lastHeadline?: string;
 };
 
 const defaults: AccountItem[] = [
