@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { requireInventoryAdmin } from '@/lib/inventory-bridge';
 
 const defaultVoice =
   'Ruhig, geerdet, minimalistisch, hochwertig und künstlerisch. Kurze, verständliche Sätze. Einladen statt drängen.';
@@ -17,7 +18,9 @@ const defaultPalette = [
   '#b5895a',
 ];
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const connections = (
     await env.DB.prepare(
       'SELECT * FROM integration_connections ORDER BY provider',
@@ -61,6 +64,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const body = (await request.json()) as {
     voice?: string;
     rules?: string[];

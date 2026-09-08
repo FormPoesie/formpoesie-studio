@@ -48,7 +48,9 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-body { font-family: var(--font-oxygen), Arial, Helvetica, sans-serif; }
+body {
+  font-family: var(--font-oxygen), Arial, Helvetica, sans-serif;
+}
 
 :root {
   --background: #f5f0e8;

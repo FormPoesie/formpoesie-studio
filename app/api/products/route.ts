@@ -7,6 +7,7 @@ import {
   validateProduct,
   type ProductInput,
 } from '@/lib/listing-engine';
+import { requireInventoryAdmin } from '@/lib/inventory-bridge';
 
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 const now = () => new Date().toISOString();
@@ -99,6 +100,8 @@ async function hydrate(productId: string) {
 }
 
 export async function GET(request: Request) {
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const url = new URL(request.url);
   const productId = url.searchParams.get('id');
   if (productId) {
@@ -119,6 +122,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const input = (await request.json()) as ProductInput;
   if (!input.modelName?.trim() || !input.productType?.trim())
     return json({ error: 'Modellname und Produktart sind erforderlich.' }, 400);
@@ -268,6 +273,8 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const body = (await request.json()) as {
     id: string;
     locale?: string;
@@ -341,6 +348,8 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const productId = new URL(request.url).searchParams.get('id');
   if (!productId) return json({ error: 'ID fehlt.' }, 400);
   await env.DB.prepare(

@@ -1,5 +1,6 @@
 import {
   INVENTORY_SUPABASE_URL,
+  getInventoryUser,
   inventoryHeaders,
   readCookie,
   sessionCookie,
@@ -34,19 +35,8 @@ function addSessionCookies(
   return response;
 }
 
-async function getUser(accessToken: string) {
-  if (!accessToken) return null;
-  const response = await fetch(INVENTORY_SUPABASE_URL + '/auth/v1/user', {
-    headers: inventoryHeaders(accessToken),
-  });
-  return response.ok
-    ? ((await response.json()) as { email?: string; id?: string })
-    : null;
-}
-
 export async function GET(request: Request) {
-  const accessToken = readCookie(request, accessName);
-  const currentUser = await getUser(accessToken);
+  const currentUser = await getInventoryUser(request);
   if (currentUser)
     return Response.json({
       connected: true,

@@ -132,3 +132,24 @@ export function inventoryHeaders(accessToken?: string) {
     'Content-Type': 'application/json',
   };
 }
+
+export async function getInventoryUser(request: Request) {
+  const accessToken = readCookie(request, 'fp_inventory_access');
+  if (!accessToken) return null;
+  const response = await fetch(INVENTORY_SUPABASE_URL + '/auth/v1/user', {
+    headers: inventoryHeaders(accessToken),
+  });
+  return response.ok
+    ? ((await response.json()) as { email?: string; id?: string })
+    : null;
+}
+
+export async function requireInventoryAdmin(request: Request) {
+  const user = await getInventoryUser(request);
+  return user
+    ? null
+    : Response.json(
+        { error: 'FormPoesie-Adminanmeldung erforderlich.' },
+        { status: 401 },
+      );
+}

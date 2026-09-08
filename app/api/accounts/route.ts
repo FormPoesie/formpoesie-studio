@@ -1,9 +1,5 @@
 import { env } from 'cloudflare:workers';
-import {
-  INVENTORY_SUPABASE_URL,
-  inventoryHeaders,
-  readCookie,
-} from '@/lib/inventory-bridge';
+import { requireInventoryAdmin } from '@/lib/inventory-bridge';
 
 export type AccountItem = {
   id: string;
@@ -84,21 +80,9 @@ function safeItems(value: unknown): AccountItem[] {
   );
 }
 
-async function isAdmin(request: Request) {
-  const accessToken = readCookie(request, 'fp_inventory_access');
-  if (!accessToken) return false;
-  const response = await fetch(INVENTORY_SUPABASE_URL + '/auth/v1/user', {
-    headers: inventoryHeaders(accessToken),
-  });
-  return response.ok;
-}
-
 export async function GET(request: Request) {
-  if (!(await isAdmin(request)))
-    return Response.json(
-      { error: 'Admin-Anmeldung erforderlich.' },
-      { status: 401 },
-    );
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const row = await env.DB.prepare(
     'SELECT scopes_json FROM integration_connections WHERE id = ?',
   )
@@ -116,11 +100,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!(await isAdmin(request)))
-    return Response.json(
-      { error: 'Admin-Anmeldung erforderlich.' },
-      { status: 401 },
-    );
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const body = (await request.json()) as { items?: AccountItem[] };
   const items = safeItems(body.items).map((item) => ({
     ...item,

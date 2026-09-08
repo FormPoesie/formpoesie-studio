@@ -234,6 +234,7 @@ export default function Home() {
     'inventory',
   );
   const [inventoryConnected, setInventoryConnected] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [inventoryEmail, setInventoryEmail] = useState('');
   const [inventoryPassword, setInventoryPassword] = useState('');
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -303,7 +304,7 @@ export default function Home() {
       };
       setInventoryConnected(Boolean(session.connected));
       if (session.email) setInventoryEmail(session.email);
-      if (!session.connected) return;
+      if (!session.connected) return false;
       const response = await fetch('/api/inventory');
       const data = (await response.json()) as {
         connected?: boolean;
@@ -312,14 +313,18 @@ export default function Home() {
       };
       if (!response.ok) throw new Error(data.error || 'Inventar nicht lesbar.');
       setInventoryItems(data.items || []);
+      return true;
     } catch (error) {
+      setInventoryConnected(false);
       setNotice(
         error instanceof Error
           ? error.message
           : 'Inventar konnte nicht geladen werden.',
       );
+      return false;
     } finally {
       setInventoryLoading(false);
+      setSessionChecked(true);
     }
   }
 
@@ -360,6 +365,7 @@ export default function Home() {
       if (!inventoryResponse.ok)
         throw new Error(inventory.error || 'Inventar nicht lesbar.');
       setInventoryItems(inventory.items || []);
+      await loadProducts();
       setNotice(
         'Inventar verbunden. Artikel und Produktionsdaten sind verfügbar.',
       );
@@ -437,18 +443,20 @@ export default function Home() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadProducts().catch(() =>
-        setNotice('Die Produktdatenbank wird vorbereitet.'),
-      );
-      void loadInventory();
-      void fetch('/api/setup')
-        .then((response) => response.json())
-        .then((data) => {
-          const setup = data as { brand?: { palette?: string[] } };
-          if (setup.brand?.palette?.length === 6)
-            setBrandPalette(setup.brand.palette);
-        })
-        .catch(() => undefined);
+      void loadInventory().then((connected) => {
+        if (!connected) return;
+        void loadProducts().catch(() =>
+          setNotice('Die Produktdatenbank wird vorbereitet.'),
+        );
+        void fetch('/api/setup')
+          .then((response) => response.json())
+          .then((data) => {
+            const setup = data as { brand?: { palette?: string[] } };
+            if (setup.brand?.palette?.length === 6)
+              setBrandPalette(setup.brand.palette);
+          })
+          .catch(() => undefined);
+      });
     });
   }, []);
 
@@ -852,6 +860,31 @@ export default function Home() {
     if (activeProduct.pricing.etsyPrice) done++;
     return Math.round((done / 7) * 100);
   }, [activeProduct, uploaded, researchSaved]);
+
+  if (!sessionChecked)
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#f5f0e8]">
+        <div className="text-center">
+          <Loader2 className="mx-auto size-7 animate-spin text-[#4a5c58]" />
+          <p className="mt-3 text-sm text-muted-foreground">
+            FormPoesie Masterbrain wird geöffnet …
+          </p>
+        </div>
+      </main>
+    );
+
+  if (!inventoryConnected)
+    return (
+      <AdminLogin
+        email={inventoryEmail}
+        password={inventoryPassword}
+        setEmail={setInventoryEmail}
+        setPassword={setInventoryPassword}
+        connect={connectInventory}
+        loading={inventoryLoading}
+        error={notice}
+      />
+    );
 
   return (
     <main
@@ -1342,6 +1375,86 @@ function safeExternalUrl(value?: string) {
   }
 }
 
+function AdminLogin({
+  email,
+  password,
+  setEmail,
+  setPassword,
+  connect,
+  loading,
+  error,
+}: {
+  email: string;
+  password: string;
+  setEmail: (value: string) => void;
+  setPassword: (value: string) => void;
+  connect: () => void;
+  loading: boolean;
+  error: string;
+}) {
+  return (
+    <main className="grid min-h-screen place-items-center bg-[#f5f0e8] px-5 py-10 text-[#1a1a18]">
+      <section className="w-full max-w-md rounded-[30px] border border-[#d9d0c3] bg-white/70 p-7 shadow-[0_24px_70px_rgba(40,45,42,.12)] md:p-9">
+        <div className="grid size-12 place-items-center rounded-full bg-[#1a1a18] font-heading text-xl text-[#f5f0e8]">
+          F
+        </div>
+        <p className="mt-7 text-xs font-semibold tracking-[.14em] text-[#4a5c58] uppercase">
+          FormPoesie
+        </p>
+        <h1 className="mt-2 font-heading text-4xl leading-none">Masterbrain</h1>
+        <p className="mt-4 text-sm leading-6 text-muted-foreground">
+          Keine ChatGPT-Anmeldung. Melde dich mit demselben FormPoesie-Konto wie
+          in deiner Inventarverwaltung an.
+        </p>
+        <div className="mt-7 space-y-3">
+          <Input
+            aria-label="FormPoesie E-Mail-Adresse"
+            type="email"
+            autoComplete="username"
+            placeholder="E-Mail-Adresse"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && email && password) connect();
+            }}
+          />
+          <Input
+            aria-label="FormPoesie Passwort"
+            type="password"
+            autoComplete="current-password"
+            placeholder="Passwort"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && email && password) connect();
+            }}
+          />
+        </div>
+        {error ? (
+          <p className="mt-3 rounded-xl border border-[#b5895a]/40 bg-[#fff8ef] p-3 text-sm">
+            {error}
+          </p>
+        ) : null}
+        <Button
+          className="mt-4 h-11 w-full rounded-full bg-[#1a1a18]"
+          onClick={connect}
+          disabled={loading || !email || !password}
+        >
+          {loading ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <ShieldCheck className="size-4" />
+          )}
+          Sicher anmelden
+        </Button>
+        <p className="mt-5 text-center text-xs leading-5 text-muted-foreground">
+          Dein Passwort wird nicht im Masterbrain gespeichert.
+        </p>
+      </section>
+    </main>
+  );
+}
+
 function NewsCalendar() {
   const [archive, setArchive] = useState<CalendarArchive | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1741,7 +1854,7 @@ function InventoryHub({
   items: InventoryItem[];
   search: string;
   setSearch: (value: string) => void;
-  refresh: () => void | Promise<void>;
+  refresh: () => void | Promise<boolean>;
   createListing: (item: InventoryItem) => void;
 }) {
   const filtered = items.filter((item) =>

@@ -1,8 +1,11 @@
 import { env } from 'cloudflare:workers';
+import { requireInventoryAdmin } from '@/lib/inventory-bridge';
 
 const allowed = new Set(['image/jpeg', 'image/png']);
 
 export async function POST(request: Request) {
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   try {
     const form = await request.formData();
     const file = form.get('file');
@@ -70,6 +73,8 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const denied = await requireInventoryAdmin(request);
+  if (denied) return denied;
   const assetId = new URL(request.url).searchParams.get('id');
   if (!assetId) return Response.json({ error: 'ID fehlt.' }, { status: 400 });
   const asset = await env.DB.prepare(
