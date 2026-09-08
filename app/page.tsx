@@ -1724,7 +1724,7 @@ function MasterbrainInfo({
               Modell des Monats
             </div>
             <div className="mt-1 font-medium">
-              Aktiv · am 1. und nach jeder Buchung
+              Aktiv · am 1. und nach jeder Verkaufserfassung
             </div>
           </div>
         </section>
@@ -1734,7 +1734,7 @@ function MasterbrainInfo({
           {[
             [
               'Wochen-Erfolge',
-              'Gezählt wird von Montag 00:00 Uhr bis jetzt. Verkaufte Artikel sind die summierten Stückzahlen; Buchungen sind die einzelnen Verkaufsvorgänge. Umsatz umfasst Markt- und Onlineverkäufe. Der stärkste Artikel ist das Modell mit der höchsten Stückzahl.',
+              'Gezählt wird von Montag 00:00 Uhr bis jetzt. Verkaufte Artikel sind die summierten Stückzahlen. Umsatz umfasst Markt- und Onlineverkäufe. Der stärkste Artikel ist das Modell mit der höchsten Stückzahl.',
             ],
             [
               'Tagesnews',
@@ -1746,7 +1746,7 @@ function MasterbrainInfo({
             ],
             [
               'Modell des Monats',
-              'Markt- und Onlineverkäufe werden nach verkauften Stückzahlen zusammengeführt; stornierte Verkäufe zählen nicht. Das Modell mit den meisten Stück gewinnt. Angezeigt werden seine Stückzahl, alle im Monat verkauften Artikel und die Zahl der Buchungen. Vergangene Monate aktualisieren sich bei Nachträgen.',
+              'Markt- und Onlineverkäufe werden nach verkauften Stückzahlen zusammengeführt; stornierte Verkäufe zählen nicht. Das Modell mit den meisten verkauften Exemplaren gewinnt. Angezeigt werden seine Stückzahl und alle im Monat verkauften Artikel. Vergangene Monate aktualisieren sich bei Nachträgen.',
             ],
             [
               'Artikelkosten & Marge',

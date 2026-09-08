@@ -204,7 +204,7 @@ export async function rebuildMonthlyProductHighlights(accessToken: string) {
       ).bind(
         'model-of-month-' + item.month,
         `Modell des Monats · ${monthTitle(item.month)}`,
-        `${item.productName}: ${item.productQuantity} verkaufte Stück von ${item.totalQuantity} insgesamt · ${item.transactionCount} Buchungen`,
+        `${item.productName}: ${item.productQuantity} verkaufte Artikel von ${item.totalQuantity} insgesamt`,
         publicationInstant(item.month),
         JSON.stringify(item),
       ),
