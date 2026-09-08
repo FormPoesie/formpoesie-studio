@@ -8,6 +8,7 @@ import {
   type ProductInput,
 } from '../lib/listing-engine';
 import {
+  buyerWorldFromCategory,
   canManageInventory,
   normalizeInventoryProduct,
 } from '../lib/inventory-bridge';
@@ -127,6 +128,40 @@ void test('Inventarartikel werden mit Produktionsdaten normalisiert, ohne Maßac
   assert.equal(item.weightGrams, 163);
   assert.equal(item.widthMm, null);
   assert.equal(item.size, '11,3x6,4x15cm');
+});
+
+void test('Etsy-Übernahme behält alle Varianten und leitet Käuferwelt sowie Lizenz ab', () => {
+  const item = normalizeInventoryProduct({
+    id: 42,
+    name: 'Sensenmann',
+    category: 'Halloween',
+    commercial_license: true,
+    designer: { name: 'Studio X' },
+    image_uri: 'produkte/42/hero.webp',
+    variants: [
+      {
+        id: 1,
+        name: 'Klein',
+        grams: 100,
+        print_minutes: 120,
+        production_cost_cents: 250,
+        price_cents: 1800,
+      },
+      {
+        id: 2,
+        name: 'Groß',
+        grams: 240,
+        print_minutes: 300,
+        production_cost_cents: 520,
+        price_cents: 3000,
+      },
+    ],
+  });
+  assert.equal(item.variants.length, 2);
+  assert.equal(item.buyerWorld, 'Dark & Gothic');
+  assert.equal(item.designOrigin, 'Lizenz von Studio X');
+  assert.equal(item.imagePath, 'produkte/42/hero.webp');
+  assert.equal(buyerWorldFromCategory('Pflanzenhalter'), 'Botanical');
 });
 
 void test('Verwaltung ist nur für Jasmin und Marlon freigegeben', () => {

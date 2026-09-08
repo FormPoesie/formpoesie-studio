@@ -52,6 +52,27 @@ body {
   font-family: var(--font-oxygen), Arial, Helvetica, sans-serif;
 }
 
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+button,
+input,
+select,
+textarea {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 :root {
   --background: #f5f0e8;
   --foreground: #1a1a18;

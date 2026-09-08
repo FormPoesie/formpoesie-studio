@@ -494,7 +494,7 @@ export async function GET(request: Request) {
       { status: 401 },
     );
   const area = new URL(request.url).searchParams.get('area') || 'products';
-  if (['sales', 'months', 'account', 'trash'].includes(area)) {
+  if (['sales', 'months', 'trash'].includes(area)) {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }

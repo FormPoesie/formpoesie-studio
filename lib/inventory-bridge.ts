@@ -4,6 +4,20 @@ export const INVENTORY_SUPABASE_URL =
 export const INVENTORY_SUPABASE_KEY =
   'sb_publishable_yAw5Bg7jxpPa-ddCR3GIrA_Vya3lKsQ';
 
+export type InventoryVariant = {
+  id: number | string;
+  name: string;
+  sku: string;
+  material: string;
+  size: string;
+  color: string;
+  setSize: number;
+  weightGrams: number | null;
+  printHours: number | null;
+  productionCost: number | null;
+  currentPrice: number | null;
+};
+
 export type InventoryItem = {
   id: number | string;
   modelName: string;
@@ -20,6 +34,16 @@ export type InventoryItem = {
   currentPrice: number | null;
   stockQuantity: number;
   complete: boolean;
+  category: string;
+  imagePath: string;
+  designOrigin: string;
+  buyerWorld:
+    | 'Kunst & Skulptur'
+    | 'Dark & Gothic'
+    | 'Botanical'
+    | 'Functional Art';
+  variants: InventoryVariant[];
+  updatedAt: string;
 };
 
 type UnknownRow = Record<string, unknown>;
@@ -36,6 +60,50 @@ function stringValue(value: unknown, fallback = '') {
 
 function rows(value: unknown) {
   return Array.isArray(value) ? (value as UnknownRow[]) : [];
+}
+
+function materialName(row: UnknownRow) {
+  const material =
+    row.material && typeof row.material === 'object'
+      ? (row.material as UnknownRow)
+      : {};
+  return stringValue(material.name || material.label).trim();
+}
+
+export function buyerWorldFromCategory(
+  category: unknown,
+): InventoryItem['buyerWorld'] {
+  const value = stringValue(category).toLocaleLowerCase('de');
+  if (/halloween|goth|dunkel|horror|myth|drache|dämon|totenkopf/.test(value))
+    return 'Dark & Gothic';
+  if (/pflanz|botani|blume|garten|natur|tier/.test(value)) return 'Botanical';
+  if (
+    /funktion|halter|aufbewahr|organis|küche|bad|lampe|dose|schale/.test(value)
+  )
+    return 'Functional Art';
+  return 'Kunst & Skulptur';
+}
+
+function designOriginFromProduct(product: UnknownRow) {
+  const license = product.commercial_license;
+  const designer =
+    product.designer && typeof product.designer === 'object'
+      ? stringValue((product.designer as UnknownRow).name).trim()
+      : '';
+  if (typeof license === 'string' && license.trim()) {
+    const normalized = license.trim();
+    if (/^(true|yes|ja)$/i.test(normalized))
+      return designer ? `Lizenz von ${designer}` : 'Kommerzielle Lizenz';
+    if (/^(false|no|nein)$/i.test(normalized))
+      return designer
+        ? `Entwurf von ${designer} · Lizenzstatus prüfen`
+        : 'Eigenes Design';
+    return designer ? `${designer} · ${normalized}` : normalized;
+  }
+  if (license === true)
+    return designer ? `Lizenz von ${designer}` : 'Kommerzielle Lizenz';
+  if (designer) return `Entwurf von ${designer} · Lizenzstatus prüfen`;
+  return license === false ? 'Eigenes Design' : '';
 }
 
 export function normalizeInventoryProduct(product: UnknownRow): InventoryItem {
@@ -87,10 +155,69 @@ export function normalizeInventoryProduct(product: UnknownRow): InventoryItem {
   const productionCost =
     productionCostCents == null ? null : productionCostCents / 100;
   const printHours = printMinutes == null ? null : printMinutes / 60;
+  const normalizedVariants: InventoryVariant[] = variants.map(
+    (variant, index) => {
+      const variantFilaments = filaments.filter(
+        (filament) =>
+          stringValue(
+            filament.product_variant_id || filament.productVariantId,
+          ) === stringValue(variant.id),
+      );
+      const variantWeight =
+        variantFilaments.reduce(
+          (sum, item) =>
+            sum +
+            (numberValue(item.grams) || 0) +
+            (numberValue(item.waste_grams) || 0),
+          0,
+        ) || numberValue(variant.grams);
+      const variantMinutes =
+        numberValue(variant.print_minutes) ||
+        variantFilaments.reduce(
+          (sum, item) => sum + (numberValue(item.print_minutes) || 0),
+          0,
+        ) ||
+        null;
+      const variantCost = numberValue(variant.production_cost_cents);
+      const variantPrice = numberValue(variant.price_cents);
+      return {
+        id: stringValue(variant.id, `variant-${index + 1}`),
+        name: stringValue(
+          variant.name || variant.size,
+          `Variante ${index + 1}`,
+        ),
+        sku: stringValue(variant.sku),
+        material: materialName(variant) || material,
+        size: stringValue(variant.size).trim(),
+        color: stringValue(variant.appearance || variant.color).trim(),
+        setSize: numberValue(variant.quantity) || 1,
+        weightGrams: variantWeight,
+        printHours: variantMinutes == null ? null : variantMinutes / 60,
+        productionCost: variantCost == null ? null : variantCost / 100,
+        currentPrice: variantPrice == null ? null : variantPrice / 100,
+      };
+    },
+  );
+  if (!normalizedVariants.length) {
+    normalizedVariants.push({
+      id: 'standard',
+      name: size || 'Standard',
+      sku: stringValue(product.sku),
+      material,
+      size,
+      color: '',
+      setSize: 1,
+      weightGrams,
+      printHours,
+      productionCost,
+      currentPrice: priceCents == null ? null : priceCents / 100,
+    });
+  }
+  const category = stringValue(product.category, '3D-gedrucktes Objekt');
   return {
     id: stringValue(product.id),
     modelName: stringValue(product.name, 'Unbenannter Artikel'),
-    productType: stringValue(product.category, '3D-gedrucktes Objekt'),
+    productType: category,
     sku: stringValue(product.sku),
     material,
     size,
@@ -103,6 +230,15 @@ export function normalizeInventoryProduct(product: UnknownRow): InventoryItem {
     currentPrice: priceCents == null ? null : priceCents / 100,
     stockQuantity: numberValue(product.stock_quantity) || 0,
     complete: Boolean(material && weightGrams && printHours && productionCost),
+    category,
+    imagePath: stringValue(
+      variants.find((variant) => stringValue(variant.image_url))?.image_url ||
+        product.image_uri,
+    ),
+    designOrigin: designOriginFromProduct(product),
+    buyerWorld: buyerWorldFromCategory(category),
+    variants: normalizedVariants,
+    updatedAt: stringValue(product.updated_at || product.created_at),
   };
 }
 

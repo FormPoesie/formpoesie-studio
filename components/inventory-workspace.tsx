@@ -39,7 +39,10 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import type { InventoryItem } from '@/lib/inventory-bridge';
+import {
+  buyerWorldFromCategory,
+  type InventoryItem,
+} from '@/lib/inventory-bridge';
 import { PRINTERS, variantCostBreakdown } from '@/lib/inventory-production';
 
 type Row = Record<string, unknown>;
@@ -197,10 +200,46 @@ function inventoryItem(product: Row): InventoryItem {
     number(firstVariant.productionCostCents);
   const price =
     number(product.defaultPriceCents) || number(firstVariant.priceCents);
+  const category = string(product.category, '3D-gedrucktes Objekt');
+  const normalizedVariants = variants.length
+    ? variants.map((variant, index) => ({
+        id: string(variant.id, `variant-${index + 1}`),
+        name: string(variant.name || variant.size, `Variante ${index + 1}`),
+        sku: string(variant.sku),
+        material: string(object(variant.material).name, material),
+        size: string(variant.size),
+        color: string(variant.appearance || variant.color),
+        setSize: number(variant.quantity, 1),
+        weightGrams: number(variant.grams) || null,
+        printHours: number(variant.printMinutes)
+          ? number(variant.printMinutes) / 60
+          : null,
+        productionCost: number(variant.productionCostCents)
+          ? number(variant.productionCostCents) / 100
+          : null,
+        currentPrice: number(variant.priceCents)
+          ? number(variant.priceCents) / 100
+          : null,
+      }))
+    : [
+        {
+          id: 'standard',
+          name: string(firstVariant.size || product.size, 'Standard'),
+          sku: string(product.sku),
+          material,
+          size: string(firstVariant.size || product.size),
+          color: '',
+          setSize: 1,
+          weightGrams: weight || null,
+          printHours: printMinutes ? printMinutes / 60 : null,
+          productionCost: productionCost ? productionCost / 100 : null,
+          currentPrice: price ? price / 100 : null,
+        },
+      ];
   return {
     id: string(product.id),
     modelName: string(product.name, 'Unbenannter Artikel'),
-    productType: string(product.category, '3D-gedrucktes Objekt'),
+    productType: category,
     sku: string(product.sku),
     material,
     size: string(firstVariant.size || product.size),
@@ -213,6 +252,14 @@ function inventoryItem(product: Row): InventoryItem {
     currentPrice: price ? price / 100 : null,
     stockQuantity: number(product.stockQuantity),
     complete: Boolean(material && weight && printMinutes && productionCost),
+    category,
+    imagePath: productImagePath(product),
+    designOrigin: boolean(product.commercialLicense)
+      ? 'Kommerzielle Lizenz'
+      : 'Eigenes Design',
+    buyerWorld: buyerWorldFromCategory(category),
+    variants: normalizedVariants,
+    updatedAt: string(product.updatedAt || product.createdAt),
   };
 }
 
@@ -251,7 +298,7 @@ function Field({
 
 export function InventoryWorkspace({
   onCreateListing,
-  initialArea = 'overview',
+  initialArea = 'products',
   initialProductId = '',
   canManage = false,
 }: {
@@ -431,6 +478,24 @@ export function InventoryWorkspace({
     else await refresh();
   }
 
+  async function bulkPatchProducts(ids: string[], values: Row) {
+    const responses = await Promise.all(
+      ids.map((id) =>
+        fetch('/api/inventory/workspace', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entity: 'products', id, values }),
+        }),
+      ),
+    );
+    if (responses.some((response) => !response.ok)) {
+      setError('Nicht alle ausgewählten Artikel konnten geändert werden.');
+      return false;
+    }
+    await fetchArea('products');
+    return true;
+  }
+
   async function copyMarket(row: Row) {
     const response = await fetch('/api/inventory/workspace', {
       method: 'POST',
@@ -457,6 +522,18 @@ export function InventoryWorkspace({
   const markets = rows(data.markets?.markets);
   const online = rows(data.online?.onlineSales);
   const cashTasks = rows(data.online?.fulfillmentTasks);
+  const inventoryContext = ['overview', 'products', 'materials'].includes(
+    active,
+  );
+  const visibleSections = inventoryContext
+    ? sections.filter((section) =>
+        ['products', 'materials'].includes(section.id),
+      )
+    : sections.filter((section) => section.id === active);
+  const pageTitle = inventoryContext
+    ? 'Inventar'
+    : sections.find((section) => section.id === active)?.label ||
+      'FORMPOESIE STUDIO';
 
   return (
     <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-9">
@@ -466,11 +543,12 @@ export function InventoryWorkspace({
             Ein System · echte Inventardaten
           </p>
           <h1 className="mt-2 font-heading text-4xl leading-none md:text-5xl">
-            Inventar
+            {pageTitle}
           </h1>
           <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-            Artikel, Material, Märkte, Verkäufe und Auswertungen werden direkt
-            in derselben FormPoesie-Datenbank bearbeitet.
+            {inventoryContext
+              ? 'Artikel und Material werden direkt in derselben FormPoesie-Datenbank bearbeitet.'
+              : 'Dieser Bereich nutzt dieselben zentralen Artikel-, Bestands- und Verkaufsdaten.'}
           </p>
         </div>
         <Button
@@ -487,7 +565,7 @@ export function InventoryWorkspace({
         className="mt-6 flex gap-2 overflow-x-auto pb-2"
         aria-label="Inventarbereiche"
       >
-        {sections
+        {visibleSections
           .filter(
             (section) =>
               canManage ||
@@ -549,6 +627,7 @@ export function InventoryWorkspace({
             });
           }}
           onListing={(row) => onCreateListing(inventoryItem(row))}
+          onBulkEdit={bulkPatchProducts}
         />
       ) : null}
       {active === 'materials' ? (
@@ -786,6 +865,7 @@ function Products({
   onTrash,
   onArchive,
   onListing,
+  onBulkEdit,
 }: {
   data: AreaData;
   search: string;
@@ -797,17 +877,20 @@ function Products({
   onTrash: (row: Row) => void;
   onArchive: (row: Row) => void;
   onListing: (row: Row) => void;
+  onBulkEdit: (ids: string[], values: Row) => Promise<boolean>;
 }) {
-  const [mainFilter, setMainFilter] = useState<
-    'all' | 'missing' | 'empty' | 'margin'
-  >('all');
+  const [mainFilter, setMainFilter] = useState<'all' | 'missing'>('all');
   const [category, setCategory] = useState('');
   const [familyId, setFamilyId] = useState('');
   const [designerId, setDesignerId] = useState('');
   const [sort, setSort] = useState<
-    'name' | 'marginHigh' | 'marginLow' | 'costHigh' | 'costLow' | 'printTime'
+    'name' | 'margin' | 'cost' | 'printTime' | 'updated'
   >('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [moreFilters, setMoreFilters] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkCategory, setBulkCategory] = useState('');
+  const [bulkSaving, setBulkSaving] = useState(false);
   const source = rows(data.products);
   const components = rows(data.components);
   const metrics = (product: Row) =>
@@ -869,37 +952,26 @@ function Products({
     if (familyId && string(product.familyId) !== familyId) return false;
     if (designerId && string(product.designerId) !== designerId) return false;
     if (mainFilter === 'missing' && !productMissing(product)) return false;
-    if (
-      mainFilter === 'empty' &&
-      rows(product.variants).reduce(
-        (sum, variant) => sum + number(variant.quantity),
-        0,
-      ) > 0
-    )
-      return false;
-    if (
-      mainFilter === 'margin' &&
-      averageMargin(product) != null &&
-      (averageMargin(product) as number) >= 0
-    )
-      return false;
     return true;
   });
   products.sort((a, b) => {
-    if (sort === 'marginHigh')
-      return (averageMargin(b) ?? -Infinity) - (averageMargin(a) ?? -Infinity);
-    if (sort === 'marginLow')
-      return (averageMargin(a) ?? Infinity) - (averageMargin(b) ?? Infinity);
     const costA = Math.max(0, ...metrics(a).map((item) => item.totalCents));
     const costB = Math.max(0, ...metrics(b).map((item) => item.totalCents));
-    if (sort === 'costHigh') return costB - costA;
-    if (sort === 'costLow') return costA - costB;
-    if (sort === 'printTime')
-      return (
-        Math.max(0, ...metrics(b).map((item) => item.printMinutes)) -
-        Math.max(0, ...metrics(a).map((item) => item.printMinutes))
+    let comparison = 0;
+    if (sort === 'margin')
+      comparison =
+        (averageMargin(a) ?? -Infinity) - (averageMargin(b) ?? -Infinity);
+    else if (sort === 'cost') comparison = costA - costB;
+    else if (sort === 'printTime')
+      comparison =
+        Math.max(0, ...metrics(a).map((item) => item.printMinutes)) -
+        Math.max(0, ...metrics(b).map((item) => item.printMinutes));
+    else if (sort === 'updated')
+      comparison = string(a.updatedAt || a.createdAt).localeCompare(
+        string(b.updatedAt || b.createdAt),
       );
-    return string(a.name).localeCompare(string(b.name), 'de');
+    else comparison = string(a.name).localeCompare(string(b.name), 'de');
+    return sortDirection === 'asc' ? comparison : -comparison;
   });
   const categories = [
     ...new Set(source.map((item) => string(item.category)).filter(Boolean)),
@@ -957,8 +1029,6 @@ function Products({
           [
             ['all', 'Alle'],
             ['missing', 'Daten fehlen'],
-            ['empty', 'Nichts auf Lager'],
-            ['margin', 'Marge unklar'],
           ] as const
         ).map(([value, label]) => (
           <Button
@@ -976,13 +1046,62 @@ function Products({
           onClick={() => setMoreFilters((value) => !value)}
         >
           Weitere Filter
-          {[category, familyId, designerId, sort !== 'name' ? sort : ''].filter(
-            Boolean,
-          ).length
-            ? ` (${[category, familyId, designerId, sort !== 'name' ? sort : ''].filter(Boolean).length})`
+          {[
+            category,
+            familyId,
+            designerId,
+            sort !== 'name' || sortDirection !== 'asc' ? sort : '',
+          ].filter(Boolean).length
+            ? ` (${[category, familyId, designerId, sort !== 'name' || sortDirection !== 'asc' ? sort : ''].filter(Boolean).length})`
             : ''}
         </Button>
       </div>
+      {selectedIds.length ? (
+        <div className="sticky top-20 z-10 mt-3 flex flex-col gap-3 rounded-2xl border border-[var(--fp-primary)]/35 bg-[#eef1ec] p-3 shadow-sm sm:flex-row sm:items-center">
+          <div className="min-w-0 flex-1 text-sm font-medium">
+            {selectedIds.length} Artikel ausgewählt
+          </div>
+          <select
+            value={bulkCategory}
+            onChange={(event) => setBulkCategory(event.target.value)}
+            className="h-9 rounded-lg border bg-white px-3 text-sm"
+          >
+            <option value="">Kategorie beibehalten</option>
+            {categories.map((item) => (
+              <option key={item}>{item}</option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            disabled={!bulkCategory || bulkSaving}
+            onClick={async () => {
+              setBulkSaving(true);
+              const saved = await onBulkEdit(selectedIds, {
+                category: bulkCategory,
+              });
+              setBulkSaving(false);
+              if (saved) {
+                setSelectedIds([]);
+                setBulkCategory('');
+              }
+            }}
+          >
+            {bulkSaving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Pencil className="size-4" />
+            )}
+            Gemeinsam ändern
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setSelectedIds([])}
+          >
+            Auswahl aufheben
+          </Button>
+        </div>
+      ) : null}
       {moreFilters ? (
         <div className="mt-3 grid gap-3 rounded-2xl border bg-white/55 p-4 sm:grid-cols-2 xl:grid-cols-4">
           <label className="grid gap-1 text-xs text-muted-foreground">
@@ -1028,20 +1147,36 @@ function Products({
               ))}
             </select>
           </label>
-          <label className="grid gap-1 text-xs text-muted-foreground">
+          <label className="grid gap-1 text-xs text-muted-foreground xl:col-span-1">
             Sortierung
-            <select
-              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-              value={sort}
-              onChange={(event) => setSort(event.target.value as typeof sort)}
-            >
-              <option value="name">A–Z</option>
-              <option value="marginHigh">Höchste Marge</option>
-              <option value="marginLow">Niedrigste Marge</option>
-              <option value="costHigh">Teuerste Produktion</option>
-              <option value="costLow">Billigste Produktion</option>
-              <option value="printTime">Längster Druck</option>
-            </select>
+            <span className="grid grid-cols-[1fr_auto] gap-2">
+              <select
+                className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                value={sort}
+                onChange={(event) => setSort(event.target.value as typeof sort)}
+              >
+                <option value="name">Alphabetisch</option>
+                <option value="margin">Marge</option>
+                <option value="cost">Produktionskosten</option>
+                <option value="printTime">Druckdauer</option>
+                <option value="updated">Zuletzt bearbeitet</option>
+              </select>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label={
+                  sortDirection === 'asc' ? 'Aufsteigend' : 'Absteigend'
+                }
+                onClick={() =>
+                  setSortDirection((value) =>
+                    value === 'asc' ? 'desc' : 'asc',
+                  )
+                }
+              >
+                {sortDirection === 'asc' ? '↑' : '↓'}
+              </Button>
+            </span>
           </label>
         </div>
       ) : null}
@@ -1057,7 +1192,7 @@ function Products({
           label="gebunden · Kalkulation fehlt"
         />
       </div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {products.map((product) => {
           const variants = rows(product.variants);
           const price = variants.length
@@ -1086,8 +1221,30 @@ function Products({
           return (
             <article
               key={string(product.id)}
-              className="overflow-hidden rounded-[24px] border bg-white/65 p-3"
+              className={
+                'relative overflow-hidden rounded-[24px] border bg-white/65 p-3 ' +
+                (selectedIds.includes(string(product.id))
+                  ? 'ring-2 ring-[var(--fp-primary)]'
+                  : '')
+              }
             >
+              <label
+                className="absolute top-5 left-5 z-10 grid size-9 cursor-pointer place-items-center rounded-full border bg-white/90 shadow-sm"
+                aria-label={string(product.name) + ' auswählen'}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(string(product.id))}
+                  onChange={(event) =>
+                    setSelectedIds((current) =>
+                      event.target.checked
+                        ? [...current, string(product.id)]
+                        : current.filter((id) => id !== string(product.id)),
+                    )
+                  }
+                  className="size-4"
+                />
+              </label>
               <InventoryImage product={product} alt={string(product.name)} />
               <div className="p-2 pt-4">
                 <div className="flex items-start justify-between gap-2">

@@ -10,6 +10,7 @@ export type AccountItem = {
   email?: string;
   expiresAt?: string;
   ongoing?: boolean;
+  status?: 'active' | 'cancelled';
   profileUrl?: string;
   note?: string;
   licensed?: boolean;

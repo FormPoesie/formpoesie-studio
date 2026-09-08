@@ -13,7 +13,7 @@ export async function GET(request: Request) {
       { status: 401 },
     );
   const select =
-    '*,filaments:product_filaments(*,material:materials(*)),variants:product_variants(*,material:materials(*))';
+    '*,designer:designers(*),filaments:product_filaments(*,material:materials(*)),variants:product_variants(*,material:materials(*))';
   const response = await fetch(
     INVENTORY_SUPABASE_URL +
       '/rest/v1/products?deleted_at=is.null&order=name.asc&select=' +

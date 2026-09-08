@@ -15,9 +15,9 @@ const cormorant = Cormorant_Infant({
 });
 
 export const metadata: Metadata = {
-  title: 'FormPoesie Masterbrain',
+  title: 'FORMPOESIE STUDIO',
   description:
-    'Zentrale Arbeitsfläche für Inventar, Etsy-Listings, Produktbilder und den automatisierten News-Kalender.',
+    'Interne Arbeitsfläche für Inventar, Verkäufe, Etsy, Produktbilder und News.',
   icons: {
     icon: [
       { url: '/favicon.png', type: 'image/png', sizes: '96x96' },

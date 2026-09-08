@@ -15,6 +15,8 @@ type Activity = {
   occurredAt: string;
   productId: string | null;
   calendarEntryId: string | null;
+  imageUrl: string | null;
+  imageAlt: string | null;
 };
 
 function todayInBerlin() {
@@ -40,7 +42,9 @@ export async function GET(request: Request) {
       `SELECT id, kind, title, detail, source_url AS sourceUrl,
               occurred_at AS occurredAt,
               json_extract(payload_json, '$.productId') AS productId,
-              json_extract(payload_json, '$.id') AS calendarEntryId
+              json_extract(payload_json, '$.id') AS calendarEntryId,
+              json_extract(payload_json, '$.bild.url') AS imageUrl,
+              json_extract(payload_json, '$.bild.alt') AS imageAlt
        FROM activity_events
        WHERE ((kind = 'calendar-news'
                AND substr(json_extract(payload_json, '$.erfasstAm'), 1, 10) = ?)

@@ -6,8 +6,10 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   Boxes,
   CalendarDays,
+  Camera,
   Check,
   CheckCircle2,
   ClipboardList,
@@ -23,18 +25,23 @@ import {
   Link2,
   Loader2,
   Lock,
+  MoreHorizontal,
+  Music2,
   Package,
   Palette,
   Plus,
+  Pin,
   RefreshCw,
   RotateCcw,
   Search,
   Settings2,
   ShieldCheck,
+  ShoppingCart,
   Sparkles,
   Trash2,
   Truck,
   Upload,
+  WalletCards,
   Warehouse,
   MapPin,
   X,
@@ -48,6 +55,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
@@ -154,6 +168,7 @@ type AccountItem = {
   email?: string;
   expiresAt?: string;
   ongoing?: boolean;
+  status?: 'active' | 'cancelled';
   profileUrl?: string;
   note?: string;
   licensed?: boolean;
@@ -228,6 +243,13 @@ const navGroups = [
     ],
   },
   {
+    label: 'Katalog & Bestellungen',
+    items: [
+      ['Kataloge', BookOpen],
+      ['Bestellformular', ShoppingCart],
+    ],
+  },
+  {
     label: 'Verwaltung',
     restricted: true,
     items: [
@@ -285,8 +307,11 @@ export default function Home() {
   const [draftModule, setDraftModule] = useState<'workflow' | null>(null);
   const [contentCalendarOpen, setContentCalendarOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
+  const [catalogsOpen, setCatalogsOpen] = useState(false);
+  const [orderFormOpen, setOrderFormOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeName, setActiveName] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -339,6 +364,8 @@ export default function Home() {
     setInventoryOpen(false);
     setContentCalendarOpen(false);
     setAccountsOpen(false);
+    setCatalogsOpen(false);
+    setOrderFormOpen(false);
     setTrashOpen(false);
     setDraftModule(null);
   }
@@ -351,10 +378,7 @@ export default function Home() {
   }
 
   function openInventory(area: InventoryArea = 'overview', productId = '') {
-    if (
-      ['sales', 'months', 'account', 'trash'].includes(area) &&
-      !inventoryCanManage
-    )
+    if (['sales', 'months', 'trash'].includes(area) && !inventoryCanManage)
       return;
     setActiveProduct(null);
     closeModules();
@@ -388,7 +412,20 @@ export default function Home() {
       setActiveProduct(null);
       closeModules();
       setAccountsOpen(true);
+    } else if (label === 'Kataloge') {
+      setActiveProduct(null);
+      closeModules();
+      setCatalogsOpen(true);
+    } else if (label === 'Bestellformular') {
+      setActiveProduct(null);
+      closeModules();
+      setOrderFormOpen(true);
     }
+  }
+
+  function openMobileNavigation(label: string) {
+    setMobileNavOpen(false);
+    openNavigation(label);
   }
 
   function navigationActive(label: string) {
@@ -399,6 +436,8 @@ export default function Home() {
         !inventoryOpen &&
         !contentCalendarOpen &&
         !accountsOpen &&
+        !catalogsOpen &&
+        !orderFormOpen &&
         !draftModule &&
         !trashOpen
       );
@@ -416,6 +455,8 @@ export default function Home() {
     if (label === 'News-Kalender') return calendarOpen;
     if (label === 'Content-Kalender') return contentCalendarOpen;
     if (label === 'Konten & Abos') return accountsOpen;
+    if (label === 'Kataloge') return catalogsOpen;
+    if (label === 'Bestellformular') return orderFormOpen;
     return false;
   }
 
@@ -519,14 +560,21 @@ export default function Home() {
   }
 
   function useInventoryItem(item: InventoryItem) {
+    const primaryVariant = item.variants[0];
     setSelectedInventory(item);
     setForm((current) => ({
       ...current,
       inventorySourceId: String(item.id),
       modelName: item.modelName,
       productType: item.productType,
+      buyerWorld: item.buyerWorld,
       sku: item.sku,
       material: item.material,
+      designOrigin: item.designOrigin,
+      kind: item.buyerWorld === 'Functional Art' ? 'functional' : 'sculpture',
+      variantName: primaryVariant?.name || item.size || 'Standard',
+      color: primaryVariant?.color || '',
+      setSize: String(primaryVariant?.setSize || 1),
       widthMm: item.widthMm == null ? '' : String(item.widthMm),
       heightMm: item.heightMm == null ? '' : String(item.heightMm),
       depthMm: item.depthMm == null ? '' : String(item.depthMm),
@@ -679,6 +727,23 @@ export default function Home() {
         activeMinutes: parseNumber(form.activeMinutes),
         failureRate: (parseNumber(form.failureRate) || 0) / 100,
       },
+      variants:
+        selectedInventory && form.inventorySourceId
+          ? selectedInventory.variants.map((variant) => ({
+              inventoryVariantId: String(variant.id),
+              name: variant.name,
+              sku: variant.sku || undefined,
+              color: variant.color || undefined,
+              material: variant.material || form.material || undefined,
+              setSize: variant.setSize || 1,
+              weightGrams: variant.weightGrams,
+              printHours: variant.printHours,
+              activeMinutes: null,
+              failureRate: (parseNumber(form.failureRate) || 0) / 100,
+              recordedProductionCost: variant.productionCost,
+              currentPrice: variant.currentPrice,
+            }))
+          : undefined,
       costs: {
         recordedProductionCost: parseNumber(form.recordedProductionCost),
         materialPerKg: parseNumber(form.materialPerKg),
@@ -1007,7 +1072,7 @@ export default function Home() {
         <div className="text-center">
           <Loader2 className="mx-auto size-7 animate-spin text-[#4a5c58]" />
           <p className="mt-3 text-sm text-muted-foreground">
-            FormPoesie Masterbrain wird geöffnet …
+            FORMPOESIE STUDIO wird geöffnet …
           </p>
         </div>
       </main>
@@ -1043,13 +1108,20 @@ export default function Home() {
     >
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[228px] flex-col border-r border-white/8 bg-[var(--fp-ink)] px-4 py-5 text-[var(--fp-paper)] lg:flex">
         <div className="flex items-center gap-3 px-2">
-          <div className="grid size-9 place-items-center rounded-full border border-[var(--fp-paper)]/25 text-sm font-semibold">
-            F
-          </div>
+          <Image
+            src="/icon-192.png"
+            width={36}
+            height={36}
+            alt="FormPoesie Logo"
+            className="size-9 rounded-lg object-contain"
+            priority
+          />
           <div>
-            <div className="font-heading text-lg leading-none">FormPoesie</div>
+            <div className="text-sm font-semibold leading-none tracking-wide">
+              FORMPOESIE STUDIO
+            </div>
             <div className="mt-1 text-[11px] tracking-[.12em] text-[var(--fp-sand)] uppercase">
-              Masterbrain
+              Interne Arbeitsfläche
             </div>
           </div>
         </div>
@@ -1146,7 +1218,91 @@ export default function Home() {
         </div>
       </aside>
 
-      <section className="lg:pl-[228px]">
+      <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[82dvh] overflow-y-auto rounded-t-[28px] border-[#d9d0c3] bg-[#f8f4ed] pb-[calc(1rem+env(safe-area-inset-bottom))] lg:hidden"
+        >
+          <SheetHeader className="border-b px-5 pt-5 pb-4 text-left">
+            <SheetTitle className="font-heading text-2xl">
+              FORMPOESIE STUDIO
+            </SheetTitle>
+            <SheetDescription>Interne Arbeitsfläche</SheetDescription>
+          </SheetHeader>
+          <nav className="space-y-5 px-4 pb-2" aria-label="Mobile Navigation">
+            {navGroups
+              .filter((group) => !('restricted' in group) || inventoryCanManage)
+              .map((group) => (
+                <section key={group.label}>
+                  <h2 className="px-2 text-xs font-semibold tracking-[.12em] text-muted-foreground uppercase">
+                    {group.label}
+                  </h2>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {group.items.map(([label, Icon]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => openMobileNavigation(label)}
+                        className={
+                          'flex min-h-12 items-center gap-3 rounded-2xl border px-4 py-3 text-left text-sm ' +
+                          (navigationActive(label)
+                            ? 'border-[var(--fp-primary)] bg-[var(--fp-primary)] text-white'
+                            : 'bg-white/70')
+                        }
+                      >
+                        <Icon className="size-5 shrink-0" />
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            <section>
+              <h2 className="px-2 text-xs font-semibold tracking-[.12em] text-muted-foreground uppercase">
+                System
+              </h2>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {inventoryCanManage ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileNavOpen(false);
+                      openTrash();
+                    }}
+                    className="flex min-h-12 items-center gap-3 rounded-2xl border bg-white/70 px-4 py-3 text-left text-sm"
+                  >
+                    <Trash2 className="size-5" /> Papierkorb
+                  </button>
+                ) : null}
+                {inventoryCanManage ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileNavOpen(false);
+                      void openSettings();
+                    }}
+                    className="flex min-h-12 items-center gap-3 rounded-2xl border bg-white/70 px-4 py-3 text-left text-sm"
+                  >
+                    <Settings2 className="size-5" /> Profile & Regeln
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileNavOpen(false);
+                    setHelpOpen(true);
+                  }}
+                  className="flex min-h-12 items-center gap-3 rounded-2xl border bg-white/70 px-4 py-3 text-left text-sm"
+                >
+                  <CircleHelp className="size-5" /> Info
+                </button>
+              </div>
+            </section>
+          </nav>
+        </SheetContent>
+      </Sheet>
+
+      <section className="min-w-0 overflow-x-hidden pb-[calc(5.25rem+env(safe-area-inset-bottom))] lg:pl-[228px] lg:pb-0">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-[var(--fp-paper)]/92 px-5 backdrop-blur md:px-8">
           <button
             onClick={() => {
@@ -1161,10 +1317,14 @@ export default function Home() {
             draftModule ||
             contentCalendarOpen ||
             accountsOpen ||
+            catalogsOpen ||
+            orderFormOpen ||
             trashOpen ? (
               <ArrowLeft className="size-4" />
             ) : null}
-            <span className="font-heading text-xl lg:hidden">FormPoesie</span>
+            <span className="text-sm font-semibold tracking-wide lg:hidden">
+              FORMPOESIE STUDIO
+            </span>
             <span className="hidden text-sm text-muted-foreground lg:block">
               {activeProduct
                 ? activeName
@@ -1188,9 +1348,13 @@ export default function Home() {
                         ? 'Content-Kalender'
                         : accountsOpen
                           ? 'Konten & Abos'
-                          : trashOpen
-                            ? 'Papierkorb'
-                            : 'Interne Arbeitsfläche'}
+                          : catalogsOpen
+                            ? 'Kataloge'
+                            : orderFormOpen
+                              ? 'Bestellformular'
+                              : trashOpen
+                                ? 'Papierkorb'
+                                : 'Interne Arbeitsfläche'}
             </span>
           </button>
           <div className="flex items-center gap-3">
@@ -1211,6 +1375,7 @@ export default function Home() {
               href="https://www.etsy.com/de/shop/3DFormPoesie"
               target="_blank"
               rel="noreferrer"
+              className="hidden sm:block"
             >
               <Badge
                 variant="outline"
@@ -1228,8 +1393,11 @@ export default function Home() {
                 <Settings2 className="size-4" />
               </button>
             ) : null}
-            <div
-              className="grid size-8 place-items-center rounded-full bg-[var(--fp-primary)] text-xs font-medium text-white"
+            <button
+              type="button"
+              aria-label="Persönliches Konto öffnen"
+              onClick={() => openInventory('account')}
+              className="grid size-9 place-items-center rounded-full bg-[var(--fp-primary)] text-xs font-medium text-white"
               title={inventoryUserName || inventoryEmail}
             >
               {(inventoryUserName || inventoryEmail || 'FP')
@@ -1238,7 +1406,7 @@ export default function Home() {
                 .slice(0, 2)
                 .map((part) => part[0]?.toLocaleUpperCase('de'))
                 .join('')}
-            </div>
+            </button>
           </div>
         </header>
 
@@ -1273,7 +1441,11 @@ export default function Home() {
         ) : contentCalendarOpen ? (
           <ContentCalendar />
         ) : accountsOpen ? (
-          <AccountsHub onInventory={() => openInventory('overview')} />
+          <AccountsHub onInventory={() => openInventory('products')} />
+        ) : catalogsOpen ? (
+          <CatalogHub />
+        ) : orderFormOpen ? (
+          <OrderFormHub />
         ) : trashOpen ? (
           <TrashBin rows={trashedProducts} onRestore={restoreProduct} />
         ) : !activeProduct ? (
@@ -1305,6 +1477,41 @@ export default function Home() {
           />
         )}
       </section>
+
+      <nav
+        aria-label="Schnellnavigation"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[var(--fp-ink)] px-2 pt-1 text-[var(--fp-paper)] shadow-[0_-8px_30px_rgba(26,26,24,.15)] lg:hidden"
+        style={{ paddingBottom: 'max(.35rem, env(safe-area-inset-bottom))' }}
+      >
+        <div className="mx-auto grid max-w-lg grid-cols-5">
+          {navPrimary.map(([label, Icon]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => openMobileNavigation(label)}
+              className={
+                'flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] transition ' +
+                (navigationActive(label)
+                  ? 'bg-white/12 text-white'
+                  : 'text-[var(--fp-paper)]/65')
+              }
+            >
+              <Icon className="size-5" />
+              <span className="max-w-full truncate">
+                {label === 'Etsy Workflow' ? 'Etsy' : label}
+              </span>
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] text-[var(--fp-paper)]/65"
+          >
+            <MoreHorizontal className="size-5" />
+            <span>Mehr</span>
+          </button>
+        </div>
+      </nav>
 
       <input
         ref={uploadRef}
@@ -1712,13 +1919,20 @@ function AdminLogin({
   return (
     <main className="grid min-h-screen place-items-center bg-[#f5f0e8] px-5 py-10 text-[#1a1a18]">
       <section className="w-full max-w-md rounded-[30px] border border-[#d9d0c3] bg-white/70 p-7 shadow-[0_24px_70px_rgba(40,45,42,.12)] md:p-9">
-        <div className="grid size-12 place-items-center rounded-full bg-[#1a1a18] font-heading text-xl text-[#f5f0e8]">
-          F
-        </div>
+        <Image
+          src="/icon-192.png"
+          width={48}
+          height={48}
+          alt="FormPoesie Logo"
+          className="size-12 rounded-xl object-contain"
+          priority
+        />
         <p className="mt-7 text-xs font-semibold tracking-[.14em] text-[#4a5c58] uppercase">
-          FormPoesie
+          Interne Arbeitsfläche
         </p>
-        <h1 className="mt-2 font-heading text-4xl leading-none">Masterbrain</h1>
+        <h1 className="mt-2 text-3xl font-semibold tracking-wide">
+          FORMPOESIE STUDIO
+        </h1>
         <p className="mt-4 text-sm leading-6 text-muted-foreground">
           Keine ChatGPT-Anmeldung. Melde dich mit demselben FormPoesie-Konto wie
           in deiner Inventarverwaltung an.
@@ -1765,7 +1979,7 @@ function AdminLogin({
           Sicher anmelden
         </Button>
         <p className="mt-5 text-center text-xs leading-5 text-muted-foreground">
-          Dein Passwort wird nicht im Masterbrain gespeichert.
+          Dein Passwort wird nicht im FORMPOESIE STUDIO gespeichert.
         </p>
       </section>
     </main>
@@ -1843,6 +2057,9 @@ function NewsCalendar({ initialEntryId = '' }: { initialEntryId?: string }) {
       ? entry.id === focusedEntryId
       : entry.ereignisDatum === selectedDay,
   );
+  const monthEntries = visibleEntries
+    .filter((entry) => entry.ereignisDatum.startsWith(month))
+    .sort((a, b) => a.ereignisDatum.localeCompare(b.ereignisDatum));
 
   const monthDate = month ? new Date(month + '-01T00:00:00Z') : null;
   const year = monthDate?.getUTCFullYear() || 0;
@@ -2058,81 +2275,139 @@ function NewsCalendar({ initialEntryId = '' }: { initialEntryId?: string }) {
             {error}
           </div>
         ) : (
-          <div className="overflow-x-auto p-3 md:p-5">
-            <div
-              className="grid min-w-[860px] grid-cols-7 gap-2"
-              aria-label="News-Kalender"
-            >
-              {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day) => (
-                <div
-                  key={day}
-                  className="px-2 pb-1 text-xs font-semibold text-muted-foreground"
-                >
-                  {day}
-                </div>
-              ))}
-              {days.map((day, index) => {
-                if (!day)
-                  return (
-                    <div
-                      key={'empty-' + index}
-                      className="min-h-32 rounded-xl bg-[var(--fp-paper)]/45"
-                      aria-hidden="true"
-                    />
-                  );
-                const date = month + '-' + String(day).padStart(2, '0');
-                const events = visibleEntries.filter(
-                  (entry) => entry.ereignisDatum === date,
-                );
+          <>
+            <div className="space-y-2 p-3 lg:hidden">
+              {monthEntries.map((entry) => {
+                const imageUrl = newsImageUrl(entry.bild?.url);
                 return (
                   <button
-                    key={date}
+                    key={entry.id}
                     type="button"
                     onClick={() => {
-                      setFocusedEntryId('');
-                      setSelectedDay(date);
+                      setSelectedDay(null);
+                      setFocusedEntryId(entry.id);
                     }}
-                    aria-label={
-                      formatCalendarDate(date) +
-                      (events.length ? ', ' + events.length + ' Einträge' : '')
-                    }
-                    className={
-                      'min-h-32 rounded-xl border p-2 text-left transition ' +
-                      (events.length
-                        ? 'border-[var(--fp-primary)]/35 bg-[#fbfaf7] hover:border-[var(--fp-primary)]'
-                        : 'border-transparent bg-[var(--fp-paper)]/45')
-                    }
+                    className="flex w-full items-center gap-3 rounded-2xl border bg-white/75 p-3 text-left"
                   >
-                    <span className="text-sm font-semibold">{day}</span>
-                    <span className="mt-2 block space-y-1.5">
-                      {events.slice(0, 2).map((entry) => (
-                        <span
-                          key={entry.id}
-                          className="block rounded-lg border-l-4 bg-white p-1.5 text-[11px] leading-4"
-                          style={{
-                            borderLeftColor:
-                              calendarColors[entry.kategorie] || '#5d707b',
-                          }}
-                        >
-                          <span className="block truncate font-semibold">
-                            {entry.kategorie}
-                          </span>
-                          <span className="line-clamp-2 block text-muted-foreground">
-                            {entry.thema}
-                          </span>
-                        </span>
-                      ))}
-                      {events.length > 2 ? (
-                        <span className="block text-[11px] text-muted-foreground">
-                          +{events.length - 2} weitere
-                        </span>
-                      ) : null}
+                    {imageUrl ? (
+                      <div className="relative size-16 shrink-0 overflow-hidden rounded-xl bg-[var(--fp-mist)]">
+                        <Image
+                          src={imageUrl}
+                          alt=""
+                          fill
+                          unoptimized
+                          sizes="64px"
+                          className="object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <span
+                        className="grid size-12 shrink-0 place-items-center rounded-xl text-xs font-semibold text-white"
+                        style={{
+                          backgroundColor:
+                            calendarColors[entry.kategorie] || '#5d707b',
+                        }}
+                      >
+                        {entry.ereignisDatum.slice(-2)}
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs text-muted-foreground">
+                        {formatCalendarDate(entry.ereignisDatum)} ·{' '}
+                        {entry.kategorie}
+                      </span>
+                      <span className="mt-1 line-clamp-2 block text-sm font-medium">
+                        {entry.thema}
+                      </span>
                     </span>
+                    <ArrowRight className="size-4 shrink-0" />
                   </button>
                 );
               })}
+              {!monthEntries.length ? (
+                <p className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  Für diesen Monat gibt es keine passenden Einträge.
+                </p>
+              ) : null}
             </div>
-          </div>
+            <div className="hidden p-5 lg:block">
+              <div
+                className="grid min-w-[860px] grid-cols-7 gap-2"
+                aria-label="News-Kalender"
+              >
+                {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day) => (
+                  <div
+                    key={day}
+                    className="px-2 pb-1 text-xs font-semibold text-muted-foreground"
+                  >
+                    {day}
+                  </div>
+                ))}
+                {days.map((day, index) => {
+                  if (!day)
+                    return (
+                      <div
+                        key={'empty-' + index}
+                        className="min-h-32 rounded-xl bg-[var(--fp-paper)]/45"
+                        aria-hidden="true"
+                      />
+                    );
+                  const date = month + '-' + String(day).padStart(2, '0');
+                  const events = visibleEntries.filter(
+                    (entry) => entry.ereignisDatum === date,
+                  );
+                  return (
+                    <button
+                      key={date}
+                      type="button"
+                      onClick={() => {
+                        setFocusedEntryId('');
+                        setSelectedDay(date);
+                      }}
+                      aria-label={
+                        formatCalendarDate(date) +
+                        (events.length
+                          ? ', ' + events.length + ' Einträge'
+                          : '')
+                      }
+                      className={
+                        'min-h-32 rounded-xl border p-2 text-left transition ' +
+                        (events.length
+                          ? 'border-[var(--fp-primary)]/35 bg-[#fbfaf7] hover:border-[var(--fp-primary)]'
+                          : 'border-transparent bg-[var(--fp-paper)]/45')
+                      }
+                    >
+                      <span className="text-sm font-semibold">{day}</span>
+                      <span className="mt-2 block space-y-1.5">
+                        {events.slice(0, 2).map((entry) => (
+                          <span
+                            key={entry.id}
+                            className="block rounded-lg border-l-4 bg-white p-1.5 text-[11px] leading-4"
+                            style={{
+                              borderLeftColor:
+                                calendarColors[entry.kategorie] || '#5d707b',
+                            }}
+                          >
+                            <span className="block truncate font-semibold">
+                              {entry.kategorie}
+                            </span>
+                            <span className="line-clamp-2 block text-muted-foreground">
+                              {entry.thema}
+                            </span>
+                          </span>
+                        ))}
+                        {events.length > 2 ? (
+                          <span className="block text-[11px] text-muted-foreground">
+                            +{events.length - 2} weitere
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
         )}
       </section>
 
@@ -2624,6 +2899,111 @@ export function InventoryHub({
   );
 }
 
+function CatalogHub() {
+  const catalogs = [
+    [
+      'Halloween',
+      'Dunkle Figuren, saisonale Dekoration und Sammlerstücke',
+      'https://canva.link/bhydat1tgwdhp8y',
+    ],
+    [
+      'Mythen & Entdeckungen',
+      'Personen zwischen Geschichte, Mythos und Entdeckung',
+      'https://canva.link/efn8yiifg9czwr7',
+    ],
+    [
+      'Denker, Dichter & Erfinder',
+      'Ideen, Literatur und große Erfindungen',
+      'https://canva.link/3at0ic05gbe1z2j',
+    ],
+    [
+      'Bild & Kunst',
+      'Künstlerinnen, Künstler und Werke',
+      'https://canva.link/rjbeb4yz5c64cps',
+    ],
+    [
+      'Bühne, Film & Populärkultur',
+      'Ikonen aus Bühne, Film und Popkultur',
+      'https://canva.link/bvx7z86dmrj4hns',
+    ],
+  ];
+  return (
+    <div className="mx-auto max-w-[1220px] px-5 py-7 md:px-8 md:py-10">
+      <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+        Öffentliche Produktwelten vorbereiten
+      </p>
+      <h1 className="mt-2 font-heading text-4xl md:text-5xl">Kataloge</h1>
+      <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+        Die bestehenden Canva-Kataloge bleiben erreichbar. Diese Übersicht ist
+        bereits so gegliedert, dass später freigegebene Katalogdaten und eine
+        öffentliche Suche ergänzt werden können.
+      </p>
+      <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {catalogs.map(([title, description, href], index) => (
+          <a
+            key={title}
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="group flex min-h-52 flex-col justify-between overflow-hidden rounded-[26px] border bg-white/65 p-5 transition hover:-translate-y-1 hover:bg-white"
+          >
+            <div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="grid size-11 place-items-center rounded-xl bg-[var(--fp-mist)]">
+                  <BookOpen className="size-5" />
+                </span>
+                <span className="font-heading text-4xl text-[var(--fp-sand)]">
+                  0{index + 1}
+                </span>
+              </div>
+              <h2 className="mt-5 font-heading text-2xl leading-tight">
+                {title}
+              </h2>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                {description}
+              </p>
+            </div>
+            <span className="mt-5 flex items-center gap-2 text-sm font-medium text-[var(--fp-primary)]">
+              Katalog öffnen <ExternalLink className="size-4" />
+            </span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OrderFormHub() {
+  return (
+    <div className="mx-auto grid min-h-[70vh] max-w-[900px] place-items-center px-5 py-10">
+      <section className="w-full overflow-hidden rounded-[30px] border bg-white/70 p-6 md:p-10">
+        <span className="grid size-12 place-items-center rounded-2xl bg-[var(--fp-mist)]">
+          <ShoppingCart className="size-6 text-[var(--fp-primary)]" />
+        </span>
+        <p className="mt-7 text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+          Bestellungen & Marktanfragen
+        </p>
+        <h1 className="mt-2 font-heading text-4xl md:text-5xl">
+          Bestellformular
+        </h1>
+        <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+          Das bestehende Formular ist der zentrale Eingang für individuelle
+          Bestellungen. Verkäufe aus diesem Kanal werden in der allgemeinen
+          Kasse als „Bestellformular“ geführt.
+        </p>
+        <a
+          href="https://formpoesie-marktanfrage.ma-sti.chatgpt.site/"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-7 inline-flex h-11 items-center gap-2 rounded-full bg-[var(--fp-ink)] px-5 text-sm font-medium text-white"
+        >
+          Formular öffnen <ExternalLink className="size-4" />
+        </a>
+      </section>
+    </div>
+  );
+}
+
 function ContentCalendar() {
   const canvaUrl =
     'https://www.canva.com/design/DAHUOCyy3zA/NdUMQ8evw3xseJa2zPQt6A/edit';
@@ -2859,6 +3239,62 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
   const subscriptions = items.filter((item) => item.group === 'subscription');
   const social = items.filter((item) => item.group === 'social');
   const designers = items.filter((item) => item.group === 'license-monitor');
+  const subscriptionCard = (item: AccountItem) => (
+    <div
+      key={item.id}
+      className="grid gap-3 rounded-2xl border bg-white/55 p-4 sm:grid-cols-[1fr_170px]"
+    >
+      <div>
+        <div className="flex items-center gap-2 font-medium">
+          {item.name}
+          {safeExternalUrl(item.url) ? (
+            <a
+              href={safeExternalUrl(item.url)}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={item.name + ' öffnen'}
+              className="text-[var(--fp-primary)]"
+            >
+              <ExternalLink className="size-3.5" />
+            </a>
+          ) : null}
+        </div>
+        <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={Boolean(item.ongoing)}
+            onChange={(event) =>
+              update(item.id, 'ongoing', event.target.checked)
+            }
+          />
+          laufend
+        </label>
+      </div>
+      <select
+        aria-label={'Status ' + item.name}
+        value={item.status || 'active'}
+        onChange={(event) => update(item.id, 'status', event.target.value)}
+        className="h-9 rounded-lg border bg-white px-3 text-sm"
+      >
+        <option value="active">Laufend</option>
+        <option value="cancelled">Gekündigt</option>
+      </select>
+      <Input
+        type="date"
+        aria-label={'Laufzeit ' + item.name}
+        disabled={item.ongoing}
+        value={item.expiresAt || ''}
+        onChange={(event) => update(item.id, 'expiresAt', event.target.value)}
+      />
+      <Input
+        type="url"
+        aria-label={'Webseite ' + item.name}
+        placeholder="Direkter Anbieterlink"
+        value={item.url || ''}
+        onChange={(event) => update(item.id, 'url', event.target.value)}
+      />
+    </div>
+  );
   return (
     <div className="mx-auto max-w-[1220px] px-5 py-7 md:px-8 md:py-10">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
@@ -2876,60 +3312,24 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
       </div>
       <div className="mt-7 grid gap-5 xl:grid-cols-2">
         <section className="rounded-[26px] border bg-white/65 p-5 md:p-6">
-          <h2 className="font-heading text-2xl">Aktuelle Abos</h2>
+          <h2 className="font-heading text-2xl">Abos</h2>
           <div className="mt-4 space-y-3">
-            {subscriptions.map((item) => (
-              <div
-                key={item.id}
-                className="grid gap-3 rounded-2xl border bg-white/55 p-4 sm:grid-cols-[1fr_170px]"
-              >
-                <div>
-                  <div className="flex items-center gap-2 font-medium">
-                    {item.name}
-                    {safeExternalUrl(item.url) ? (
-                      <a
-                        href={safeExternalUrl(item.url)}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={item.name + ' öffnen'}
-                        className="text-[var(--fp-primary)]"
-                      >
-                        <ExternalLink className="size-3.5" />
-                      </a>
-                    ) : null}
-                  </div>
-                  <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(item.ongoing)}
-                      onChange={(event) =>
-                        update(item.id, 'ongoing', event.target.checked)
-                      }
-                    />{' '}
-                    laufend
-                  </label>
-                </div>
-                <Input
-                  type="date"
-                  aria-label={'Laufzeit ' + item.name}
-                  disabled={item.ongoing}
-                  value={item.expiresAt || ''}
-                  onChange={(event) =>
-                    update(item.id, 'expiresAt', event.target.value)
-                  }
-                />
-                <Input
-                  type="url"
-                  aria-label={'Webseite ' + item.name}
-                  placeholder="Direkter Anbieterlink"
-                  className="sm:col-span-2"
-                  value={item.url || ''}
-                  onChange={(event) =>
-                    update(item.id, 'url', event.target.value)
-                  }
-                />
-              </div>
-            ))}
+            <p className="text-xs font-semibold tracking-[.1em] text-muted-foreground uppercase">
+              Laufend
+            </p>
+            {subscriptions
+              .filter((item) => item.status !== 'cancelled')
+              .map(subscriptionCard)}
+            {subscriptions.some((item) => item.status === 'cancelled') ? (
+              <>
+                <p className="pt-3 text-xs font-semibold tracking-[.1em] text-muted-foreground uppercase">
+                  Gekündigt · Historie
+                </p>
+                {subscriptions
+                  .filter((item) => item.status === 'cancelled')
+                  .map(subscriptionCard)}
+              </>
+            ) : null}
           </div>
         </section>
         <section className="rounded-[26px] border bg-white/65 p-5 md:p-6">
@@ -3292,7 +3692,16 @@ type ActivityEvent = {
   occurredAt: string;
   productId?: string;
   calendarEntryId?: string;
+  imageUrl?: string;
+  imageAlt?: string;
 };
+
+function newsImageUrl(value?: string) {
+  if (!value) return '';
+  if (value.startsWith('assets/images/'))
+    return `https://formpoesie.github.io/formpoesie-themen-kalender/${value}`;
+  return safeExternalUrl(value);
+}
 
 function DailyNewsFeed({
   onCalendar,
@@ -3353,68 +3762,89 @@ function DailyNewsFeed({
       </div>
       <div>
         <div className="divide-y">
-          {events.slice(0, 6).map((event) => (
-            <div key={event.id} className="flex items-start gap-3 p-4 md:px-7">
-              <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-full bg-[var(--fp-mist)]">
-                {event.kind === 'designer-model' ||
-                event.kind === 'model-of-month' ? (
-                  <Package className="size-4" />
+          {events.slice(0, 6).map((event) => {
+            const imageUrl = newsImageUrl(event.imageUrl);
+            return (
+              <article
+                key={event.id}
+                className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center md:px-7"
+              >
+                {imageUrl ? (
+                  <div className="relative aspect-[16/9] w-full shrink-0 overflow-hidden rounded-xl bg-[var(--fp-mist)] sm:w-32">
+                    <Image
+                      src={imageUrl}
+                      alt={event.imageAlt || ''}
+                      fill
+                      unoptimized
+                      sizes="(max-width: 640px) 100vw, 128px"
+                      className="object-cover"
+                    />
+                  </div>
                 ) : (
-                  <CalendarDays className="size-4" />
+                  <div className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--fp-mist)]">
+                    {event.kind === 'designer-model' ||
+                    event.kind === 'model-of-month' ? (
+                      <Package className="size-4" />
+                    ) : (
+                      <CalendarDays className="size-4" />
+                    )}
+                  </div>
                 )}
-              </div>
-              <div className="min-w-0 flex-1">
-                {event.kind === 'model-of-month' && event.productId ? (
-                  <button
-                    type="button"
-                    className="font-medium underline decoration-[var(--fp-primary)]/35 underline-offset-4 hover:decoration-[var(--fp-primary)]"
+                <div className="min-w-0 flex-1">
+                  {event.kind === 'model-of-month' && event.productId ? (
+                    <button
+                      type="button"
+                      className="font-medium underline decoration-[var(--fp-primary)]/35 underline-offset-4 hover:decoration-[var(--fp-primary)]"
+                      onClick={() => onProduct(event.productId || '')}
+                    >
+                      {event.title}
+                    </button>
+                  ) : (
+                    <div className="font-medium">{event.title}</div>
+                  )}
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {[
+                      event.detail,
+                      new Intl.DateTimeFormat('de-DE', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      }).format(new Date(event.occurredAt)),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </div>
+                </div>
+                {event.kind === 'calendar-news' && event.calendarEntryId ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    onClick={() => onCalendar(event.calendarEntryId || '')}
+                  >
+                    Zusammenfassung
+                  </Button>
+                ) : safeExternalUrl(event.sourceUrl) ? (
+                  <a
+                    href={safeExternalUrl(event.sourceUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Quelle öffnen"
+                  >
+                    <ExternalLink className="size-4" />
+                  </a>
+                ) : event.kind === 'model-of-month' && event.productId ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full sm:w-auto"
                     onClick={() => onProduct(event.productId || '')}
                   >
-                    {event.title}
-                  </button>
-                ) : (
-                  <div className="font-medium">{event.title}</div>
-                )}
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {[
-                    event.detail,
-                    new Intl.DateTimeFormat('de-DE', {
-                      dateStyle: 'short',
-                      timeStyle: 'short',
-                    }).format(new Date(event.occurredAt)),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </div>
-              </div>
-              {event.kind === 'calendar-news' && event.calendarEntryId ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onCalendar(event.calendarEntryId || '')}
-                >
-                  Zusammenfassung
-                </Button>
-              ) : safeExternalUrl(event.sourceUrl) ? (
-                <a
-                  href={safeExternalUrl(event.sourceUrl)}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="Quelle öffnen"
-                >
-                  <ExternalLink className="size-4" />
-                </a>
-              ) : event.kind === 'model-of-month' && event.productId ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onProduct(event.productId || '')}
-                >
-                  Artikel öffnen
-                </Button>
-              ) : null}
-            </div>
-          ))}
+                    Artikel öffnen
+                  </Button>
+                ) : null}
+              </article>
+            );
+          })}
           {!events.length ? (
             <p className="p-6 text-sm text-muted-foreground">
               {feedError ||
@@ -3702,7 +4132,6 @@ function EtsyWorkflowHub({
 function WeeklySuccesses({ enabled }: { enabled: boolean }) {
   const [stats, setStats] = useState<{
     pieces: number;
-    bookings: number;
     revenue: number;
     top: string;
     topCount: number;
@@ -3711,10 +4140,13 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
   useEffect(() => {
     if (!enabled) return;
     void fetch('/api/inventory/workspace?area=sales')
-      .then(async (response) => (await response.json()) as {
-        sales?: Record<string, unknown>[];
-        onlineSales?: Record<string, unknown>[];
-      })
+      .then(
+        async (response) =>
+          (await response.json()) as {
+            sales?: Record<string, unknown>[];
+            onlineSales?: Record<string, unknown>[];
+          },
+      )
       .then((data) => {
         const now = new Date();
         const day = (now.getDay() + 6) % 7;
@@ -3723,30 +4155,40 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
         start.setDate(start.getDate() - day);
         const inWeek = (value: unknown) => {
           const date = new Date(String(value));
-          return Number.isFinite(date.getTime()) && date >= start && date <= now;
+          return (
+            Number.isFinite(date.getTime()) && date >= start && date <= now
+          );
         };
         const sales = (data.sales || []).filter(
           (sale) => sale.isCancelled !== true && inWeek(sale.date),
         );
-        const online = (data.onlineSales || []).filter((sale) => inWeek(sale.date));
+        const online = (data.onlineSales || []).filter((sale) =>
+          inWeek(sale.date),
+        );
         let pieces = 0;
         let revenue = 0;
         const counts = new Map<string, number>();
         for (const sale of sales) {
-          const items = Array.isArray(sale.items) ? sale.items as Record<string, unknown>[] : [];
+          const items = Array.isArray(sale.items)
+            ? (sale.items as Record<string, unknown>[])
+            : [];
           let itemRevenue = 0;
           for (const item of items) {
             const quantity = Number(item.quantity || 0);
             pieces += quantity;
             itemRevenue += quantity * Number(item.unitSalePriceCents || 0);
-            const variant = (item.articleVariant || {}) as Record<string, unknown>;
+            const variant = (item.articleVariant || {}) as Record<
+              string,
+              unknown
+            >;
             const article = (variant.article || {}) as Record<string, unknown>;
             const name = dashboardText(article.name, 'Artikel');
             counts.set(name, (counts.get(name) || 0) + quantity);
           }
-          revenue += sale.pricingMode === 'TOTAL'
-            ? Number(sale.totalPriceCents || 0)
-            : itemRevenue - Number(sale.discountCents || 0);
+          revenue +=
+            sale.pricingMode === 'TOTAL'
+              ? Number(sale.totalPriceCents || 0)
+              : itemRevenue - Number(sale.discountCents || 0);
         }
         for (const sale of online) {
           const quantity = Math.max(0, Number(sale.quantity || 1));
@@ -3758,7 +4200,6 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
         const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
         setStats({
           pieces,
-          bookings: sales.length + online.length,
           revenue,
           top: top?.[0] || 'Noch kein Verkauf',
           topCount: top?.[1] || 0,
@@ -3769,17 +4210,26 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
   if (!enabled) return null;
   const cards = [
     [stats?.pieces ?? '…', 'verkaufte Artikel diese Woche'],
-    [stats?.bookings ?? '…', 'Buchungen diese Woche'],
     [stats ? money(stats.revenue / 100) : '…', 'Umsatz diese Woche'],
-    [stats?.top || '…', stats ? `${stats.topCount} Stück · stärkster Artikel` : 'stärkster Artikel'],
+    [
+      stats?.top || '…',
+      stats
+        ? `${stats.topCount} Stück · stärkster Artikel`
+        : 'stärkster Artikel',
+    ],
   ];
   return (
     <section className="mt-7">
-      <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">Erfolge</p>
+      <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+        Erfolge
+      </p>
       <h2 className="mt-1 font-heading text-3xl">Diese Woche</h2>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map(([value, label]) => (
-          <div key={String(label)} className="rounded-2xl border bg-white/65 p-5">
+          <div
+            key={String(label)}
+            className="rounded-2xl border bg-white/65 p-5"
+          >
             <div className="truncate text-2xl font-semibold">{value}</div>
             <div className="mt-2 text-xs text-muted-foreground">{label}</div>
           </div>
@@ -3800,15 +4250,83 @@ function Dashboard({
 }) {
   return (
     <div className="mx-auto max-w-[1220px] px-5 py-7 md:px-8 md:py-10">
-      <p className="mb-2 text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">FormPoesie Masterbrain</p>
-      <h1 className="font-heading text-4xl leading-none tracking-tight md:text-5xl">Was läuft heute?</h1>
+      <p className="mb-2 text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+        FORMPOESIE STUDIO · Interne Arbeitsfläche
+      </p>
+      <h1 className="font-heading text-4xl leading-none tracking-tight md:text-5xl">
+        Was läuft heute?
+      </h1>
 
       <WeeklySuccesses enabled={canManage} />
+
+      <SocialMediaLinks />
 
       <DashboardFulfillment />
 
       <DailyNewsFeed onCalendar={onCalendar} onProduct={onInventoryProduct} />
     </div>
+  );
+}
+
+function SocialMediaLinks() {
+  const channels = [
+    {
+      name: 'Instagram',
+      account: '@form.poesie',
+      href: 'https://www.instagram.com/form.poesie/',
+      icon: Camera,
+    },
+    {
+      name: 'TikTok',
+      account: 'formpoesie@gmail.com',
+      href: 'https://www.tiktok.com/',
+      icon: Music2,
+    },
+    {
+      name: 'Pinterest',
+      account: '@3DFormPoesie',
+      href: 'https://www.pinterest.de/3DFormPoesie/',
+      icon: Pin,
+    },
+    {
+      name: 'PayPal',
+      account: 'formpoesie1@gmail.com',
+      href: 'https://www.paypal.com/',
+      icon: WalletCards,
+    },
+  ];
+  return (
+    <section className="mt-6">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+            Direktzugriff
+          </p>
+          <h2 className="mt-1 font-heading text-2xl">Social Media</h2>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {channels.map(({ name, account, href, icon: Icon }) => (
+          <a
+            key={name}
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="group flex min-w-0 items-center gap-3 rounded-2xl border bg-white/65 p-4 transition hover:-translate-y-0.5 hover:bg-white"
+          >
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[var(--fp-mist)] text-[var(--fp-primary)]">
+              <Icon className="size-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{name}</span>
+              <span className="block truncate text-[11px] text-muted-foreground">
+                {account}
+              </span>
+            </span>
+          </a>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -3973,15 +4491,32 @@ function ProductForm({
                         : 'bg-white/45')
                     }
                   >
+                    <div className="relative size-14 shrink-0 overflow-hidden rounded-xl bg-[#ebe5db]">
+                      {item.imagePath ? (
+                        <Image
+                          src={
+                            '/api/inventory/image?path=' +
+                            encodeURIComponent(item.imagePath)
+                          }
+                          alt=""
+                          fill
+                          unoptimized
+                          sizes="56px"
+                          className="object-cover"
+                        />
+                      ) : (
+                        <div className="grid size-full place-items-center text-muted-foreground">
+                          <Package className="size-5" />
+                        </div>
+                      )}
+                    </div>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">
                         {item.modelName}
                       </div>
                       <div className="mt-1 truncate text-xs text-muted-foreground">
-                        {item.productType} · {item.size || 'Größe offen'} ·{' '}
-                        {item.weightGrams
-                          ? Math.round(item.weightGrams) + ' g'
-                          : 'Gewicht offen'}
+                        {item.productType} · {item.variants.length}{' '}
+                        {item.variants.length === 1 ? 'Variante' : 'Varianten'}
                       </div>
                     </div>
                     <Badge
@@ -4006,18 +4541,10 @@ function ProductForm({
                     übernommen
                   </div>
                   <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                    {selectedInventory.printHours
-                      ? selectedInventory.printHours.toLocaleString('de-DE', {
-                          maximumFractionDigits: 2,
-                        }) + ' h Druckzeit · '
-                      : ''}
-                    {selectedInventory.weightGrams
-                      ? Math.round(selectedInventory.weightGrams) + ' g · '
-                      : ''}
-                    {selectedInventory.productionCost == null
-                      ? 'Herstellungskosten noch offen'
-                      : money(selectedInventory.productionCost) +
-                        ' Herstellungskosten'}
+                    {selectedInventory.variants.length} Varianten aus dem
+                    zentralen Artikel übernommen. Käuferwelt und Lizenz wurden
+                    aus Kategorie und Artikeldaten abgeleitet und können vor dem
+                    Erstellen geprüft werden.
                   </p>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     <label className="grid gap-1.5 text-sm">
@@ -4036,11 +4563,48 @@ function ProductForm({
                       </select>
                     </label>
                     {field(
-                      'Designherkunft / Lizenz',
+                      'Designherkunft / Lizenz (abgeleitet)',
                       'designOrigin',
                       'eigenes Design oder Lizenz',
                     )}
                   </div>
+                  <details className="mt-4 rounded-xl border bg-white/70">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+                      Alle {selectedInventory.variants.length} Varianten prüfen
+                      <span aria-hidden="true">⌄</span>
+                    </summary>
+                    <div className="space-y-2 border-t p-3">
+                      {selectedInventory.variants.map((variant) => (
+                        <div
+                          key={String(variant.id)}
+                          className="grid gap-1 rounded-lg border bg-white p-3 text-xs sm:grid-cols-[1fr_auto] sm:items-center"
+                        >
+                          <div>
+                            <div className="font-medium">{variant.name}</div>
+                            <div className="mt-1 text-muted-foreground">
+                              {[
+                                variant.size,
+                                variant.material,
+                                variant.weightGrams
+                                  ? `${Math.round(variant.weightGrams)} g`
+                                  : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' · ') || 'Details noch offen'}
+                            </div>
+                          </div>
+                          <div className="text-muted-foreground sm:text-right">
+                            {variant.productionCost == null
+                              ? 'Kosten offen'
+                              : money(variant.productionCost)}
+                            {variant.currentPrice == null
+                              ? ''
+                              : ` · ${money(variant.currentPrice)} Verkauf`}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 </div>
               ) : null}
             </>
@@ -4103,7 +4667,7 @@ function ProductForm({
           </details>
         </section>
       )}
-      <div className="flex items-center justify-between border-t pt-5">
+      <div className="flex flex-col gap-4 border-t pt-5 sm:flex-row sm:items-center sm:justify-between">
         <p className="max-w-md text-xs leading-5 text-muted-foreground">
           Inventardaten werden übernommen, nicht kopiert geschätzt. Offene Werte
           bleiben ausdrücklich offen.
@@ -4116,7 +4680,7 @@ function ProductForm({
             !form.productType ||
             (source === 'inventory' && !selectedInventory)
           }
-          className="rounded-full bg-[var(--fp-ink)] px-5"
+          className="w-full rounded-full bg-[var(--fp-ink)] px-5 sm:w-auto"
         >
           {saving ? (
             <Loader2 className="size-4 animate-spin" />

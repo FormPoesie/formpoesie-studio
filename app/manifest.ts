@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'FormPoesie Masterbrain',
-    short_name: 'FormPoesie',
+    name: 'FORMPOESIE STUDIO',
+    short_name: 'FP Studio',
     description:
       'Inventar, Verkäufe, Märkte, Listings und Content für FormPoesie.',
     start_url: '/',

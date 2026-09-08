@@ -18,7 +18,15 @@ async function hydrate(productId: string) {
     .bind(productId)
     .first<Record<string, unknown>>();
   if (!product) return null;
-  const variant = await env.DB.prepare(
+  const variantRows = await env.DB.prepare(
+    'SELECT * FROM variants WHERE product_id = ? ORDER BY created_at',
+  )
+    .bind(productId)
+    .all<Record<string, unknown>>();
+  const variants = variantRows.results || [];
+  const variant = variants[0] || null;
+  /* Keep the singular fields for older screens while returning every variant. */
+  const legacyVariant = await env.DB.prepare(
     'SELECT * FROM variants WHERE product_id = ? ORDER BY created_at LIMIT 1',
   )
     .bind(productId)
@@ -42,7 +50,14 @@ async function hydrate(productId: string) {
   )
     .bind(productId)
     .first<Record<string, unknown>>();
-  const pricing = await env.DB.prepare(
+  const pricingRows = await env.DB.prepare(
+    'SELECT * FROM pricing_scenarios WHERE product_id = ? ORDER BY created_at',
+  )
+    .bind(productId)
+    .all<Record<string, unknown>>();
+  const pricings = pricingRows.results || [];
+  const pricing = pricings[0] || null;
+  const legacyPricing = await env.DB.prepare(
     'SELECT * FROM pricing_scenarios WHERE product_id = ? ORDER BY updated_at DESC LIMIT 1',
   )
     .bind(productId)
@@ -80,7 +95,7 @@ async function hydrate(productId: string) {
       area: 'Etsy',
       text: 'Designherkunft und Etsy-Zulässigkeit sind ungeklärt.',
     });
-  if (!variant?.weight_grams || !variant?.print_hours)
+  if (!legacyVariant?.weight_grams || !legacyVariant?.print_hours)
     issues.push({
       level: 'error',
       area: 'Preis',
@@ -88,11 +103,13 @@ async function hydrate(productId: string) {
     });
   return {
     product,
-    variant,
+    variant: legacyVariant || variant,
+    variants,
     draft,
     contents,
     plan,
-    pricing,
+    pricing: legacyPricing || pricing,
+    pricings,
     assets,
     research,
     issues,
@@ -128,9 +145,15 @@ export async function POST(request: Request) {
   if (!input.modelName?.trim() || !input.productType?.trim())
     return json({ error: 'Modellname und Produktart sind erforderlich.' }, 400);
   const productId = makeId('prd'),
-    variantId = makeId('var'),
     draftId = makeId('lst');
   const instant = now();
+  const variantInputs = input.variants?.length
+    ? input.variants
+    : [input.variant];
+  const preparedVariants = variantInputs.map((variant) => ({
+    input: variant,
+    id: makeId('var'),
+  }));
   const content = [
     createLocaleContent(input, 'de'),
     createLocaleContent(input, 'en'),
@@ -164,22 +187,25 @@ export async function POST(request: Request) {
       instant,
       instant,
     ),
-    env.DB.prepare(
-      'INSERT INTO variants (id, product_id, name, sku, color, set_size, weight_grams, print_hours, active_minutes, failure_rate, confirmed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(
-      variantId,
-      productId,
-      input.variant.name,
-      input.sku || null,
-      input.variant.color || null,
-      input.variant.setSize || 1,
-      input.variant.weightGrams || null,
-      input.variant.printHours || null,
-      input.variant.activeMinutes || null,
-      input.variant.failureRate || 0.08,
-      true,
-      instant,
-      instant,
+    ...preparedVariants.map(({ input: variant, id }) =>
+      env.DB.prepare(
+        'INSERT INTO variants (id, product_id, name, sku, color, material, set_size, weight_grams, print_hours, active_minutes, failure_rate, confirmed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(
+        id,
+        productId,
+        variant.name,
+        variant.sku || input.sku || null,
+        variant.color || null,
+        variant.material || input.material || null,
+        variant.setSize || 1,
+        variant.weightGrams || null,
+        variant.printHours || null,
+        variant.activeMinutes || null,
+        variant.failureRate || 0.08,
+        true,
+        instant,
+        instant,
+      ),
     ),
     env.DB.prepare(
       'INSERT INTO listing_drafts (id, product_id, state, mode, category, locked_json, transfer_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -222,23 +248,35 @@ export async function POST(request: Request) {
       instant,
       instant,
     ),
-    env.DB.prepare(
-      'INSERT INTO pricing_scenarios (id, product_id, variant_id, direct_price, etsy_price, floor_price, result_without_ads, result_with_ads, confidence, assumptions_json, breakdown_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(
-      makeId('prc'),
-      productId,
-      variantId,
-      pricing.directPrice,
-      pricing.etsyPrice,
-      pricing.floorPrice,
-      pricing.resultWithoutAds,
-      pricing.resultWithAds,
-      pricing.confidence,
-      JSON.stringify(pricing.assumptions),
-      JSON.stringify(pricing.breakdown),
-      instant,
-      instant,
-    ),
+    ...preparedVariants.map(({ input: variant, id }) => {
+      const variantPricing = calculatePricing({
+        ...input,
+        variant,
+        costs: {
+          ...input.costs,
+          recordedProductionCost:
+            variant.recordedProductionCost ??
+            input.costs.recordedProductionCost,
+        },
+      });
+      return env.DB.prepare(
+        'INSERT INTO pricing_scenarios (id, product_id, variant_id, direct_price, etsy_price, floor_price, result_without_ads, result_with_ads, confidence, assumptions_json, breakdown_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(
+        makeId('prc'),
+        productId,
+        id,
+        variantPricing.directPrice,
+        variantPricing.etsyPrice,
+        variantPricing.floorPrice,
+        variantPricing.resultWithoutAds,
+        variantPricing.resultWithAds,
+        variantPricing.confidence,
+        JSON.stringify(variantPricing.assumptions),
+        JSON.stringify(variantPricing.breakdown),
+        instant,
+        instant,
+      );
+    }),
     env.DB.prepare(
       'INSERT INTO change_history (id, entity_type, entity_id, action, after_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).bind(
@@ -254,7 +292,9 @@ export async function POST(request: Request) {
   return json(
     {
       id: productId,
-      variantId,
+      variantId: preparedVariants[0].id,
+      variantIds: preparedVariants.map((variant) => variant.id),
+      variantCount: preparedVariants.length,
       draftId,
       content,
       plan,

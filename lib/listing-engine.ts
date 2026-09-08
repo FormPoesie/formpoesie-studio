@@ -1,3 +1,19 @@
+export type ProductVariantInput = {
+  id?: string;
+  inventoryVariantId?: string;
+  name: string;
+  sku?: string;
+  color?: string;
+  material?: string;
+  setSize: number;
+  weightGrams?: number | null;
+  printHours?: number | null;
+  activeMinutes?: number | null;
+  failureRate: number;
+  recordedProductionCost?: number | null;
+  currentPrice?: number | null;
+};
+
 export type ProductInput = {
   id?: string;
   modelName: string;
@@ -15,16 +31,8 @@ export type ProductInput = {
   designOrigin?: string;
   inventorySourceId?: string;
   kind: 'sculpture' | 'functional';
-  variant: {
-    id?: string;
-    name: string;
-    color?: string;
-    setSize: number;
-    weightGrams?: number | null;
-    printHours?: number | null;
-    activeMinutes?: number | null;
-    failureRate: number;
-  };
+  variant: ProductVariantInput;
+  variants?: ProductVariantInput[];
   costs: {
     recordedProductionCost?: number | null;
     materialPerKg?: number | null;
