@@ -1141,7 +1141,7 @@ export default function Home() {
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68"
           >
             <CircleHelp className="size-4" />
-            Hilfe
+            Info
           </button>
         </div>
       </aside>
@@ -1443,34 +1443,131 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
-        <DialogContent className="border-[#d9d0c3] bg-[#f8f4ed] sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="font-heading text-3xl">
-              So arbeitet der Masterbrain
-            </DialogTitle>
-            <DialogDescription>
-              Ein Arbeitsort für Produkte, Etsy-Entwürfe, Bilder, Kalender und
-              Konten.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 text-sm leading-6">
-            <p>
-              <strong>Produkte</strong> liest die bestehenden Inventardaten
-              direkt. Ein separater Dateiimport ist nicht mehr nötig.
-            </p>
-            <p>
-              <strong>Entwürfe</strong> können in den Papierkorb verschoben und
-              von dort wiederhergestellt werden.
-            </p>
-            <p>
-              <strong>Profile & Regeln</strong> enthält die editierbare
-              Markenstimme, Regeln und Farbpalette.
-            </p>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <MasterbrainInfo open={helpOpen} onOpenChange={setHelpOpen} />
     </main>
+  );
+}
+
+function MasterbrainInfo({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [automation, setAutomation] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    void fetch('/api/activity')
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          automation?: Record<string, string>;
+        };
+        if (response.ok) setAutomation(result.automation || {});
+      })
+      .catch(() => undefined);
+  }, [open]);
+
+  const lastResult =
+    automation.last_result === 'success'
+      ? `Erfolgreich · ${automation.last_today_count || '0'} heutige News`
+      : automation.last_result === 'failed'
+        ? 'Fehlgeschlagen'
+        : 'Noch kein Ergebnis';
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto border-[#d9d0c3] bg-[#f8f4ed] sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="font-heading text-3xl">
+            Info zum Masterbrain
+          </DialogTitle>
+          <DialogDescription>
+            Aktueller Systemstatus und nachvollziehbare Berechnungsgrundlagen.
+          </DialogDescription>
+        </DialogHeader>
+
+        <section className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border bg-white/65 p-4">
+            <div className="text-xs text-muted-foreground">Zeitplan</div>
+            <div className="mt-1 font-medium">
+              {automation.automation_schedule || 'Täglich ab 20:00 Uhr'}
+            </div>
+          </div>
+          <div className="rounded-2xl border bg-white/65 p-4">
+            <div className="text-xs text-muted-foreground">
+              Letzte Synchronisierung
+            </div>
+            <div className="mt-1 font-medium">
+              {automation.last_synced_at
+                ? new Intl.DateTimeFormat('de-DE', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  }).format(new Date(automation.last_synced_at))
+                : 'noch ausstehend'}
+            </div>
+          </div>
+          <div className="rounded-2xl border bg-white/65 p-4">
+            <div className="text-xs text-muted-foreground">Letzter Lauf</div>
+            <div className="mt-1 font-medium">{lastResult}</div>
+          </div>
+          <div className="rounded-2xl border bg-white/65 p-4">
+            <div className="text-xs text-muted-foreground">
+              Modell des Monats
+            </div>
+            <div className="mt-1 font-medium">
+              Aktiv · am 1. und nach jeder Buchung
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-2 space-y-3">
+          <h3 className="font-heading text-2xl">So setzt es sich zusammen</h3>
+          {[
+            [
+              'Wochen-Erfolge',
+              'Gezählt wird von Montag 00:00 Uhr bis jetzt. Verkaufte Artikel sind die summierten Stückzahlen; Buchungen sind die einzelnen Verkaufsvorgänge. Umsatz umfasst Markt- und Onlineverkäufe. Der stärkste Artikel ist das Modell mit der höchsten Stückzahl.',
+            ],
+            [
+              'Tagesnews',
+              'Im Feed erscheinen nur Kalendereinträge, die heute erfasst wurden, sowie heutige Designer-Meldungen. Ältere Monatsauswertungen werden dort nicht erneut eingeblendet.',
+            ],
+            [
+              'News-Synchronisierung',
+              'Der Masterbrain gleicht die Kalenderquelle täglich ab 20:00 Uhr ab. „Heutige News“ zählt die Einträge mit dem heutigen Erfassungsdatum – nicht alle jemals importierten Datensätze. Manuelle Änderungen im Masterbrain bleiben erhalten.',
+            ],
+            [
+              'Modell des Monats',
+              'Markt- und Onlineverkäufe werden nach verkauften Stückzahlen zusammengeführt; stornierte Verkäufe zählen nicht. Das Modell mit den meisten Stück gewinnt. Angezeigt werden seine Stückzahl, alle im Monat verkauften Artikel und die Zahl der Buchungen. Vergangene Monate aktualisieren sich bei Nachträgen.',
+            ],
+            [
+              'Artikelkosten & Marge',
+              'Gesamtkosten bestehen aus Filament, Ausschuss, Maschinenzeit, Strom, Zusatzkosten und Bauteilen. Maschinenzeit wird mit 0,10 € je Stunde berechnet; Strom abhängig vom Drucker. Marge = Verkaufspreis minus Gesamtkosten. Die Prozentmarge bezieht diese Marge auf den Verkaufspreis.',
+            ],
+            [
+              'Daten & Papierkorb',
+              'Produkte lesen die gemeinsame Inventardatenbank direkt; ein Import ist nicht nötig. Etsy-Entwürfe können in den Papierkorb verschoben und wiederhergestellt werden. Markenstimme, Regeln und Farben liegen unter „Profile & Regeln“.',
+            ],
+          ].map(([title, detail]) => (
+            <details
+              key={title}
+              className="group rounded-2xl border bg-white/55 open:bg-white/75"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 font-medium">
+                {title}
+                <span className="text-sm transition group-open:rotate-180">
+                  ⌄
+                </span>
+              </summary>
+              <p className="border-t px-4 py-3 text-sm leading-6 text-muted-foreground">
+                {detail}
+              </p>
+            </details>
+          ))}
+        </section>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -3254,7 +3351,7 @@ function DailyNewsFeed({
           </Button>
         </div>
       </div>
-      <div className="grid gap-0 lg:grid-cols-[1fr_260px]">
+      <div>
         <div className="divide-y">
           {events.slice(0, 6).map((event) => (
             <div key={event.id} className="flex items-start gap-3 p-4 md:px-7">
@@ -3325,37 +3422,6 @@ function DailyNewsFeed({
             </p>
           ) : null}
         </div>
-        <aside className="border-t bg-[var(--fp-paper)]/55 p-5 text-sm lg:border-t-0 lg:border-l md:p-6">
-          <div className="text-xs text-muted-foreground">Zeitplan</div>
-          <div className="mt-1 font-medium">
-            {automation.automation_schedule || 'Täglich ab 20:00 Uhr'}
-          </div>
-          <div className="mt-5 text-xs text-muted-foreground">
-            Letzte Synchronisierung
-          </div>
-          <div className="mt-1 font-medium">
-            {automation.last_synced_at
-              ? new Intl.DateTimeFormat('de-DE', {
-                  dateStyle: 'medium',
-                  timeStyle: 'short',
-                }).format(new Date(automation.last_synced_at))
-              : 'noch ausstehend'}
-          </div>
-          <div className="mt-5 text-xs text-muted-foreground">Letzter Lauf</div>
-          <div className="mt-1 font-medium">
-            {automation.last_result === 'success'
-              ? `Erfolgreich · ${automation.last_today_count || '0'} heutige News`
-              : automation.last_result === 'failed'
-                ? 'Fehlgeschlagen'
-                : 'Noch kein Ergebnis'}
-          </div>
-          <div className="mt-5 text-xs text-muted-foreground">
-            Modell des Monats
-          </div>
-          <div className="mt-1 font-medium">
-            Aktiv · am 1. und nach jeder Buchung
-          </div>
-        </aside>
       </div>
     </section>
   );
