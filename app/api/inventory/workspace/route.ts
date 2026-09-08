@@ -5,6 +5,7 @@ import {
   readCookie,
 } from '@/lib/inventory-bridge';
 import { env } from 'cloudflare:workers';
+import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -182,6 +183,12 @@ function toSnake(name: string) {
   return name.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`);
 }
 
+function scalarText(value: unknown, fallback = '') {
+  return typeof value === 'string' || typeof value === 'number'
+    ? String(value)
+    : fallback;
+}
+
 function safeValues(entity: string, values: JsonRecord) {
   const allowed = entityFields[entity];
   if (!allowed) return null;
@@ -315,7 +322,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     ]);
     return { materials, brands, storageLocations };
   }
-  if (area === 'markets' || area === 'shelves') {
+  if (area === 'markets' || area === 'shelves' || area === 'cash') {
     const [markets, demands, articles, sales, expenses] = await Promise.all([
       query(
         accessToken,
@@ -343,25 +350,48 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'select=*&deleted_at=is.null&order=created_at.desc',
       ),
     ]);
+    const onlineSales =
+      area === 'cash'
+        ? await query(
+            accessToken,
+            'online_sales',
+            'select=*&deleted_at=is.null&order=date.desc',
+          )
+        : [];
     return {
       markets: await classifyMarkets(markets),
       demands,
       articles,
       sales,
       expenses,
+      onlineSales,
     };
   }
   if (area === 'online') {
-    const onlineSales = await query(
-      accessToken,
-      'online_sales',
-      'select=' +
-        encodeURIComponent(
-          '*,filaments:online_sale_filaments(*),product:products(category)',
-        ) +
-        '&deleted_at=is.null&order=date.desc',
-    );
-    return { onlineSales };
+    const [onlineSales, fulfillmentTasks] = await Promise.all([
+      query(
+        accessToken,
+        'online_sales',
+        'select=' +
+          encodeURIComponent(
+            '*,filaments:online_sale_filaments(*),product:products(category)',
+          ) +
+          '&deleted_at=is.null&order=date.desc',
+      ),
+      env.DB.prepare(
+        `SELECT id, source_type AS sourceType, source_id AS sourceId,
+                sale_id AS saleId, article_variant_id AS articleVariantId,
+                article_name AS articleName, variant_name AS variantName,
+                venue_name AS venueName, quantity,
+                fulfillment_mode AS fulfillmentMode,
+                is_printed AS isPrinted, is_shipped AS isShipped,
+                sale_date AS saleDate, created_at AS createdAt
+         FROM inventory_fulfillment_tasks
+         WHERE is_printed = 0 OR is_shipped = 0
+         ORDER BY sale_date DESC, created_at DESC`,
+      ).all(),
+    ]);
+    return { onlineSales, fulfillmentTasks: fulfillmentTasks.results || [] };
   }
   if (area === 'sales') {
     const [sales, markets, onlineSales] = await Promise.all([
@@ -381,7 +411,10 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'select=*&deleted_at=is.null&order=date.desc',
       ),
     ]);
-    return { sales, markets, onlineSales };
+    const highlights = await rebuildMonthlyProductHighlights(accessToken).catch(
+      () => [],
+    );
+    return { sales, markets, onlineSales, highlights };
   }
   if (area === 'months') {
     const [sales, expenses, onlineSales, otherExpenses, markets] =
@@ -410,7 +443,17 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         ),
         query(accessToken, 'markets', 'select=id,name,date,end_date'),
       ]);
-    return { sales, expenses, onlineSales, otherExpenses, markets };
+    const highlights = await rebuildMonthlyProductHighlights(accessToken).catch(
+      () => [],
+    );
+    return {
+      sales,
+      expenses,
+      onlineSales,
+      otherExpenses,
+      markets,
+      highlights,
+    };
   }
   if (area === 'trash') {
     const [products, materials, markets, otherExpenses] = await Promise.all([
@@ -468,6 +511,7 @@ export async function POST(request: Request) {
     values?: JsonRecord;
     rpc?: string;
     args?: JsonRecord;
+    createFulfillment?: boolean;
   };
   try {
     if (body.rpc) {
@@ -486,6 +530,74 @@ export async function POST(request: Request) {
         method: 'POST',
         body: JSON.stringify(args),
       });
+      if (body.rpc === 'verkauf_buchen') {
+        const rpcRows = Array.isArray(result) ? (result as JsonRecord[]) : [];
+        const saleId = rpcRows[0]?.saleId;
+        const already = rpcRows[0]?.bereits === true;
+        if (saleId != null && !already && body.createFulfillment !== false) {
+          const submitted = Array.isArray(body.args?.p_zeilen)
+            ? (body.args?.p_zeilen as JsonRecord[])
+            : [];
+          const ids = submitted
+            .map((item) => item.article_variant_id)
+            .filter((id) => typeof id === 'string' || typeof id === 'number');
+          const variants = ids.length
+            ? ((await query(
+                accessToken,
+                'article_variants',
+                'select=' +
+                  encodeURIComponent('*,article:articles(*)') +
+                  `&id=in.(${ids.map((id) => encodeURIComponent(String(id))).join(',')})`,
+              )) as JsonRecord[])
+            : [];
+          const marketRows = await query(
+            accessToken,
+            'markets',
+            `select=id,name&id=eq.${encodeURIComponent(scalarText(body.args?.p_market_id))}`,
+          );
+          const venueName = Array.isArray(marketRows)
+            ? scalarText((marketRows[0] as JsonRecord | undefined)?.name)
+            : '';
+          const instant = new Date().toISOString();
+          const saleIdText = scalarText(saleId);
+          const statements = submitted.flatMap((item, index) => {
+            const variant = variants.find(
+              (row) =>
+                scalarText(row.id) === scalarText(item.article_variant_id),
+            );
+            const article = (variant?.article || {}) as JsonRecord;
+            const quantity = Math.max(1, Number(item.quantity || 1));
+            const variantIdText = scalarText(
+              item.article_variant_id,
+              String(index),
+            );
+            return [
+              env.DB.prepare(
+                `INSERT OR IGNORE INTO inventory_fulfillment_tasks
+                  (id, source_type, source_id, sale_id, article_variant_id,
+                   article_name, variant_name, venue_name, quantity,
+                   fulfillment_mode, is_printed, is_shipped, sale_date,
+                   created_at, updated_at)
+                 VALUES (?, 'cash-sale', ?, ?, ?, ?, ?, ?, ?, 'pickup', 0, 0, ?, ?, ?)`,
+              ).bind(
+                `cash-sale-${saleIdText}-${variantIdText}`,
+                `${saleIdText}:${variantIdText}`,
+                saleIdText,
+                variantIdText,
+                scalarText(article.name, 'Verkaufter Artikel'),
+                scalarText(variant?.color || variant?.name, 'Standard'),
+                venueName || null,
+                quantity,
+                scalarText(body.args?.p_date, instant.slice(0, 10)),
+                instant,
+                instant,
+              ),
+            ];
+          });
+          if (statements.length) await env.DB.batch(statements);
+        }
+        await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
+      }
       return Response.json({ saved: true, result });
     }
     if (!body.entity || !body.values)
@@ -552,6 +664,28 @@ export async function PATCH(request: Request) {
   };
   if (!body.entity || body.id == null || !body.values)
     return Response.json({ error: 'Datensatz fehlt.' }, { status: 400 });
+  if (body.entity === 'fulfillment_tasks') {
+    const allowed = Object.fromEntries(
+      Object.entries(body.values).filter(([key]) =>
+        ['isPrinted', 'isShipped'].includes(key),
+      ),
+    );
+    if (!Object.keys(allowed).length)
+      return Response.json(
+        { error: 'Keine gültigen Felder.' },
+        { status: 400 },
+      );
+    const sets = Object.keys(allowed).map((key) =>
+      key === 'isPrinted' ? 'is_printed = ?' : 'is_shipped = ?',
+    );
+    const values = Object.values(allowed).map((value) => (value ? 1 : 0));
+    await env.DB.prepare(
+      `UPDATE inventory_fulfillment_tasks SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`,
+    )
+      .bind(...values, new Date().toISOString(), String(body.id))
+      .run();
+    return Response.json({ saved: true });
+  }
   const values = safeValues(body.entity, body.values);
   if (!values || !Object.keys(values).length)
     return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });

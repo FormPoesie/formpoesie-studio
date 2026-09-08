@@ -372,3 +372,51 @@ export const inventoryVenueClassifications = sqliteTable(
   },
   (table) => [index('idx_inventory_venue_kind').on(table.kind)],
 );
+
+export const inventoryFulfillmentTasks = sqliteTable(
+  'inventory_fulfillment_tasks',
+  {
+    id: text('id').primaryKey(),
+    sourceType: text('source_type').notNull(),
+    sourceId: text('source_id').notNull(),
+    saleId: text('sale_id').notNull(),
+    articleVariantId: text('article_variant_id'),
+    articleName: text('article_name').notNull(),
+    variantName: text('variant_name'),
+    venueName: text('venue_name'),
+    quantity: integer('quantity').notNull().default(1),
+    fulfillmentMode: text('fulfillment_mode').notNull().default('pickup'),
+    isPrinted: integer('is_printed', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    isShipped: integer('is_shipped', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    saleDate: text('sale_date').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('idx_inventory_fulfillment_source').on(
+      table.sourceType,
+      table.sourceId,
+    ),
+    index('idx_inventory_fulfillment_open').on(
+      table.isPrinted,
+      table.isShipped,
+    ),
+  ],
+);
+
+export const monthlyProductHighlights = sqliteTable(
+  'monthly_product_highlights',
+  {
+    month: text('month').primaryKey(),
+    productKey: text('product_key').notNull(),
+    productName: text('product_name').notNull(),
+    productQuantity: integer('product_quantity').notNull(),
+    totalQuantity: integer('total_quantity').notNull(),
+    calculatedAt: text('calculated_at').notNull(),
+    ...timestamps,
+  },
+  (table) => [index('idx_monthly_product_month').on(table.month)],
+);

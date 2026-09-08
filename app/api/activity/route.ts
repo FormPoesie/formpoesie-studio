@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
-import { requireInventoryAdmin } from '@/lib/inventory-bridge';
+import { readCookie, requireInventoryAdmin } from '@/lib/inventory-bridge';
+import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
 
 type Activity = {
   id: string;
@@ -13,6 +14,10 @@ type Activity = {
 export async function GET(request: Request) {
   const denied = await requireInventoryAdmin(request);
   if (denied) return denied;
+  const accessToken = readCookie(request, 'fp_inventory_access');
+  if (accessToken) {
+    await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
+  }
   const [events, meta] = await Promise.all([
     env.DB.prepare(
       `SELECT id, kind, title, detail, source_url AS sourceUrl,

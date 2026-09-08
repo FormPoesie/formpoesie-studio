@@ -204,19 +204,35 @@ const initialForm = {
   targetMargin: '30',
 };
 
-const nav = [
+const navPrimary = [
   ['Übersicht', Boxes],
   ['Produkte', Leaf],
-  ['Märkte', MapPin],
-  ['Regalflächen', Warehouse],
-  ['Verkäufe & Kasse', CircleDollarSign],
+  ['Kasse', CircleDollarSign],
   ['Druck & Versand', Truck],
-  ['Entwürfe', FilePenLine],
-  ['Recherche', Search],
-  ['Bildstudio', ImageIcon],
-  ['News-Kalender', CalendarDays],
-  ['Content-Kalender', ClipboardList],
-  ['Konten & Abos', CreditCard],
+  ['Etsy Workflow', Sparkles],
+] as const;
+
+const navGroups = [
+  {
+    label: 'Verkaufsorte & Auswertung',
+    items: [
+      ['Märkte', MapPin],
+      ['Regalflächen', Warehouse],
+      ['Verkaufshistorie', FilePenLine],
+      ['Monatsübersicht', CalendarDays],
+    ],
+  },
+  {
+    label: 'Social Media',
+    items: [
+      ['News-Kalender', CalendarDays],
+      ['Content-Kalender', ClipboardList],
+    ],
+  },
+  {
+    label: 'Verwaltung',
+    items: [['Konten & Abos', CreditCard]],
+  },
 ] as const;
 
 const defaultPalette = [
@@ -261,9 +277,7 @@ export default function Home() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [inventoryArea, setInventoryArea] = useState<InventoryArea>('overview');
-  const [draftModule, setDraftModule] = useState<'research' | 'images' | null>(
-    null,
-  );
+  const [draftModule, setDraftModule] = useState<'workflow' | null>(null);
   const [contentCalendarOpen, setContentCalendarOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -328,6 +342,65 @@ export default function Home() {
     setInventoryArea(area);
     setInventoryOpen(true);
     void loadInventory();
+  }
+
+  function openNavigation(label: string) {
+    if (label === 'Übersicht') {
+      setActiveProduct(null);
+      closeModules();
+    } else if (label === 'Produkte') openInventory('products');
+    else if (label === 'Kasse') openInventory('cash');
+    else if (label === 'Druck & Versand') openInventory('online');
+    else if (label === 'Märkte') openInventory('markets');
+    else if (label === 'Regalflächen') openInventory('shelves');
+    else if (label === 'Verkaufshistorie') openInventory('sales');
+    else if (label === 'Monatsübersicht') openInventory('months');
+    else if (label === 'Etsy Workflow') {
+      setActiveProduct(null);
+      closeModules();
+      setDraftModule('workflow');
+    } else if (label === 'News-Kalender') {
+      setActiveProduct(null);
+      closeModules();
+      setCalendarOpen(true);
+    } else if (label === 'Content-Kalender') {
+      setActiveProduct(null);
+      closeModules();
+      setContentCalendarOpen(true);
+    } else if (label === 'Konten & Abos') {
+      setActiveProduct(null);
+      closeModules();
+      setAccountsOpen(true);
+    }
+  }
+
+  function navigationActive(label: string) {
+    if (label === 'Übersicht')
+      return (
+        !activeProduct &&
+        !calendarOpen &&
+        !inventoryOpen &&
+        !contentCalendarOpen &&
+        !accountsOpen &&
+        !draftModule &&
+        !trashOpen
+      );
+    const inventoryTarget: Record<string, InventoryArea> = {
+      Produkte: 'products',
+      Kasse: 'cash',
+      'Druck & Versand': 'online',
+      Märkte: 'markets',
+      Regalflächen: 'shelves',
+      Verkaufshistorie: 'sales',
+      Monatsübersicht: 'months',
+    };
+    if (inventoryTarget[label])
+      return inventoryOpen && inventoryArea === inventoryTarget[label];
+    if (label === 'Etsy Workflow') return draftModule === 'workflow';
+    if (label === 'News-Kalender') return calendarOpen;
+    if (label === 'Content-Kalender') return contentCalendarOpen;
+    if (label === 'Konten & Abos') return accountsOpen;
+    return false;
   }
 
   function openTrash() {
@@ -960,79 +1033,13 @@ export default function Home() {
           className="mt-8 min-h-0 flex-1 space-y-0.5 overflow-y-auto"
           aria-label="Hauptnavigation"
         >
-          {nav.map(([label, Icon]) => (
+          {navPrimary.map(([label, Icon]) => (
             <button
               key={label}
-              onClick={() => {
-                if (label === 'Übersicht') {
-                  setActiveProduct(null);
-                  closeModules();
-                } else if (label === 'Produkte') {
-                  openInventory('products');
-                } else if (label === 'Märkte') {
-                  openInventory('markets');
-                } else if (label === 'Regalflächen') {
-                  openInventory('shelves');
-                } else if (label === 'Verkäufe & Kasse') {
-                  openInventory('sales');
-                } else if (label === 'Druck & Versand') {
-                  openInventory('online');
-                } else if (label === 'Entwürfe') {
-                  setActiveProduct(null);
-                  closeModules();
-                  queueMicrotask(() =>
-                    document
-                      .getElementById('entwuerfe')
-                      ?.scrollIntoView({ behavior: 'smooth' }),
-                  );
-                } else if (label === 'News-Kalender') {
-                  setActiveProduct(null);
-                  closeModules();
-                  setCalendarOpen(true);
-                } else if (label === 'Content-Kalender') {
-                  setActiveProduct(null);
-                  closeModules();
-                  setContentCalendarOpen(true);
-                } else if (label === 'Konten & Abos') {
-                  setActiveProduct(null);
-                  closeModules();
-                  setAccountsOpen(true);
-                } else if (label === 'Recherche' || label === 'Bildstudio') {
-                  setActiveProduct(null);
-                  closeModules();
-                  setDraftModule(label === 'Recherche' ? 'research' : 'images');
-                }
-              }}
+              onClick={() => openNavigation(label)}
               className={
                 'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ' +
-                ((label === 'Übersicht' &&
-                  !activeProduct &&
-                  !calendarOpen &&
-                  !inventoryOpen &&
-                  !contentCalendarOpen &&
-                  !accountsOpen &&
-                  !draftModule &&
-                  !trashOpen) ||
-                (label === 'Produkte' &&
-                  inventoryOpen &&
-                  inventoryArea === 'products') ||
-                (label === 'Märkte' &&
-                  inventoryOpen &&
-                  inventoryArea === 'markets') ||
-                (label === 'Regalflächen' &&
-                  inventoryOpen &&
-                  inventoryArea === 'shelves') ||
-                (label === 'Verkäufe & Kasse' &&
-                  inventoryOpen &&
-                  inventoryArea === 'sales') ||
-                (label === 'Druck & Versand' &&
-                  inventoryOpen &&
-                  inventoryArea === 'online') ||
-                (label === 'Recherche' && draftModule === 'research') ||
-                (label === 'Bildstudio' && draftModule === 'images') ||
-                (label === 'News-Kalender' && calendarOpen) ||
-                (label === 'Content-Kalender' && contentCalendarOpen) ||
-                (label === 'Konten & Abos' && accountsOpen)
+                (navigationActive(label)
                   ? 'bg-[var(--fp-paper)] text-[var(--fp-ink)]'
                   : 'text-[var(--fp-paper)]/68 hover:bg-white/7 hover:text-white')
               }
@@ -1040,6 +1047,42 @@ export default function Home() {
               <Icon className="size-4" />
               <span className="flex-1">{label}</span>
             </button>
+          ))}
+          {navGroups.map((group) => (
+            <details
+              key={group.label}
+              className="group rounded-xl"
+              open={
+                group.items.some(([label]) => navigationActive(label)) ||
+                undefined
+              }
+            >
+              <summary className="cursor-pointer list-none rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68 transition hover:bg-white/7 hover:text-white">
+                <span className="flex items-center justify-between gap-2">
+                  {group.label}
+                  <span className="text-xs transition group-open:rotate-180">
+                    ⌄
+                  </span>
+                </span>
+              </summary>
+              <div className="ml-2 space-y-0.5 border-l border-white/10 pl-2">
+                {group.items.map(([label, Icon]) => (
+                  <button
+                    key={label}
+                    onClick={() => openNavigation(label)}
+                    className={
+                      'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ' +
+                      (navigationActive(label)
+                        ? 'bg-[var(--fp-paper)] text-[var(--fp-ink)]'
+                        : 'text-[var(--fp-paper)]/62 hover:bg-white/7 hover:text-white')
+                    }
+                  >
+                    <Icon className="size-4" />
+                    <span className="flex-1">{label}</span>
+                  </button>
+                ))}
+              </div>
+            </details>
           ))}
         </nav>
         <div className="mt-auto space-y-1">
@@ -1102,22 +1145,22 @@ export default function Home() {
                       ? 'Märkte'
                       : inventoryArea === 'shelves'
                         ? 'Regalflächen'
-                        : inventoryArea === 'sales'
-                          ? 'Verkäufe & Kasse'
-                          : inventoryArea === 'online'
-                            ? 'Druck & Versand'
-                            : 'Inventar'
-                    : draftModule === 'research'
-                      ? 'Recherche'
-                      : draftModule === 'images'
-                        ? 'Bildstudio'
-                        : contentCalendarOpen
-                          ? 'Content-Kalender'
-                          : accountsOpen
-                            ? 'Konten & Abos'
-                            : trashOpen
-                              ? 'Papierkorb'
-                              : 'Interne Arbeitsfläche'}
+                        : inventoryArea === 'cash'
+                          ? 'Kasse'
+                          : inventoryArea === 'sales'
+                            ? 'Verkaufshistorie'
+                            : inventoryArea === 'online'
+                              ? 'Druck & Versand'
+                              : 'Inventar'
+                    : draftModule === 'workflow'
+                      ? 'Etsy Workflow'
+                      : contentCalendarOpen
+                        ? 'Content-Kalender'
+                        : accountsOpen
+                          ? 'Konten & Abos'
+                          : trashOpen
+                            ? 'Papierkorb'
+                            : 'Interne Arbeitsfläche'}
             </span>
           </button>
           <div className="flex items-center gap-3">
@@ -1179,15 +1222,9 @@ export default function Home() {
             onCreateListing={createFromInventory}
           />
         ) : draftModule ? (
-          <DraftModuleLanding
-            kind={draftModule}
+          <EtsyWorkflowHub
             products={products}
-            onOpen={(row) =>
-              void openProduct(
-                row,
-                draftModule === 'research' ? 'recherche' : 'bilder',
-              )
-            }
+            onOpen={(row, step) => void openProduct(row, step)}
             onInventory={() => openInventory('products')}
           />
         ) : contentCalendarOpen ? (
@@ -3167,7 +3204,8 @@ function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
           {events.slice(0, 6).map((event) => (
             <div key={event.id} className="flex items-start gap-3 p-4 md:px-7">
               <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-full bg-[var(--fp-mist)]">
-                {event.kind === 'designer-model' ? (
+                {event.kind === 'designer-model' ||
+                event.kind === 'model-of-month' ? (
                   <Package className="size-4" />
                 ) : (
                   <CalendarDays className="size-4" />
@@ -3230,25 +3268,27 @@ function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
                 ? 'Fehlgeschlagen'
                 : 'Noch kein Ergebnis'}
           </div>
+          <div className="mt-5 text-xs text-muted-foreground">
+            Modell des Monats
+          </div>
+          <div className="mt-1 font-medium">
+            Aktiv · am 1. und nach jeder Buchung
+          </div>
         </aside>
       </div>
     </section>
   );
 }
 
-function DraftModuleLanding({
-  kind,
+function EtsyWorkflowHub({
   products,
   onOpen,
   onInventory,
 }: {
-  kind: 'research' | 'images';
   products: ProductRow[];
-  onOpen: (row: ProductRow) => void;
+  onOpen: (row: ProductRow, step: string) => void;
   onInventory: () => void;
 }) {
-  const isResearch = kind === 'research';
-  const Icon = isResearch ? Search : ImageIcon;
   return (
     <div className="mx-auto max-w-[1260px] px-4 py-8 md:px-8">
       <section className="rounded-[30px] border bg-white/60 p-6 md:p-8">
@@ -3258,36 +3298,51 @@ function DraftModuleLanding({
               Etsy-Produktion
             </p>
             <h1 className="mt-2 font-heading text-4xl md:text-5xl">
-              {isResearch ? 'Recherche' : 'Bildstudio'}
+              Etsy Workflow
             </h1>
             <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-              {isResearch
-                ? 'Öffne einen Entwurf direkt in der Keyword-, Markt- und Wettbewerbsrecherche.'
-                : 'Öffne die vollständige Bildserie eines Entwurfs, lade Produktfotos hoch und verwalte die Etsy-Motive.'}
+              Entwurf, Keyword-Recherche und Bildstudio gehören zu einem Produkt
+              und bleiben hier als ein durchgängiger Ablauf zusammen.
             </p>
           </div>
           <Button variant="outline" onClick={onInventory}>
             <Package className="size-4" /> Aus Inventar anlegen
           </Button>
         </div>
+        <div className="mt-7 grid gap-3 md:grid-cols-3">
+          {[
+            [FilePenLine, 'Entwürfe', 'Fakten, Texte, Preis und Prüfung'],
+            [Search, 'Recherche', 'Keywords, Markt und Wettbewerb'],
+            [
+              ImageIcon,
+              'Bildstudio',
+              'Originale und vollständige Etsy-Bildserie',
+            ],
+          ].map(([Icon, title, detail]) => (
+            <div
+              key={String(title)}
+              className="rounded-2xl border bg-[var(--fp-paper)]/65 p-4"
+            >
+              <Icon className="size-5 text-[var(--fp-primary)]" />
+              <div className="mt-3 font-medium">{String(title)}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {String(detail)}
+              </div>
+            </div>
+          ))}
+        </div>
         <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {products.map((product) => (
-            <button
-              type="button"
+            <article
               key={product.id}
-              onClick={() => onOpen(product)}
-              className="group rounded-2xl border bg-white/70 p-5 text-left transition hover:-translate-y-0.5 hover:border-[var(--fp-primary)] hover:shadow-sm"
+              className="rounded-2xl border bg-white/70 p-5"
             >
               <div className="flex items-start justify-between gap-3">
                 <span className="grid size-10 place-items-center rounded-xl bg-[var(--fp-mist)]">
-                  <Icon className="size-5" />
+                  <Sparkles className="size-5" />
                 </span>
                 <Badge variant="outline">
-                  {isResearch
-                    ? product.status === 'draft'
-                      ? 'Recherche öffnen'
-                      : product.status
-                    : `${product.asset_count || 0} Bilder`}
+                  {product.status === 'draft' ? 'Entwurf' : product.status}
                 </Badge>
               </div>
               <h2 className="mt-5 font-heading text-2xl leading-tight">
@@ -3298,11 +3353,30 @@ function DraftModuleLanding({
                   .filter(Boolean)
                   .join(' · ')}
               </p>
-              <span className="mt-5 inline-flex items-center gap-2 text-sm font-medium text-[var(--fp-primary)]">
-                {isResearch ? 'Recherche bearbeiten' : 'Bildserie bearbeiten'}
-                <ArrowRight className="size-4 transition group-hover:translate-x-1" />
-              </span>
-            </button>
+              <div className="mt-5 grid grid-cols-3 gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onOpen(product, 'fakten')}
+                >
+                  <FilePenLine className="size-3.5" /> Entwurf
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onOpen(product, 'recherche')}
+                >
+                  <Search className="size-3.5" /> Recherche
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onOpen(product, 'bilder')}
+                >
+                  <ImageIcon className="size-3.5" /> Bilder
+                </Button>
+              </div>
+            </article>
           ))}
         </div>
         {!products.length ? (

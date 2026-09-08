@@ -40,6 +40,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { InventoryItem } from '@/lib/inventory-bridge';
+import { PRINTERS, variantCostBreakdown } from '@/lib/inventory-production';
 
 type Row = Record<string, unknown>;
 export type InventoryArea =
@@ -48,6 +49,7 @@ export type InventoryArea =
   | 'materials'
   | 'markets'
   | 'shelves'
+  | 'cash'
   | 'online'
   | 'sales'
   | 'months'
@@ -66,8 +68,9 @@ const sections: Array<{
   { id: 'materials', label: 'Material', icon: Warehouse },
   { id: 'markets', label: 'Märkte', icon: MapPin },
   { id: 'shelves', label: 'Regalflächen', icon: Warehouse },
-  { id: 'online', label: 'Online', icon: Truck },
-  { id: 'sales', label: 'Verkäufe', icon: ShoppingBag },
+  { id: 'cash', label: 'Kasse', icon: CircleDollarSign },
+  { id: 'online', label: 'Druck & Versand', icon: Truck },
+  { id: 'sales', label: 'Verkaufshistorie', icon: ShoppingBag },
   { id: 'months', label: 'Monate', icon: CalendarDays },
   { id: 'account', label: 'Konto', icon: UserRound },
   { id: 'trash', label: 'Papierkorb', icon: Trash2 },
@@ -348,7 +351,10 @@ export function InventoryWorkspace({
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        entity: 'online_sales',
+        entity:
+          string(row.sourceType) === 'cash-sale'
+            ? 'fulfillment_tasks'
+            : 'online_sales',
         id: row.id,
         values: { [key]: !boolean(row[key]) },
       }),
@@ -393,6 +399,7 @@ export function InventoryWorkspace({
   const materials = rows(data.materials?.materials);
   const markets = rows(data.markets?.markets);
   const online = rows(data.online?.onlineSales);
+  const cashTasks = rows(data.online?.fulfillmentTasks);
 
   return (
     <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-9">
@@ -457,6 +464,7 @@ export function InventoryWorkspace({
           materials={materials}
           markets={markets}
           online={online}
+          cashTasks={cashTasks}
           onGo={setActive}
         />
       ) : null}
@@ -511,18 +519,26 @@ export function InventoryWorkspace({
       ) : null}
       {active === 'online' ? (
         <OnlineSales
-          items={online}
+          items={[
+            ...online.filter(
+              (item) => !boolean(item.isPrinted) || !boolean(item.isShipped),
+            ),
+            ...cashTasks,
+          ]}
           onToggle={toggleOnline}
           onEdit={(row) => openEditor('online_sales', row)}
         />
       ) : null}
-      {active === 'sales' ? (
-        <Sales
-          data={data.sales || {}}
-          onOpenMarketCash={() => setActive('markets')}
-          onOpenShelfCash={() => setActive('shelves')}
-        />
+      {active === 'cash' ? (
+        <div className="space-y-8">
+          <CashRegister
+            data={data.cash || {}}
+            onBooked={() => void refresh()}
+          />
+          <Sales data={data.cash || {}} />
+        </div>
       ) : null}
+      {active === 'sales' ? <Sales data={data.sales || {}} /> : null}
       {active === 'months' ? <Months data={data.months || {}} /> : null}
       {active === 'account' ? <Account data={data.account || {}} /> : null}
       {active === 'trash' ? (
@@ -556,19 +572,22 @@ function Overview({
   materials,
   markets,
   online,
+  cashTasks,
   onGo,
 }: {
   products: Row[];
   materials: Row[];
   markets: Row[];
   online: Row[];
+  cashTasks: Row[];
   onGo: (area: InventoryArea) => void;
 }) {
   const activeMarkets = markets.filter(
     (item) => string(item.status) !== 'abgeschlossen',
   );
-  const printTasks = online.filter((item) => !boolean(item.isPrinted));
-  const shippingTasks = online.filter(
+  const fulfillment = [...online, ...cashTasks];
+  const printTasks = fulfillment.filter((item) => !boolean(item.isPrinted));
+  const shippingTasks = fulfillment.filter(
     (item) =>
       !boolean(item.isShipped) && string(item.shippingMethod) !== 'abholung',
   );
@@ -683,7 +702,55 @@ function Products({
   onArchive: (row: Row) => void;
   onListing: (row: Row) => void;
 }) {
-  const products = rows(data.products).filter((product) => {
+  const [mainFilter, setMainFilter] = useState<
+    'all' | 'missing' | 'empty' | 'margin'
+  >('all');
+  const [category, setCategory] = useState('');
+  const [familyId, setFamilyId] = useState('');
+  const [designerId, setDesignerId] = useState('');
+  const [sort, setSort] = useState<
+    'name' | 'marginHigh' | 'marginLow' | 'costHigh' | 'costLow' | 'printTime'
+  >('name');
+  const [moreFilters, setMoreFilters] = useState(false);
+  const source = rows(data.products);
+  const components = rows(data.components);
+  const metrics = (product: Row) =>
+    rows(product.variants).map((variant) =>
+      variantCostBreakdown(product, variant, source, components),
+    );
+  const averageMargin = (product: Row) => {
+    const values = metrics(product)
+      .map((item) => item.marginPercent)
+      .filter((item): item is number => item != null);
+    return values.length
+      ? values.reduce((sum, value) => sum + value, 0) / values.length
+      : null;
+  };
+  const productMissing = (product: Row) => {
+    const variants = rows(product.variants);
+    return (
+      !variants.length ||
+      variants.some((variant) => {
+        const cost = variantCostBreakdown(product, variant, source, components);
+        const purchased = /zubehör|zubehoer|zukauf|einkauf|handelsware/i.test(
+          string(product.category),
+        );
+        const digital = /stl|digital/i.test(string(product.category));
+        if (purchased || digital)
+          return (
+            number(variant.priceCents) <= 0 ||
+            number(variant.extraCostCents) < 0
+          );
+        return (
+          number(variant.priceCents) <= 0 ||
+          cost.netGrams <= 0 ||
+          cost.printMinutes <= 0 ||
+          !string(variant.printer)
+        );
+      })
+    );
+  };
+  const products = source.filter((product) => {
     const query = search.trim().toLocaleLowerCase('de');
     const matches = [
       product.name,
@@ -695,14 +762,51 @@ function Products({
       .join(' ')
       .toLocaleLowerCase('de')
       .includes(query);
-    return (
-      matches &&
-      (filter === 'all' ||
-        (filter === 'archive'
-          ? Boolean(product.archivedAt)
-          : !product.archivedAt))
-    );
+    if (!matches) return false;
+    if (
+      filter !== 'all' &&
+      (filter === 'archive' ? !product.archivedAt : Boolean(product.archivedAt))
+    )
+      return false;
+    if (category && string(product.category) !== category) return false;
+    if (familyId && string(product.familyId) !== familyId) return false;
+    if (designerId && string(product.designerId) !== designerId) return false;
+    if (mainFilter === 'missing' && !productMissing(product)) return false;
+    if (
+      mainFilter === 'empty' &&
+      rows(product.variants).reduce(
+        (sum, variant) => sum + number(variant.quantity),
+        0,
+      ) > 0
+    )
+      return false;
+    if (
+      mainFilter === 'margin' &&
+      averageMargin(product) != null &&
+      (averageMargin(product) as number) >= 0
+    )
+      return false;
+    return true;
   });
+  products.sort((a, b) => {
+    if (sort === 'marginHigh')
+      return (averageMargin(b) ?? -Infinity) - (averageMargin(a) ?? -Infinity);
+    if (sort === 'marginLow')
+      return (averageMargin(a) ?? Infinity) - (averageMargin(b) ?? Infinity);
+    const costA = Math.max(0, ...metrics(a).map((item) => item.totalCents));
+    const costB = Math.max(0, ...metrics(b).map((item) => item.totalCents));
+    if (sort === 'costHigh') return costB - costA;
+    if (sort === 'costLow') return costA - costB;
+    if (sort === 'printTime')
+      return (
+        Math.max(0, ...metrics(b).map((item) => item.printMinutes)) -
+        Math.max(0, ...metrics(a).map((item) => item.printMinutes))
+      );
+    return string(a.name).localeCompare(string(b.name), 'de');
+  });
+  const categories = [
+    ...new Set(source.map((item) => string(item.category)).filter(Boolean)),
+  ].sort();
   return (
     <section className="mt-6">
       <div className="flex flex-col gap-3 lg:flex-row">
@@ -728,15 +832,110 @@ function Products({
           <Plus className="size-4" /> Neuer Artikel
         </Button>
       </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {(
+          [
+            ['all', 'Alle'],
+            ['missing', 'Daten fehlen'],
+            ['empty', 'Nichts auf Lager'],
+            ['margin', 'Marge unklar'],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            size="sm"
+            variant={mainFilter === value ? 'default' : 'outline'}
+            onClick={() => setMainFilter(value)}
+          >
+            {label}
+          </Button>
+        ))}
+        <Button
+          size="sm"
+          variant={moreFilters ? 'default' : 'outline'}
+          onClick={() => setMoreFilters((value) => !value)}
+        >
+          Weitere Filter
+          {[category, familyId, designerId, sort !== 'name' ? sort : ''].filter(
+            Boolean,
+          ).length
+            ? ` (${[category, familyId, designerId, sort !== 'name' ? sort : ''].filter(Boolean).length})`
+            : ''}
+        </Button>
+      </div>
+      {moreFilters ? (
+        <div className="mt-3 grid gap-3 rounded-2xl border bg-white/55 p-4 sm:grid-cols-2 xl:grid-cols-4">
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Kategorie
+            <select
+              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+            >
+              <option value="">Alle Kategorien</option>
+              {categories.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Familie
+            <select
+              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={familyId}
+              onChange={(event) => setFamilyId(event.target.value)}
+            >
+              <option value="">Alle Familien</option>
+              {rows(data.families).map((item) => (
+                <option key={string(item.id)} value={string(item.id)}>
+                  {string(item.name)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Designer / Lizenzgeber
+            <select
+              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={designerId}
+              onChange={(event) => setDesignerId(event.target.value)}
+            >
+              <option value="">Alle Designer</option>
+              {rows(data.designers).map((item) => (
+                <option key={string(item.id)} value={string(item.id)}>
+                  {string(item.name)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Sortierung
+            <select
+              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={sort}
+              onChange={(event) => setSort(event.target.value as typeof sort)}
+            >
+              <option value="name">A–Z</option>
+              <option value="marginHigh">Höchste Marge</option>
+              <option value="marginLow">Niedrigste Marge</option>
+              <option value="costHigh">Teuerste Produktion</option>
+              <option value="costLow">Billigste Produktion</option>
+              <option value="printTime">Längster Druck</option>
+            </select>
+          </label>
+        </div>
+      ) : null}
       <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {products.map((product) => {
           const variants = rows(product.variants);
-          const price =
-            number(product.defaultPriceCents) ||
-            number(variants[0]?.priceCents);
-          const cost =
-            number(product.productionCostCents) ||
-            number(variants[0]?.productionCostCents);
+          const price = variants.length
+            ? Math.min(...variants.map((item) => number(item.priceCents)))
+            : 0;
+          const stock = variants.reduce(
+            (sum, item) => sum + number(item.quantity),
+            0,
+          );
+          const margin = averageMargin(product);
           return (
             <article
               key={string(product.id)}
@@ -766,9 +965,7 @@ function Products({
                 <dl className="mt-4 grid grid-cols-3 gap-2 text-xs">
                   <div>
                     <dt className="text-muted-foreground">Bestand</dt>
-                    <dd className="mt-1 font-medium">
-                      {number(product.stockQuantity)}
-                    </dd>
+                    <dd className="mt-1 font-medium">{stock}</dd>
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Preis</dt>
@@ -777,10 +974,15 @@ function Products({
                   <div>
                     <dt className="text-muted-foreground">Marge</dt>
                     <dd className="mt-1 font-medium">
-                      {cents(Math.max(0, price - cost))}
+                      {margin == null ? 'unklar' : `${margin.toFixed(1)} %`}
                     </dd>
                   </div>
                 </dl>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  {variants.length}{' '}
+                  {variants.length === 1 ? 'Variante' : 'Varianten'} · Preis ab{' '}
+                  {cents(price)}
+                </p>
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <Button variant="outline" onClick={() => onEdit(product)}>
                     <Pencil className="size-4" /> Bearbeiten
@@ -1078,7 +1280,9 @@ function OnlineSales({
   );
   const [copied, setCopied] = useState('');
   const visible = items.filter((item) => {
-    const pickup = string(item.shippingMethod).toLowerCase() === 'abholung';
+    const pickup =
+      string(item.shippingMethod).toLowerCase() === 'abholung' ||
+      string(item.fulfillmentMode) === 'pickup';
     if (filter === 'print' && boolean(item.isPrinted)) return false;
     if (filter === 'shipping' && (boolean(item.isShipped) || pickup))
       return false;
@@ -1105,7 +1309,9 @@ function OnlineSales({
       item.articleName || item.productName,
       'deine Bestellung',
     );
-    const pickup = string(item.shippingMethod).toLowerCase() === 'abholung';
+    const pickup =
+      string(item.shippingMethod).toLowerCase() === 'abholung' ||
+      string(item.fulfillmentMode) === 'pickup';
     const message = pickup
       ? `${greeting}\n\n„${article}“ ist fertig und kann jetzt abgeholt werden. Melde dich gern kurz, damit wir einen passenden Zeitpunkt abstimmen können.\n\nLiebe Grüße\nFormPoesie`
       : `${greeting}\n\ndeine Bestellung „${article}“ ist fertig und wurde versendet. Sie ist jetzt auf dem Weg zu dir.\n\nVielen Dank für deine Bestellung und viel Freude damit.\n\nLiebe Grüße\nFormPoesie`;
@@ -1172,7 +1378,7 @@ function OnlineSales({
                 {[
                   string(item.orderKey),
                   string(item.customerName || item.shippingRecipient),
-                  date(item.date),
+                  date(item.date || item.saleDate),
                 ]
                   .filter(Boolean)
                   .join(' · ')}
@@ -1196,7 +1402,10 @@ function OnlineSales({
               </div>
               <div>
                 <div className="text-muted-foreground">Versand</div>
-                {string(item.shippingMethod, '–')}
+                {string(
+                  item.shippingMethod,
+                  string(item.fulfillmentMode) === 'pickup' ? 'Abholung' : '–',
+                )}
               </div>
               <div>
                 <div className="text-muted-foreground">Kosten</div>
@@ -1227,9 +1436,15 @@ function OnlineSales({
               >
                 <Truck className="size-4" /> Versendet
               </Button>
-              <Button variant="ghost" size="icon" onClick={() => onEdit(item)}>
-                <Pencil className="size-4" />
-              </Button>
+              {string(item.sourceType) !== 'cash-sale' ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onEdit(item)}
+                >
+                  <Pencil className="size-4" />
+                </Button>
+              ) : null}
             </div>
           </article>
         ))}
@@ -1238,77 +1453,425 @@ function OnlineSales({
   );
 }
 
-function Sales({
+type CartItem = {
+  variant: Row;
+  articleName: string;
+  quantity: number;
+};
+
+function CashRegister({
   data,
-  onOpenMarketCash,
-  onOpenShelfCash,
+  onBooked,
 }: {
   data: AreaData;
-  onOpenMarketCash: () => void;
-  onOpenShelfCash: () => void;
+  onBooked: () => void;
 }) {
-  const items = rows(data.sales);
-  const [cashDate, setCashDate] = useState(() =>
+  const venues = rows(data.markets);
+  const articles = rows(data.articles);
+  const [venueId, setVenueId] = useState('');
+  const [saleDate, setSaleDate] = useState(() =>
     new Intl.DateTimeFormat('sv-SE').format(new Date()),
   );
-  const activeSales = items.filter(
-    (sale) =>
-      !boolean(sale.isCancelled) && string(sale.date).slice(0, 10) === cashDate,
+  const [paymentMethod, setPaymentMethod] = useState('BAR');
+  const [search, setSearch] = useState('');
+  const [note, setNote] = useState('');
+  const [cashGiven, setCashGiven] = useState('');
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const selectedVenue = venues.find((item) => string(item.id) === venueId);
+  const variants = articles
+    .filter((article) => string(article.marketId) === venueId)
+    .flatMap((article) =>
+      rows(article.variants).map((variant) => ({
+        variant,
+        articleName: string(article.name, 'Artikel'),
+      })),
+    )
+    .filter(({ variant, articleName }) =>
+      [articleName, variant.color, variant.name, variant.size]
+        .join(' ')
+        .toLocaleLowerCase('de')
+        .includes(search.trim().toLocaleLowerCase('de')),
+    );
+  const total = cart.reduce(
+    (sum, item) => sum + item.quantity * number(item.variant.salePriceCents),
+    0,
   );
-  const sumFor = (paymentMethod: string | null) =>
-    activeSales
-      .filter((sale) =>
-        paymentMethod === null
-          ? !string(sale.paymentMethod)
-          : string(sale.paymentMethod) === paymentMethod,
-      )
-      .reduce((sum, sale) => sum + saleTotal(sale), 0);
-  const total = activeSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const givenCents = Math.round(Number(cashGiven.replace(',', '.')) * 100);
+  const change = Number.isFinite(givenCents) ? givenCents - total : null;
+  const today = new Intl.DateTimeFormat('sv-SE').format(new Date());
+
+  function add(articleName: string, variant: Row) {
+    setCart((current) => {
+      const match = current.find(
+        (item) => string(item.variant.id) === string(variant.id),
+      );
+      if (match)
+        return current.map((item) =>
+          item === match ? { ...item, quantity: item.quantity + 1 } : item,
+        );
+      return [...current, { articleName, variant, quantity: 1 }];
+    });
+  }
+
+  function setQuantity(id: unknown, quantity: number) {
+    setCart((current) =>
+      current
+        .map((item) =>
+          string(item.variant.id) === string(id) ? { ...item, quantity } : item,
+        )
+        .filter((item) => item.quantity > 0),
+    );
+  }
+
+  async function book() {
+    if (!venueId || !cart.length || saving) return;
+    setSaving(true);
+    setMessage('');
+    const response = await fetch('/api/inventory/workspace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rpc: 'verkauf_buchen',
+        createFulfillment: saleDate === today,
+        args: {
+          p_operation_id: crypto.randomUUID(),
+          p_market_id: number(selectedVenue?.id),
+          p_date: saleDate,
+          p_discount_cents: 0,
+          p_pricing_mode: 'ITEMIZED',
+          p_total_price_cents: null,
+          p_payment_method: paymentMethod || null,
+          p_note: note.trim() || null,
+          p_zeilen: cart.map((item) => ({
+            article_variant_id: number(item.variant.id),
+            quantity: item.quantity,
+            unit_sale_price_cents: number(item.variant.salePriceCents),
+            unit_cost_price_cents: number(item.variant.costPriceCents),
+            discount_percent: number(item.variant.discountPercent),
+            component_choices: null,
+          })),
+        },
+      }),
+    });
+    const result = (await response.json()) as { error?: string };
+    setSaving(false);
+    if (!response.ok) {
+      setMessage(result.error || 'Verkauf konnte nicht gebucht werden.');
+      return;
+    }
+    setMessage(
+      saleDate === today
+        ? 'Verkauf gebucht. Die Positionen stehen jetzt unter Druck & Versand.'
+        : 'Vergangener Verkauf gebucht. Die Monatsauswertung wurde aktualisiert.',
+    );
+    setCart([]);
+    setCashGiven('');
+    setNote('');
+    onBooked();
+  }
+
+  return (
+    <section className="mt-6 grid gap-5 xl:grid-cols-[1.35fr_.85fr]">
+      <div className="rounded-[26px] border bg-white/65 p-5 md:p-6">
+        <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+          Verkauf erfassen
+        </p>
+        <h2 className="mt-1 font-heading text-3xl">Kasse</h2>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
+            Markt oder Regalfläche
+            <select
+              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={venueId}
+              onChange={(event) => {
+                setVenueId(event.target.value);
+                setCart([]);
+              }}
+            >
+              <option value="">Verkaufsort wählen</option>
+              {venues.map((venue) => (
+                <option key={string(venue.id)} value={string(venue.id)}>
+                  {string(venue.venueKind) === 'shelf'
+                    ? 'Regal · '
+                    : 'Markt · '}
+                  {string(venue.name)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Field
+            label="Verkaufsdatum"
+            type="date"
+            value={saleDate}
+            onChange={setSaleDate}
+          />
+        </div>
+        <div className="relative mt-4">
+          <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
+          <Input
+            className="bg-white pl-9"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={
+              venueId
+                ? 'Artikel oder Variante suchen'
+                : 'Zuerst Verkaufsort wählen'
+            }
+            disabled={!venueId}
+          />
+        </div>
+        <div className="mt-3 grid max-h-[430px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+          {variants.map(({ variant, articleName }) => (
+            <button
+              type="button"
+              key={string(variant.id)}
+              onClick={() => add(articleName, variant)}
+              disabled={number(variant.quantityInStock) <= 0}
+              className="flex items-center justify-between gap-3 rounded-xl border bg-white/70 p-3 text-left transition hover:border-[var(--fp-primary)] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <span>
+                <span className="block text-sm font-medium">{articleName}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {string(variant.color || variant.name, 'Standard')} ·{' '}
+                  {number(variant.quantityInStock)} verfügbar
+                </span>
+              </span>
+              <span className="font-semibold">
+                {cents(variant.salePriceCents)}
+              </span>
+            </button>
+          ))}
+          {venueId && !variants.length ? (
+            <p className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground md:col-span-2">
+              An diesem Verkaufsort wurde kein passender Artikel gefunden.
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <aside className="rounded-[26px] border bg-[var(--fp-ink)] p-5 text-[var(--fp-paper)] md:p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="font-heading text-2xl">Warenkorb</h2>
+          <Badge className="bg-white/10 text-white">
+            {cart.reduce((sum, item) => sum + item.quantity, 0)} Stück
+          </Badge>
+        </div>
+        <div className="mt-5 space-y-2">
+          {cart.map((item) => (
+            <div
+              key={string(item.variant.id)}
+              className="rounded-xl border border-white/15 p-3"
+            >
+              <div className="flex justify-between gap-3 text-sm">
+                <div>
+                  <div className="font-medium">{item.articleName}</div>
+                  <div className="text-xs text-white/60">
+                    {string(
+                      item.variant.color || item.variant.name,
+                      'Standard',
+                    )}
+                  </div>
+                </div>
+                <div>
+                  {cents(item.quantity * number(item.variant.salePriceCents))}
+                </div>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    setQuantity(item.variant.id, item.quantity - 1)
+                  }
+                >
+                  −
+                </Button>
+                <span className="min-w-8 text-center text-sm">
+                  {item.quantity}
+                </span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    setQuantity(item.variant.id, item.quantity + 1)
+                  }
+                >
+                  +
+                </Button>
+              </div>
+            </div>
+          ))}
+          {!cart.length ? (
+            <p className="text-sm text-white/60">
+              Tippe links auf Artikel, um sie in den Warenkorb zu legen.
+            </p>
+          ) : null}
+        </div>
+        <div className="mt-6 border-t border-white/15 pt-5">
+          <div className="flex items-end justify-between">
+            <span className="text-sm text-white/65">Gesamtsumme</span>
+            <span className="font-heading text-4xl">{cents(total)}</span>
+          </div>
+          <label className="mt-5 grid gap-1.5 text-xs text-white/65">
+            Zahlungsart
+            <select
+              className="h-10 rounded-lg border border-white/20 bg-white px-3 text-sm text-black"
+              value={paymentMethod}
+              onChange={(event) => setPaymentMethod(event.target.value)}
+            >
+              <option value="BAR">Bar</option>
+              <option value="PAYPAL">PayPal</option>
+              <option value="KARTE">Karte</option>
+              <option value="SONSTIGES">Überweisung / Sonstiges</option>
+              <option value="">Ohne Angabe</option>
+            </select>
+          </label>
+          {paymentMethod === 'BAR' ? (
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <Field
+                label="Gegeben in €"
+                value={cashGiven}
+                onChange={setCashGiven}
+              />
+              <div className="rounded-xl border border-white/15 p-3 text-sm">
+                <div className="text-xs text-white/60">
+                  {change != null && change < 0 ? 'Fehlt' : 'Rückgeld'}
+                </div>
+                <div className="mt-1 font-semibold">
+                  {change == null ? '–' : cents(Math.abs(change))}
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <label className="mt-3 grid gap-1.5 text-xs text-white/65">
+            Notiz (optional)
+            <Textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              className="border-white/20 bg-white text-black"
+            />
+          </label>
+          {saleDate !== today ? (
+            <p className="mt-3 rounded-xl bg-white/8 p-3 text-xs text-white/70">
+              Nachgetragener Verkauf: Er aktualisiert Historie und Modell des
+              Monats, erzeugt aber keine heutige Druck-/Versandaufgabe.
+            </p>
+          ) : null}
+          <Button
+            className="mt-4 w-full bg-[var(--fp-paper)] text-[var(--fp-ink)] hover:bg-white"
+            onClick={() => void book()}
+            disabled={
+              !venueId ||
+              !cart.length ||
+              saving ||
+              (paymentMethod === 'BAR' && change != null && change < 0)
+            }
+          >
+            {saving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <CircleDollarSign className="size-4" />
+            )}{' '}
+            Verkauf buchen
+          </Button>
+          {message ? (
+            <p className="mt-3 text-xs text-white/75">{message}</p>
+          ) : null}
+        </div>
+      </aside>
+    </section>
+  );
+}
+
+function Sales({ data }: { data: AreaData }) {
+  const items = rows(data.sales);
   const online = rows(data.onlineSales);
+  const articles = rows(data.articles);
+  const keys = [
+    ...new Set(
+      [...items, ...online].map((sale) => monthKey(sale.date)).filter(Boolean),
+    ),
+  ]
+    .sort()
+    .reverse();
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const activeMonth = selectedMonth || keys[0] || '';
+  const monthSales = items.filter(
+    (sale) => monthKey(sale.date) === activeMonth,
+  );
+  const monthOnline = online.filter(
+    (sale) => monthKey(sale.date) === activeMonth,
+  );
+  const articleName = (saleItem: Row) => {
+    const nested = string(object(object(saleItem.articleVariant).article).name);
+    if (nested) return nested;
+    for (const article of articles) {
+      if (
+        rows(article.variants).some(
+          (variant) => string(variant.id) === string(saleItem.articleVariantId),
+        )
+      )
+        return string(article.name, 'Artikel');
+    }
+    return 'Artikel';
+  };
+  const soldPieces =
+    monthSales.reduce(
+      (sum, sale) =>
+        sum +
+        rows(sale.items).reduce(
+          (part, item) => part + number(item.quantity),
+          0,
+        ),
+      0,
+    ) + monthOnline.reduce((sum, sale) => sum + number(sale.quantity, 1), 0);
   return (
     <section className="mt-6">
-      <div className="rounded-[26px] border bg-white/65 p-5 md:p-6">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
-              Kassenabschluss
-            </p>
-            <h2 className="mt-1 font-heading text-3xl">Tageskasse</h2>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <Field
-              label="Tag"
-              type="date"
-              value={cashDate}
-              onChange={setCashDate}
-            />
-            <Button onClick={onOpenMarketCash}>
-              <MapPin className="size-4" /> Markt-Kasse
-            </Button>
-            <Button variant="outline" onClick={onOpenShelfCash}>
-              <Warehouse className="size-4" /> Regal-Kasse
-            </Button>
-          </div>
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+            Nach Monaten
+          </p>
+          <h2 className="mt-1 font-heading text-3xl">Verkaufshistorie</h2>
         </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <Stat value={cents(sumFor('BAR'))} label="Bargeld" />
-          <Stat value={cents(sumFor('PAYPAL'))} label="PayPal" />
-          <Stat value={cents(sumFor('KARTE'))} label="Karte" />
-          <Stat value={cents(sumFor(null))} label="ohne Zahlungsart" />
-          <Stat value={cents(total)} label={`${activeSales.length} Verkäufe`} />
-        </div>
-        <p className="mt-3 text-xs text-muted-foreground">
-          Sonstige Zahlungen: {cents(sumFor('SONSTIGES'))}. Online-Verkäufe (
-          {online.length}) werden separat geführt und nicht als Bargeld
-          angenommen.
-        </p>
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          Monat
+          <select
+            className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+            value={activeMonth}
+            onChange={(event) => setSelectedMonth(event.target.value)}
+          >
+            {keys.map((key) => (
+              <option key={key} value={key}>
+                {new Intl.DateTimeFormat('de-DE', {
+                  month: 'long',
+                  year: 'numeric',
+                }).format(new Date(key + '-01T12:00:00Z'))}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
-      <div className="grid gap-3">
-        <div className="mt-5 flex items-center justify-between">
-          <h2 className="font-heading text-2xl">Markt- und Regalverkäufe</h2>
-          <Badge variant="outline">{items.length}</Badge>
-        </div>
-        {items.map((sale) => (
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <Stat value={soldPieces} label="verkaufte Artikel" />
+        <Stat
+          value={monthSales.length + monthOnline.length}
+          label="Verkaufsvorgänge"
+        />
+        <Stat
+          value={cents(
+            monthSales.reduce((sum, sale) => sum + saleTotal(sale), 0) +
+              monthOnline.reduce(
+                (sum, sale) => sum + onlineSaleRevenue(sale),
+                0,
+              ),
+          )}
+          label="Umsatz"
+        />
+      </div>
+      <div className="mt-4 grid gap-3">
+        {monthSales.map((sale) => (
           <article
             key={string(sale.id)}
             className="rounded-2xl border bg-white/65 p-4"
@@ -1329,10 +1892,7 @@ function Sales({
               {rows(sale.items).map((item) => (
                 <Badge key={string(item.id)} variant="outline">
                   {number(item.quantity)} ×{' '}
-                  {string(
-                    object(object(item.articleVariant).article).name,
-                    'Artikel',
-                  )}
+                  {string(articleName(item), 'Artikel')}
                 </Badge>
               ))}
             </div>
@@ -1343,11 +1903,7 @@ function Sales({
             ) : null}
           </article>
         ))}
-        <div className="mt-5 flex items-center justify-between">
-          <h2 className="font-heading text-2xl">Online-Verkäufe</h2>
-          <Badge variant="outline">{online.length}</Badge>
-        </div>
-        {online.map((sale) => (
+        {monthOnline.map((sale) => (
           <article
             key={`online-${string(sale.id)}`}
             className="rounded-2xl border bg-white/65 p-4"
@@ -1380,6 +1936,11 @@ function Sales({
             </div>
           </article>
         ))}
+        {!monthSales.length && !monthOnline.length ? (
+          <div className="rounded-2xl border border-dashed bg-white/45 p-8 text-center text-sm text-muted-foreground">
+            Für diesen Monat gibt es noch keine Verkaufspositionen.
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -1389,6 +1950,7 @@ function Months({ data }: { data: AreaData }) {
   const sales = rows(data.sales);
   const online = rows(data.onlineSales);
   const expenses = [...rows(data.expenses), ...rows(data.otherExpenses)];
+  const highlights = rows(data.highlights);
   const keys = [
     ...new Set(
       [
@@ -1429,6 +1991,7 @@ function Months({ data }: { data: AreaData }) {
             (sum, item) => sum + number(item.amountCents || item.priceCents),
             0,
           );
+        const highlight = highlights.find((item) => string(item.month) === key);
         return (
           <article key={key} className="rounded-2xl border bg-white/65 p-5">
             <div className="flex items-center justify-between">
@@ -1462,6 +2025,18 @@ function Months({ data }: { data: AreaData }) {
                 </dd>
               </div>
             </dl>
+            {highlight ? (
+              <div className="mt-5 rounded-xl bg-[var(--fp-mist)] p-4 text-sm">
+                <div className="text-xs font-semibold tracking-[.1em] text-[var(--fp-primary)] uppercase">
+                  Modell des Monats
+                </div>
+                <div className="mt-1 font-medium">
+                  {string(highlight.productName)} ·{' '}
+                  {number(highlight.productQuantity)} von{' '}
+                  {number(highlight.totalQuantity)} verkauften Artikeln
+                </div>
+              </div>
+            ) : null}
           </article>
         );
       })}
@@ -1633,8 +2208,29 @@ function EntityEditor({
           {isProduct ? (
             <>
               {input('name', 'Artikelname')}
-              {input('category', 'Kategorie')}
-              {input('size', 'Größe')}
+              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                Kategorie
+                <Input
+                  list="product-categories"
+                  value={string(form.category)}
+                  onChange={(event) => setValue('category', event.target.value)}
+                  className="bg-white text-foreground"
+                  placeholder="Vorhandene wählen oder neu anlegen"
+                />
+                <datalist id="product-categories">
+                  {[
+                    ...new Set(
+                      rows(data.products?.products)
+                        .map((item) => string(item.category))
+                        .filter(Boolean),
+                    ),
+                  ]
+                    .sort()
+                    .map((item) => (
+                      <option key={item} value={item} />
+                    ))}
+                </datalist>
+              </label>
               {input('modelUrl', 'Modell-/MakerWorld-Link', 'url')}
               <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
                 Produktfamilie
@@ -1676,18 +2272,6 @@ function EntityEditor({
                   ))}
                 </select>
               </label>
-              {input('printer', 'Drucker')}
-              {input('printMinutes', 'Druckzeit in Minuten', 'number')}
-              {input('filamentGrams', 'Filament gesamt in g', 'number')}
-              {input(
-                'productionCostCents',
-                'Produktionskosten in Cent',
-                'number',
-              )}
-              {input('extraCostCents', 'Zusatzkosten in Cent', 'number')}
-              {input('defaultPriceCents', 'Standardpreis in Cent', 'number')}
-              {input('baseStockQuantity', 'Grundbestand', 'number')}
-              {input('stockQuantity', 'Gesamtbestand', 'number')}
               <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
                 <input
                   type="checkbox"
@@ -1712,15 +2296,26 @@ function EntityEditor({
                   onUploaded={onClose}
                 />
               ) : null}
-              <ManufacturingEditor
-                product={editor.row}
-                materials={rows(data.products?.materials)}
-                onChanged={onClose}
-              />
-              <RelationsSummary
-                product={editor.row}
-                data={data.products || {}}
-              />
+              {editor.row.id ? (
+                <>
+                  <ManufacturingEditor
+                    product={editor.row}
+                    materials={rows(data.products?.materials)}
+                    products={rows(data.products?.products)}
+                    components={rows(data.products?.components)}
+                    onChanged={onClose}
+                  />
+                  <RelationsSummary
+                    product={editor.row}
+                    data={data.products || {}}
+                  />
+                </>
+              ) : (
+                <p className="rounded-xl border border-dashed bg-white/55 p-4 text-sm text-muted-foreground sm:col-span-2">
+                  Speichere zuerst den Produktstamm. Danach öffnet sich die
+                  vollständige Varianten- und Kostenmaske.
+                </p>
+              )}
             </>
           ) : null}
           {isMaterial ? (
@@ -1870,10 +2465,14 @@ function EntityEditor({
 function ManufacturingEditor({
   product,
   materials,
+  products,
+  components,
   onChanged,
 }: {
   product: Row;
   materials: Row[];
+  products: Row[];
+  components: Row[];
   onChanged: () => void;
 }) {
   const variants = rows(product.variants);
@@ -1910,19 +2509,64 @@ function ManufacturingEditor({
 
   async function save() {
     if (!editing) return;
+    const saveValues =
+      editing.entity === 'product_variants'
+        ? {
+            ...values,
+            productionCostCents: variantCostBreakdown(
+              {
+                ...product,
+                variants: variants.map((item) =>
+                  string(item.id) === string(values.id) ? values : item,
+                ),
+              },
+              values,
+              products,
+              components,
+            ).totalCents,
+          }
+        : values;
     const response = await fetch('/api/inventory/workspace', {
       method: editing.row.id == null ? 'POST' : 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         entity: editing.entity,
         id: editing.row.id,
-        values,
+        values: saveValues,
       }),
     });
     const result = (await response.json()) as { error?: string };
     if (!response.ok) {
       setMessage(result.error || 'Ausführung konnte nicht gespeichert werden.');
       return;
+    }
+    if (editing.entity === 'product_filaments') {
+      const nextFilaments = editing.row.id
+        ? filaments.map((item) =>
+            string(item.id) === string(editing.row.id) ? values : item,
+          )
+        : [...filaments, values];
+      const nextProduct = { ...product, filaments: nextFilaments };
+      await Promise.all(
+        variants.map((variant) =>
+          fetch('/api/inventory/workspace', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entity: 'product_variants',
+              id: variant.id,
+              values: {
+                productionCostCents: variantCostBreakdown(
+                  nextProduct,
+                  variant,
+                  products,
+                  components,
+                ).totalCents,
+              },
+            }),
+          }),
+        ),
+      );
     }
     onChanged();
   }
@@ -1951,33 +2595,62 @@ function ManufacturingEditor({
         </div>
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-2">
-        {variants.map((variant) => (
-          <button
-            type="button"
-            key={string(variant.id)}
-            onClick={() => open('product_variants', variant)}
-            className="rounded-xl border p-3 text-left text-sm transition hover:border-[var(--fp-primary)]"
-          >
-            <div className="flex items-center justify-between gap-2 font-medium">
-              {string(variant.name, 'Standard')}
-              <Pencil className="size-3.5" />
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {[
-                string(variant.appearance),
-                string(variant.size),
-                string(object(variant.material).name),
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </div>
-            <div className="mt-2 flex gap-3 text-xs">
-              <span>{number(variant.quantity)} Stück</span>
-              <span>{number(variant.grams)} g</span>
-              <span>{cents(variant.priceCents)}</span>
-            </div>
-          </button>
-        ))}
+        {variants.map((variant) => {
+          const cost = variantCostBreakdown(
+            product,
+            variant,
+            products,
+            components,
+          );
+          return (
+            <button
+              type="button"
+              key={string(variant.id)}
+              onClick={() => open('product_variants', variant)}
+              className="rounded-xl border p-3 text-left text-sm transition hover:border-[var(--fp-primary)]"
+            >
+              <div className="flex items-center justify-between gap-2 font-medium">
+                {string(variant.name, 'Standard')}
+                <Pencil className="size-3.5" />
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {[
+                  string(variant.appearance),
+                  string(variant.size),
+                  string(object(variant.material).name),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                <span>{number(variant.quantity)} Stück</span>
+                <span>
+                  {cost.netGrams} g + {cost.wasteGrams} g Ausschuss
+                </span>
+                <span>{cents(variant.priceCents)}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-[#f3ede4] p-2 text-xs">
+                <span>
+                  Kosten <strong>{cents(cost.totalCents)}</strong>
+                </span>
+                <span>
+                  Marge{' '}
+                  <strong>
+                    {cost.marginPercent == null
+                      ? 'unklar'
+                      : `${cost.marginPercent.toFixed(1)} %`}
+                  </strong>
+                </span>
+                <span>Material {cents(cost.filamentCents)}</span>
+                <span>Ausschuss {cents(cost.wasteCents)}</span>
+                <span>Maschine {cents(cost.machineCents)}</span>
+                <span>Strom {cents(cost.electricityCents)}</span>
+                <span>Zusatz {cents(cost.extraCents)}</span>
+                <span>Bauteile {cents(cost.componentsCents)}</span>
+              </div>
+            </button>
+          );
+        })}
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {filaments.map((item) => (
@@ -2018,6 +2691,35 @@ function ManufacturingEditor({
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {editing.entity === 'product_variants' ? (
               <>
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  Gewichtsklasse / Variantengruppe
+                  <select
+                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                    value={string(values.weightClassGroup)}
+                    onChange={(event) =>
+                      setValues((current) => ({
+                        ...current,
+                        weightClassGroup: event.target.value || null,
+                      }))
+                    }
+                  >
+                    <option value="">Eigenständige Variante</option>
+                    {variants
+                      .filter((item) => string(item.id) !== string(values.id))
+                      .map((item) => (
+                        <option
+                          key={string(item.id)}
+                          value={string(item.weightClassGroup || item.id)}
+                        >
+                          Gewichtsklasse von{' '}
+                          {string(
+                            item.name || item.appearance,
+                            'Variante ' + string(item.id),
+                          )}
+                        </option>
+                      ))}
+                  </select>
+                </label>
                 <Field
                   label="Name"
                   value={string(values.name)}
@@ -2032,6 +2734,38 @@ function ManufacturingEditor({
                     setValues((current) => ({ ...current, appearance: value }))
                   }
                 />
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  Material / Rolle
+                  <select
+                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                    value={string(values.materialId)}
+                    onChange={(event) => {
+                      const material = materials.find(
+                        (item) => string(item.id) === event.target.value,
+                      );
+                      setValues((current) => ({
+                        ...current,
+                        materialId: event.target.value
+                          ? Number(event.target.value)
+                          : null,
+                        material: material || null,
+                      }));
+                    }}
+                  >
+                    <option value="">Material wählen</option>
+                    {materials.map((item) => (
+                      <option key={string(item.id)} value={string(item.id)}>
+                        {[
+                          string(object(item.brand).name),
+                          string(item.name),
+                          string(item.variant),
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <Field
                   label="Größe"
                   value={string(values.size)}
@@ -2083,24 +2817,24 @@ function ManufacturingEditor({
                     }))
                   }
                 />
-                <Field
-                  label="Produktionskosten in Cent"
-                  type="number"
-                  value={string(values.productionCostCents)}
-                  onChange={(value) =>
-                    setValues((current) => ({
-                      ...current,
-                      productionCostCents: Number(value),
-                    }))
-                  }
-                />
-                <Field
-                  label="Drucker"
-                  value={string(values.printer)}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, printer: value }))
-                  }
-                />
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  Drucker
+                  <select
+                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                    value={string(values.printer)}
+                    onChange={(event) =>
+                      setValues((current) => ({
+                        ...current,
+                        printer: event.target.value || null,
+                      }))
+                    }
+                  >
+                    <option value="">Drucker wählen</option>
+                    {PRINTERS.map((printer) => (
+                      <option key={printer}>{printer}</option>
+                    ))}
+                  </select>
+                </label>
                 <Field
                   label="Druckzeit in Minuten"
                   type="number"
@@ -2112,17 +2846,34 @@ function ManufacturingEditor({
                     }))
                   }
                 />
-                <Field
-                  label="Rabatt in %"
-                  type="number"
-                  value={string(values.discountPercent)}
-                  onChange={(value) =>
-                    setValues((current) => ({
-                      ...current,
-                      discountPercent: Number(value),
-                    }))
-                  }
-                />
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  Nachlass bei Mangelware
+                  <select
+                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                    value={string(values.discountPercent, '0')}
+                    onChange={(event) =>
+                      setValues((current) => ({
+                        ...current,
+                        discountPercent: Number(event.target.value),
+                      }))
+                    }
+                  >
+                    {![0, 10, 15, 20, 25, 30, 50].includes(
+                      number(values.discountPercent),
+                    ) ? (
+                      <option value={string(values.discountPercent)}>
+                        {string(values.discountPercent)} %
+                      </option>
+                    ) : null}
+                    <option value="0">Kein Nachlass</option>
+                    <option value="10">10 %</option>
+                    <option value="15">15 %</option>
+                    <option value="20">20 %</option>
+                    <option value="25">25 %</option>
+                    <option value="30">30 %</option>
+                    <option value="50">50 %</option>
+                  </select>
+                </label>
                 <Field
                   label="Mangel / Fehler"
                   value={string(values.defectNote)}
@@ -2130,6 +2881,70 @@ function ManufacturingEditor({
                     setValues((current) => ({ ...current, defectNote: value }))
                   }
                 />
+                <Field
+                  label="Zubehör, das mitgeht"
+                  value={string(values.accessories)}
+                  onChange={(value) =>
+                    setValues((current) => ({ ...current, accessories: value }))
+                  }
+                />
+                <Field
+                  label="Zusatzkosten je Stück in Cent"
+                  type="number"
+                  value={string(values.extraCostCents)}
+                  onChange={(value) =>
+                    setValues((current) => ({
+                      ...current,
+                      extraCostCents: Number(value),
+                    }))
+                  }
+                />
+                {editing.row.id ? (
+                  <ImageUpload
+                    productId={string(product.id)}
+                    variantId={string(editing.row.id)}
+                    label="Bild dieser Variante ersetzen"
+                    onUploaded={onChanged}
+                  />
+                ) : null}
+                <div className="rounded-xl border bg-white p-3 text-xs sm:col-span-2 lg:col-span-3">
+                  {(() => {
+                    const cost = variantCostBreakdown(
+                      product,
+                      values,
+                      products,
+                      components,
+                    );
+                    return (
+                      <>
+                        <div className="font-medium">
+                          Automatische Kostenberechnung
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                          <span>
+                            Netto {cost.netGrams} g ·{' '}
+                            {cents(cost.filamentCents)}
+                          </span>
+                          <span>
+                            Ausschuss {cost.wasteGrams} g ·{' '}
+                            {cents(cost.wasteCents)}
+                          </span>
+                          <span>Maschine {cents(cost.machineCents)}</span>
+                          <span>Strom {cents(cost.electricityCents)}</span>
+                          <span>Zusatz {cents(cost.extraCents)}</span>
+                          <span>Bauteile {cents(cost.componentsCents)}</span>
+                          <strong>Herstellung {cents(cost.totalCents)}</strong>
+                          <strong>
+                            Marge{' '}
+                            {cost.marginPercent == null
+                              ? 'unklar'
+                              : `${cents(cost.marginCents)} · ${cost.marginPercent.toFixed(1)} %`}
+                          </strong>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
               </>
             ) : (
               <>
@@ -2184,13 +2999,24 @@ function ManufacturingEditor({
                     }))
                   }
                 />
-                <Field
-                  label="Drucker"
-                  value={string(values.printer)}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, printer: value }))
-                  }
-                />
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  Drucker für dieses Teil
+                  <select
+                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                    value={string(values.printer)}
+                    onChange={(event) =>
+                      setValues((current) => ({
+                        ...current,
+                        printer: event.target.value || null,
+                      }))
+                    }
+                  >
+                    <option value="">Drucker der Variante</option>
+                    {PRINTERS.map((printer) => (
+                      <option key={printer}>{printer}</option>
+                    ))}
+                  </select>
+                </label>
                 <Field
                   label="Druckzeit in Minuten"
                   type="number"
@@ -2287,9 +3113,13 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
 
 function ImageUpload({
   productId,
+  variantId,
+  label = 'Produktbild ersetzen',
   onUploaded,
 }: {
   productId: string;
+  variantId?: string;
+  label?: string;
   onUploaded: () => void;
 }) {
   const [uploading, setUploading] = useState(false);
@@ -2300,6 +3130,7 @@ function ImageUpload({
     const body = new FormData();
     body.append('file', file);
     body.append('productId', productId);
+    if (variantId) body.append('variantId', variantId);
     const response = await fetch('/api/inventory/image', {
       method: 'POST',
       body,
@@ -2316,7 +3147,7 @@ function ImageUpload({
     <label className="sm:col-span-2 flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed bg-white/55 p-4">
       <ImagePlus className="size-5" />
       <span className="flex-1 text-sm">
-        <span className="block font-medium">Produktbild ersetzen</span>
+        <span className="block font-medium">{label}</span>
         <span className="text-xs text-muted-foreground">
           JPEG, PNG oder WebP · maximal 12 MB
         </span>

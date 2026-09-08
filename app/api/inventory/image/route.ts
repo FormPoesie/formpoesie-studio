@@ -74,6 +74,8 @@ export async function POST(request: Request) {
   const file = form.get('file');
   const rawProductId = form.get('productId');
   const productId = typeof rawProductId === 'string' ? rawProductId : '';
+  const rawVariantId = form.get('variantId');
+  const variantId = typeof rawVariantId === 'string' ? rawVariantId : '';
   if (!(file instanceof File) || !productId)
     return Response.json(
       { error: 'Bild und Artikel fehlen.' },
@@ -119,8 +121,11 @@ export async function POST(request: Request) {
       { status: upload.status },
     );
 
+  const targetTable = variantId ? 'product_variants' : 'products';
+  const targetField = variantId ? 'image_url' : 'image_uri';
+  const targetId = variantId || productId;
   const update = await fetch(
-    `${INVENTORY_SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(productId)}`,
+    `${INVENTORY_SUPABASE_URL}/rest/v1/${targetTable}?id=eq.${encodeURIComponent(targetId)}`,
     {
       method: 'PATCH',
       headers: {
@@ -128,8 +133,8 @@ export async function POST(request: Request) {
         Prefer: 'return=representation',
       },
       body: JSON.stringify({
-        image_uri: path,
-        updated_by: user.id || null,
+        [targetField]: path,
+        ...(variantId ? {} : { updated_by: user.id || null }),
       }),
     },
   );
