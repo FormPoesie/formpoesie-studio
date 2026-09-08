@@ -370,7 +370,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'sales',
         'select=' +
           encodeURIComponent(
-            '*,items:sale_items(*,articleVariant:article_variants(*,article:articles(*)))',
+            '*,items:sale_items(*,articleVariant:article_variants!sale_items_article_variant_id_fkey(*,article:articles(*)))',
           ) +
           '&deleted_at=is.null&order=date.desc',
       ),
