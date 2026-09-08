@@ -21,13 +21,14 @@ function berlinDate(value: Date = new Date()) {
 }
 
 function berlinHour(value: Date = new Date()) {
-  return Number(
-    new Intl.DateTimeFormat('de-DE', {
-      timeZone: 'Europe/Berlin',
-      hour: '2-digit',
-      hourCycle: 'h23',
-    }).format(value),
-  );
+  const hour = new Intl.DateTimeFormat('de-DE', {
+    timeZone: 'Europe/Berlin',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  })
+    .formatToParts(value)
+    .find((part) => part.type === 'hour')?.value;
+  return Number(hour || -1);
 }
 
 type CalendarArchive = {
