@@ -7,7 +7,10 @@ import {
   imageMetadata,
   type ProductInput,
 } from '../lib/listing-engine';
-import { normalizeInventoryProduct } from '../lib/inventory-bridge';
+import {
+  canManageInventory,
+  normalizeInventoryProduct,
+} from '../lib/inventory-bridge';
 
 const base: ProductInput = {
   modelName: 'Fragment',
@@ -124,4 +127,32 @@ void test('Inventarartikel werden mit Produktionsdaten normalisiert, ohne Maßac
   assert.equal(item.weightGrams, 163);
   assert.equal(item.widthMm, null);
   assert.equal(item.size, '11,3x6,4x15cm');
+});
+
+void test('Verwaltung ist nur für Jasmin und Marlon freigegeben', () => {
+  assert.equal(
+    canManageInventory(null, { name: 'Marlon', role: 'inhaber' }),
+    true,
+  );
+  assert.equal(
+    canManageInventory(
+      { email: 'jasmin@formpoesie.de' },
+      { name: 'Jasmin', role: 'admin' },
+    ),
+    true,
+  );
+  assert.equal(
+    canManageInventory(
+      { email: 'jonas@formpoesie.de' },
+      { name: 'Jonas', role: 'mitarbeiter' },
+    ),
+    false,
+  );
+  assert.equal(
+    canManageInventory(
+      { email: 'jonas@formpoesie.de' },
+      { name: 'Marlon', role: 'mitarbeiter' },
+    ),
+    false,
+  );
 });

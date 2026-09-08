@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   Boxes,
@@ -104,6 +104,15 @@ function cents(value: unknown) {
     style: 'currency',
     currency: 'EUR',
   }).format(number(value) / 100);
+}
+
+function duration(minutes: number) {
+  if (!minutes) return '–';
+  const hours = Math.floor(minutes / 60);
+  const rest = Math.round(minutes % 60);
+  return [hours ? `${hours} h` : '', rest ? `${rest} min` : '']
+    .filter(Boolean)
+    .join(' ');
 }
 
 function date(value: unknown) {
@@ -243,9 +252,13 @@ function Field({
 export function InventoryWorkspace({
   onCreateListing,
   initialArea = 'overview',
+  initialProductId = '',
+  canManage = false,
 }: {
   onCreateListing: (item: InventoryItem) => void;
   initialArea?: InventoryArea;
+  initialProductId?: string;
+  canManage?: boolean;
 }) {
   const [active, setActive] = useState<InventoryArea>(initialArea);
   const [data, setData] = useState<Record<string, AreaData>>({});
@@ -262,6 +275,7 @@ export function InventoryWorkspace({
   const [saving, setSaving] = useState(false);
   const [editorMessage, setEditorMessage] = useState('');
   const [selectedMarket, setSelectedMarket] = useState<Row | null>(null);
+  const openedInitialProduct = useRef('');
 
   const fetchArea = useCallback(
     async (area: Exclude<InventoryArea, 'overview'>) => {
@@ -287,7 +301,6 @@ export function InventoryWorkspace({
           fetchArea('materials'),
           fetchArea('markets'),
           fetchArea('online'),
-          fetchArea('months'),
         ]);
       } else {
         await fetchArea(active);
@@ -315,6 +328,17 @@ export function InventoryWorkspace({
 
   const setValue = (key: string, value: unknown) =>
     setForm((current) => ({ ...current, [key]: value }));
+
+  useEffect(() => {
+    if (!initialProductId || openedInitialProduct.current === initialProductId)
+      return;
+    const product = rows(data.products?.products).find(
+      (item) => string(item.id) === initialProductId,
+    );
+    if (!product) return;
+    openedInitialProduct.current = initialProductId;
+    openEditor('products', product);
+  }, [data.products, initialProductId]);
 
   async function saveEntity() {
     if (!editor) return;
@@ -463,21 +487,27 @@ export function InventoryWorkspace({
         className="mt-6 flex gap-2 overflow-x-auto pb-2"
         aria-label="Inventarbereiche"
       >
-        {sections.map((section) => {
-          const Icon = section.icon;
-          return (
-            <Button
-              key={section.id}
-              variant={active === section.id ? 'default' : 'outline'}
-              className={
-                active === section.id ? 'bg-[var(--fp-ink)]' : 'bg-white/55'
-              }
-              onClick={() => setActive(section.id)}
-            >
-              <Icon className="size-4" /> {section.label}
-            </Button>
-          );
-        })}
+        {sections
+          .filter(
+            (section) =>
+              canManage ||
+              !['sales', 'months', 'account', 'trash'].includes(section.id),
+          )
+          .map((section) => {
+            const Icon = section.icon;
+            return (
+              <Button
+                key={section.id}
+                variant={active === section.id ? 'default' : 'outline'}
+                className={
+                  active === section.id ? 'bg-[var(--fp-ink)]' : 'bg-white/55'
+                }
+                onClick={() => setActive(section.id)}
+              >
+                <Icon className="size-4" /> {section.label}
+              </Button>
+            );
+          })}
       </nav>
 
       {error ? (
@@ -565,16 +595,25 @@ export function InventoryWorkspace({
         />
       ) : null}
       {active === 'cash' ? (
-        <div className="space-y-8">
-          <CashRegister
-            data={data.cash || {}}
-            onBooked={() => void refresh()}
-          />
-          <Sales data={data.cash || {}} />
-        </div>
+        <CashRegister data={data.cash || {}} onBooked={() => void refresh()} />
       ) : null}
       {active === 'sales' ? <Sales data={data.sales || {}} /> : null}
-      {active === 'months' ? <Months data={data.months || {}} /> : null}
+      {active === 'months' ? (
+        <Months
+          data={data.months || {}}
+          onOpenProduct={async (productId) => {
+            const productSource =
+              data.products || (await fetchArea('products'));
+            const product = rows(productSource.products).find(
+              (item) => string(item.id) === productId,
+            );
+            if (product) {
+              setActive('products');
+              openEditor('products', product);
+            }
+          }}
+        />
+      ) : null}
       {active === 'account' ? <Account data={data.account || {}} /> : null}
       {active === 'trash' ? (
         <InventoryTrash data={data.trash || {}} onRestore={moveToTrash} />
@@ -864,6 +903,26 @@ function Products({
   const categories = [
     ...new Set(source.map((item) => string(item.category)).filter(Boolean)),
   ].sort();
+  const portfolio = source.reduce<{
+    stock: number;
+    boundCents: number;
+    profitCents: number;
+    missing: number;
+  }>(
+    (summary, product) => {
+      if (product.archivedAt) return summary;
+      if (productMissing(product)) summary.missing += 1;
+      for (const [index, variant] of rows(product.variants).entries()) {
+        const quantity = number(variant.quantity);
+        const cost = metrics(product)[index];
+        summary.stock += quantity;
+        summary.boundCents += cost.totalCents * quantity;
+        summary.profitCents += Math.max(0, cost.marginCents || 0) * quantity;
+      }
+      return summary;
+    },
+    { stock: 0, boundCents: 0, profitCents: 0, missing: 0 },
+  );
   return (
     <section className="mt-6">
       <div className="flex flex-col gap-3 lg:flex-row">
@@ -982,6 +1041,15 @@ function Products({
           </label>
         </div>
       ) : null}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat value={source.length} label="Artikel im Portfolio" />
+        <Stat value={portfolio.stock} label="Stück im Hauptbestand" />
+        <Stat value={cents(portfolio.profitCents)} label="Gewinn im Bestand" />
+        <Stat
+          value={`${cents(portfolio.boundCents)} · ${portfolio.missing} offen`}
+          label="gebunden · Kalkulation fehlt"
+        />
+      </div>
       <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {products.map((product) => {
           const variants = rows(product.variants);
@@ -993,6 +1061,21 @@ function Products({
             0,
           );
           const margin = averageMargin(product);
+          const productMetrics = metrics(product);
+          const printMinutes = Math.max(
+            0,
+            ...productMetrics.map((item) => item.printMinutes),
+          );
+          const grams = Math.max(
+            0,
+            ...productMetrics.map((item) => item.netGrams),
+          );
+          const marketStock = rows(data.marketArticles)
+            .filter(
+              (article) => string(article.productId) === string(product.id),
+            )
+            .flatMap((article) => rows(article.variants))
+            .reduce((sum, variant) => sum + number(variant.quantityInStock), 0);
           return (
             <article
               key={string(product.id)}
@@ -1022,7 +1105,10 @@ function Products({
                 <dl className="mt-4 grid grid-cols-3 gap-2 text-xs">
                   <div>
                     <dt className="text-muted-foreground">Bestand</dt>
-                    <dd className="mt-1 font-medium">{stock}</dd>
+                    <dd className="mt-1 font-medium">
+                      {stock}
+                      {marketStock ? ` + ${marketStock} vor Ort` : ''}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Preis</dt>
@@ -1038,7 +1124,7 @@ function Products({
                 <p className="mt-2 text-[11px] text-muted-foreground">
                   {variants.length}{' '}
                   {variants.length === 1 ? 'Variante' : 'Varianten'} · Preis ab{' '}
-                  {cents(price)}
+                  {cents(price)} · {duration(printMinutes)} · {grams} g
                 </p>
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <Button variant="outline" onClick={() => onEdit(product)}>
@@ -1224,8 +1310,16 @@ function Markets({
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {items.map((market) => {
+          const marketArticles = rows(data.articles).filter(
+            (item) => string(item.marketId) === string(market.id),
+          );
+          const marketStock = marketArticles
+            .flatMap((article) => rows(article.variants))
+            .reduce((sum, variant) => sum + number(variant.quantityInStock), 0);
           const marketSales = rows(data.sales).filter(
-            (sale) => string(sale.marketId) === string(market.id),
+            (sale) =>
+              !boolean(sale.isCancelled) &&
+              string(sale.marketId) === string(market.id),
           );
           const revenue = marketSales.reduce(
             (sum, sale) => sum + saleTotal(sale),
@@ -1248,12 +1342,8 @@ function Markets({
               </div>
               <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                 <div>
-                  <div className="text-xs text-muted-foreground">Artikel</div>
-                  {
-                    rows(data.articles).filter(
-                      (item) => string(item.marketId) === string(market.id),
-                    ).length
-                  }
+                  <div className="text-xs text-muted-foreground">Bestand</div>
+                  {marketStock} Stück
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Verkäufe</div>
@@ -1519,13 +1609,19 @@ type CartItem = {
 function CashRegister({
   data,
   onBooked,
+  initialVenueId = '',
+  lockVenue = false,
+  compact = false,
 }: {
   data: AreaData;
   onBooked: () => void;
+  initialVenueId?: string;
+  lockVenue?: boolean;
+  compact?: boolean;
 }) {
   const venues = rows(data.markets);
   const articles = rows(data.articles);
-  const [venueId, setVenueId] = useState('');
+  const [venueId, setVenueId] = useState(initialVenueId);
   const [saleDate, setSaleDate] = useState(() =>
     new Intl.DateTimeFormat('sv-SE').format(new Date()),
   );
@@ -1558,6 +1654,13 @@ function CashRegister({
   const givenCents = Math.round(Number(cashGiven.replace(',', '.')) * 100);
   const change = Number.isFinite(givenCents) ? givenCents - total : null;
   const today = new Intl.DateTimeFormat('sv-SE').format(new Date());
+
+  useEffect(() => {
+    if (initialVenueId) {
+      setVenueId(initialVenueId);
+      setCart([]);
+    }
+  }, [initialVenueId]);
 
   function add(articleName: string, variant: Row) {
     setCart((current) => {
@@ -1630,7 +1733,11 @@ function CashRegister({
   }
 
   return (
-    <section className="mt-6 grid gap-5 xl:grid-cols-[1.35fr_.85fr]">
+    <section
+      className={
+        (compact ? 'mt-4 ' : 'mt-6 ') + 'grid gap-5 xl:grid-cols-[1.35fr_.85fr]'
+      }
+    >
       <div className="rounded-[26px] border bg-white/65 p-5 md:p-6">
         <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
           Verkauf erfassen
@@ -1642,6 +1749,7 @@ function CashRegister({
             <select
               className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
               value={venueId}
+              disabled={lockVenue}
               onChange={(event) => {
                 setVenueId(event.target.value);
                 setCart([]);
@@ -1842,7 +1950,7 @@ function CashRegister({
 }
 
 function Sales({ data }: { data: AreaData }) {
-  const items = rows(data.sales);
+  const items = rows(data.sales).filter((sale) => !boolean(sale.isCancelled));
   const online = rows(data.onlineSales);
   const articles = rows(data.articles);
   const keys = [
@@ -1883,6 +1991,29 @@ function Sales({ data }: { data: AreaData }) {
         ),
       0,
     ) + monthOnline.reduce((sum, sale) => sum + number(sale.quantity, 1), 0);
+  const allSoldPieces =
+    items.reduce(
+      (sum, sale) =>
+        sum +
+        rows(sale.items).reduce(
+          (part, item) => part + number(item.quantity),
+          0,
+        ),
+      0,
+    ) + online.reduce((sum, sale) => sum + number(sale.quantity, 1), 0);
+  const onlineSignatures = monthOnline.map((sale) =>
+    [
+      sale.date,
+      sale.articleName,
+      sale.quantity,
+      sale.salePriceCents,
+      sale.channel,
+      sale.shippingRecipient,
+      sale.orderKey,
+    ].join('|'),
+  );
+  const possibleDuplicateCount =
+    onlineSignatures.length - new Set(onlineSignatures).size;
   return (
     <section className="mt-6">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
@@ -1910,6 +2041,12 @@ function Sales({ data }: { data: AreaData }) {
           </select>
         </label>
       </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat value={items.length + online.length} label="Buchungen gesamt" />
+        <Stat value={allSoldPieces} label="verkaufte Artikel gesamt" />
+        <Stat value={items.length} label="Markt-Buchungen" />
+        <Stat value={online.length} label="Online-Buchungen" />
+      </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <Stat value={soldPieces} label="verkaufte Artikel" />
         <Stat
@@ -1927,6 +2064,13 @@ function Sales({ data }: { data: AreaData }) {
           label="Umsatz"
         />
       </div>
+      {possibleDuplicateCount ? (
+        <div className="mt-4 rounded-xl border border-[#b5895a]/45 bg-[#fff8ef] p-3 text-sm">
+          {possibleDuplicateCount} möglicherweise doppelte Online-Buchung
+          {possibleDuplicateCount === 1 ? '' : 'en'} gefunden. Sie bleibt in der
+          Summe enthalten, bis Jasmin oder Marlon sie geprüft hat.
+        </div>
+      ) : null}
       <div className="mt-4 grid gap-3">
         {monthSales.map((sale) => (
           <article
@@ -2003,8 +2147,14 @@ function Sales({ data }: { data: AreaData }) {
   );
 }
 
-function Months({ data }: { data: AreaData }) {
-  const sales = rows(data.sales);
+function Months({
+  data,
+  onOpenProduct,
+}: {
+  data: AreaData;
+  onOpenProduct: (productId: string) => void | Promise<void>;
+}) {
+  const sales = rows(data.sales).filter((sale) => !boolean(sale.isCancelled));
   const online = rows(data.onlineSales);
   const expenses = [...rows(data.expenses), ...rows(data.otherExpenses)];
   const highlights = rows(data.highlights);
@@ -2059,7 +2209,7 @@ function Months({ data }: { data: AreaData }) {
                 }).format(new Date(key + '-01T00:00:00Z'))}
               </h2>
               <Badge variant="outline">
-                {monthSales.length + monthOnline.length} Verkäufe
+                {monthSales.length + monthOnline.length} Buchungen
               </Badge>
             </div>
             <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
@@ -2087,10 +2237,31 @@ function Months({ data }: { data: AreaData }) {
                 <div className="text-xs font-semibold tracking-[.1em] text-[var(--fp-primary)] uppercase">
                   Modell des Monats
                 </div>
-                <div className="mt-1 font-medium">
-                  {string(highlight.productName)} ·{' '}
-                  {number(highlight.productQuantity)} von{' '}
-                  {number(highlight.totalQuantity)} verkauften Artikeln
+                {highlight.productId ? (
+                  <button
+                    type="button"
+                    className="mt-1 text-left font-medium underline decoration-[var(--fp-primary)]/35 underline-offset-4 hover:decoration-[var(--fp-primary)]"
+                    onClick={() =>
+                      void onOpenProduct(string(highlight.productId))
+                    }
+                  >
+                    {string(highlight.productName)} ·{' '}
+                    {number(highlight.productQuantity)} von{' '}
+                    {number(highlight.totalQuantity)} verkauften Artikeln
+                  </button>
+                ) : (
+                  <div className="mt-1 font-medium">
+                    {string(highlight.productName)} ·{' '}
+                    {number(highlight.productQuantity)} von{' '}
+                    {number(highlight.totalQuantity)} verkauften Artikeln
+                  </div>
+                )}
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {number(
+                    highlight.transactionCount,
+                    monthSales.length + monthOnline.length,
+                  )}{' '}
+                  Buchungen · Stückzahlen werden separat gezählt
                 </div>
               </div>
             ) : null}
@@ -3323,9 +3494,6 @@ function MarketDetail({
   const [stockProductId, setStockProductId] = useState('');
   const [stockVariantId, setStockVariantId] = useState('');
   const [stockQuantity, setStockQuantity] = useState('1');
-  const [saleVariantId, setSaleVariantId] = useState('');
-  const [saleQuantity, setSaleQuantity] = useState('1');
-  const [paymentMethod, setPaymentMethod] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   if (!market) return null;
   const currentMarket = market;
@@ -3333,7 +3501,9 @@ function MarketDetail({
     (item) => string(item.marketId) === string(currentMarket.id),
   );
   const sales = rows(data.sales).filter(
-    (item) => string(item.marketId) === string(currentMarket.id),
+    (item) =>
+      !boolean(item.isCancelled) &&
+      string(item.marketId) === string(currentMarket.id),
   );
   const expenses = rows(data.expenses).filter(
     (item) => string(item.marketId) === string(currentMarket.id),
@@ -3349,14 +3519,9 @@ function MarketDetail({
   const stockProduct = products.find(
     (item) => string(item.id) === stockProductId,
   );
-  const saleVariants: Row[] = articles.flatMap((article) =>
-    rows(article.variants).map(
-      (variant): Row => ({
-        ...variant,
-        articleName: string(article.name),
-      }),
-    ),
-  );
+  const stockCount = articles
+    .flatMap((article) => rows(article.variants))
+    .reduce((sum, variant) => sum + number(variant.quantityInStock), 0);
 
   async function rpc(name: string, args: Row) {
     setActionMessage('');
@@ -3383,34 +3548,6 @@ function MarketDetail({
       p_product_id: Number(stockProductId),
       p_menge: Math.trunc(Number(stockQuantity)),
       p_variant_id: stockVariantId ? Number(stockVariantId) : null,
-    });
-  }
-
-  async function bookSale() {
-    const variant = saleVariants.find(
-      (item) => string(item.id) === saleVariantId,
-    );
-    const quantity = Math.trunc(Number(saleQuantity));
-    if (!variant || quantity <= 0) return;
-    await rpc('verkauf_buchen', {
-      p_operation_id: crypto.randomUUID(),
-      p_market_id: number(currentMarket.id),
-      p_date: new Intl.DateTimeFormat('sv-SE').format(new Date()),
-      p_discount_cents: 0,
-      p_pricing_mode: 'ITEMIZED',
-      p_total_price_cents: null,
-      p_payment_method: paymentMethod || null,
-      p_note: null,
-      p_zeilen: [
-        {
-          article_variant_id: number(variant.id),
-          quantity,
-          unit_sale_price_cents: number(variant.salePriceCents),
-          unit_cost_price_cents: number(variant.costPriceCents),
-          discount_percent: number(variant.discountPercent),
-          component_choices: null,
-        },
-      ],
     });
   }
 
@@ -3464,12 +3601,12 @@ function MarketDetail({
           <Badge variant="outline">{string(currentMarket.status)}</Badge>
         </div>
         <div className="grid gap-3 sm:grid-cols-4">
-          <Stat value={articles.length} label="Marktartikel" />
+          <Stat value={stockCount} label="Stück Restbestand" />
           <Stat value={sales.length} label="Verkäufe" />
           <Stat value={cents(revenue)} label="Umsatz" />
           <Stat value={cents(revenue - costs)} label="Ergebnis" />
         </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className="mt-4 grid gap-4">
           <section className="rounded-2xl border bg-white/60 p-4">
             <h3 className="font-medium">Bestand am Markt</h3>
             <div className="mt-3 space-y-2">
@@ -3570,49 +3707,15 @@ function MarketDetail({
               </Button>
             </div>
           </section>
-          <section className="rounded-2xl border bg-white/60 p-4">
-            <h3 className="font-medium">Schnellverkauf</h3>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <select
-                className="h-9 rounded-lg border bg-white px-3 text-sm sm:col-span-2"
-                value={saleVariantId}
-                onChange={(event) => setSaleVariantId(event.target.value)}
-              >
-                <option value="">Marktartikel wählen</option>
-                {saleVariants.map((item) => (
-                  <option key={string(item.id)} value={string(item.id)}>
-                    {string(item.articleName)} ·{' '}
-                    {string(item.color, 'Standard')} ·{' '}
-                    {cents(item.salePriceCents)}
-                  </option>
-                ))}
-              </select>
-              <Input
-                type="number"
-                min="1"
-                value={saleQuantity}
-                onChange={(event) => setSaleQuantity(event.target.value)}
-              />
-              <select
-                className="h-9 rounded-lg border bg-white px-3 text-sm"
-                value={paymentMethod}
-                onChange={(event) => setPaymentMethod(event.target.value)}
-              >
-                <option value="">Zahlungsart nicht erfasst</option>
-                <option value="BAR">Bar</option>
-                <option value="KARTE">Karte</option>
-                <option value="PAYPAL">PayPal</option>
-                <option value="SONSTIGES">Sonstiges</option>
-              </select>
-              <Button
-                className="sm:col-span-2"
-                onClick={() => void bookSale()}
-                disabled={!saleVariantId || Number(saleQuantity) <= 0}
-              >
-                Verkauf buchen
-              </Button>
-            </div>
-          </section>
+        </div>
+        <div className="mt-4 rounded-2xl border bg-white/40 p-3">
+          <CashRegister
+            data={data}
+            initialVenueId={string(currentMarket.id)}
+            lockVenue
+            compact
+            onBooked={onChanged}
+          />
         </div>
         {actionMessage ? (
           <p className="text-sm text-muted-foreground">{actionMessage}</p>

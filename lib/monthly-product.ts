@@ -53,31 +53,62 @@ function publicationInstant(month: string) {
 }
 
 export async function rebuildMonthlyProductHighlights(accessToken: string) {
-  const [marketValue, onlineValue] = await Promise.all([
+  const [marketValue, onlineValue, productValue] = await Promise.all([
     source(
       accessToken,
       'sales?select=' +
         encodeURIComponent(
-          'date,is_cancelled,items:sale_items(quantity,article_variant:article_variants!sale_items_article_variant_id_fkey(id,article:articles(id,name,product_id)))',
+          'id,date,is_cancelled,items:sale_items(quantity,article_variant:article_variants!sale_items_article_variant_id_fkey(id,article:articles(id,name,product_id)))',
         ) +
         '&deleted_at=is.null',
     ),
     source(
       accessToken,
-      'online_sales?select=date,quantity,article_name,product_id&deleted_at=is.null',
+      'online_sales?select=id,date,quantity,article_name,product_id&deleted_at=is.null',
     ),
+    source(accessToken, 'products?select=id,name&deleted_at=is.null'),
   ]);
+  const productNames = new Map(
+    rows(productValue).map((product) => [
+      text(product.id),
+      text(product.name, 'Unbenannter Artikel'),
+    ]),
+  );
   const byMonth = new Map<
     string,
-    { total: number; products: Map<string, { name: string; quantity: number }> }
+    {
+      total: number;
+      transactions: Set<string>;
+      products: Map<
+        string,
+        { name: string; quantity: number; productId?: string }
+      >;
+    }
   >();
-  const add = (month: string, key: string, name: string, quantity: number) => {
+  const add = (
+    month: string,
+    transaction: string,
+    key: string,
+    name: string,
+    quantity: number,
+    productId?: string,
+  ) => {
     if (!month || month >= currentMonth() || quantity <= 0) return;
-    const bucket = byMonth.get(month) || { total: 0, products: new Map() };
-    const product = bucket.products.get(key) || { name, quantity: 0 };
+    const bucket = byMonth.get(month) || {
+      total: 0,
+      transactions: new Set<string>(),
+      products: new Map(),
+    };
+    const product = bucket.products.get(key) || {
+      name,
+      quantity: 0,
+      productId,
+    };
     product.quantity += quantity;
     if (!product.name && name) product.name = name;
+    if (!product.productId && productId) product.productId = productId;
     bucket.products.set(key, product);
+    bucket.transactions.add(transaction);
     bucket.total += quantity;
     byMonth.set(month, bucket);
   };
@@ -88,22 +119,33 @@ export async function rebuildMonthlyProductHighlights(accessToken: string) {
     for (const item of rows(sale.items)) {
       const variant = (item.article_variant || {}) as Row;
       const article = (variant.article || {}) as Row;
-      const key = text(article.product_id || article.id || variant.id);
+      const productId = text(article.product_id);
+      const key = productId
+        ? 'product:' + productId
+        : 'article:' + text(article.id || variant.id);
       add(
         month,
+        'market:' + text(sale.id),
         key,
-        text(article.name, 'Unbenannter Artikel'),
+        productNames.get(productId) ||
+          text(article.name, 'Unbenannter Artikel'),
         number(item.quantity),
+        productId || undefined,
       );
     }
   }
   for (const sale of rows(onlineValue)) {
     const name = text(sale.article_name, 'Unbenannter Artikel');
+    const productId = text(sale.product_id);
     add(
       text(sale.date).slice(0, 7),
-      text(sale.product_id) || 'online:' + name.toLocaleLowerCase('de'),
-      name,
+      'online:' + text(sale.id),
+      productId
+        ? 'product:' + productId
+        : 'online-name:' + name.toLocaleLowerCase('de'),
+      productNames.get(productId) || name,
       Math.max(0, number(sale.quantity, 1)),
+      productId || undefined,
     );
   }
 
@@ -120,8 +162,10 @@ export async function rebuildMonthlyProductHighlights(accessToken: string) {
         month,
         productKey: winner[0],
         productName: winner[1].name,
+        productId: winner[1].productId || null,
         productQuantity: winner[1].quantity,
         totalQuantity: bucket.total,
+        transactionCount: bucket.transactions.size,
       },
     ];
   });
@@ -160,7 +204,7 @@ export async function rebuildMonthlyProductHighlights(accessToken: string) {
       ).bind(
         'model-of-month-' + item.month,
         `Modell des Monats · ${monthTitle(item.month)}`,
-        `${item.productName}: ${item.productQuantity} verkaufte Stück von ${item.totalQuantity} insgesamt`,
+        `${item.productName}: ${item.productQuantity} verkaufte Stück von ${item.totalQuantity} insgesamt · ${item.transactionCount} Buchungen`,
         publicationInstant(item.month),
         JSON.stringify(item),
       ),

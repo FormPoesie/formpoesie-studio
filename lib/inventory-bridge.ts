@@ -144,6 +144,52 @@ export async function getInventoryUser(request: Request) {
     : null;
 }
 
+export type InventoryProfile = {
+  id?: string;
+  name?: string;
+  role?: string;
+};
+
+export async function getInventoryProfile(
+  accessToken: string,
+  userId?: string,
+) {
+  if (!accessToken || !userId) return null;
+  const response = await fetch(
+    `${INVENTORY_SUPABASE_URL}/rest/v1/profiles?select=id,name,role&id=eq.${encodeURIComponent(userId)}&limit=1`,
+    { headers: inventoryHeaders(accessToken), cache: 'no-store' },
+  );
+  if (!response.ok) return null;
+  const rows = (await response.json()) as InventoryProfile[];
+  return rows[0] || null;
+}
+
+export function canManageInventory(
+  user: { email?: string; id?: string } | null,
+  profile: InventoryProfile | null,
+) {
+  const role = (profile?.role || '').trim().toLocaleLowerCase('de');
+  if (role)
+    return ['inhaber', 'inhaber/in', 'admin', 'owner', 'verwaltung'].includes(
+      role,
+    );
+  const identity = `${profile?.name || ''} ${user?.email || ''}`
+    .trim()
+    .toLocaleLowerCase('de');
+  return /(^|[\s.@_-])(marlon|jasmin)([\s.@_-]|$)/.test(identity);
+}
+
+export async function getInventoryAccess(request: Request) {
+  const user = await getInventoryUser(request);
+  const accessToken = readCookie(request, 'fp_inventory_access');
+  const profile = user ? await getInventoryProfile(accessToken, user.id) : null;
+  return {
+    user,
+    profile,
+    canManage: canManageInventory(user, profile),
+  };
+}
+
 export async function requireInventoryAdmin(request: Request) {
   const user = await getInventoryUser(request);
   return user
@@ -151,5 +197,23 @@ export async function requireInventoryAdmin(request: Request) {
     : Response.json(
         { error: 'FormPoesie-Adminanmeldung erforderlich.' },
         { status: 401 },
+      );
+}
+
+export async function requireInventoryManager(request: Request) {
+  const access = await getInventoryAccess(request);
+  if (!access.user)
+    return Response.json(
+      { error: 'FormPoesie-Anmeldung erforderlich.' },
+      { status: 401 },
+    );
+  return access.canManage
+    ? null
+    : Response.json(
+        {
+          error:
+            'Dieser Verwaltungsbereich ist nur für Jasmin und Marlon freigegeben.',
+        },
+        { status: 403 },
       );
 }

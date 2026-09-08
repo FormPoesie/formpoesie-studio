@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { requireInventoryAdmin } from '@/lib/inventory-bridge';
+import { requireInventoryManager } from '@/lib/inventory-bridge';
 
 const defaultVoice =
   'Ruhig, geerdet, minimalistisch, hochwertig und künstlerisch. Kurze, verständliche Sätze. Einladen statt drängen.';
@@ -19,7 +19,7 @@ const defaultPalette = [
 ];
 
 export async function GET(request: Request) {
-  const denied = await requireInventoryAdmin(request);
+  const denied = await requireInventoryManager(request);
   if (denied) return denied;
   const connections = (
     await env.DB.prepare(
@@ -64,7 +64,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const denied = await requireInventoryAdmin(request);
+  const denied = await requireInventoryManager(request);
   if (denied) return denied;
   const body = (await request.json()) as {
     voice?: string;

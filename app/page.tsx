@@ -33,6 +33,7 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  Truck,
   Upload,
   Warehouse,
   MapPin,
@@ -212,12 +213,10 @@ const navPrimary = [
 
 const navGroups = [
   {
-    label: 'Verkaufsorte & Auswertung',
+    label: 'Verkaufsorte',
     items: [
       ['Märkte', MapPin],
       ['Regalflächen', Warehouse],
-      ['Verkaufshistorie', FilePenLine],
-      ['Monatsübersicht', CalendarDays],
     ],
   },
   {
@@ -229,7 +228,12 @@ const navGroups = [
   },
   {
     label: 'Verwaltung',
-    items: [['Konten & Abos', CreditCard]],
+    restricted: true,
+    items: [
+      ['Verkaufshistorie', FilePenLine],
+      ['Monatsübersicht', CalendarDays],
+      ['Konten & Abos', CreditCard],
+    ],
   },
 ] as const;
 
@@ -275,6 +279,7 @@ export default function Home() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [inventoryArea, setInventoryArea] = useState<InventoryArea>('overview');
+  const [inventoryProductId, setInventoryProductId] = useState('');
   const [draftModule, setDraftModule] = useState<'workflow' | null>(null);
   const [contentCalendarOpen, setContentCalendarOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
@@ -287,8 +292,10 @@ export default function Home() {
     'inventory',
   );
   const [inventoryConnected, setInventoryConnected] = useState(false);
+  const [inventoryCanManage, setInventoryCanManage] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [inventoryEmail, setInventoryEmail] = useState('');
+  const [inventoryUserName, setInventoryUserName] = useState('');
   const [inventoryPassword, setInventoryPassword] = useState('');
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [inventorySearch, setInventorySearch] = useState('');
@@ -334,10 +341,16 @@ export default function Home() {
     setDraftModule(null);
   }
 
-  function openInventory(area: InventoryArea = 'overview') {
+  function openInventory(area: InventoryArea = 'overview', productId = '') {
+    if (
+      ['sales', 'months', 'account', 'trash'].includes(area) &&
+      !inventoryCanManage
+    )
+      return;
     setActiveProduct(null);
     closeModules();
     setInventoryArea(area);
+    setInventoryProductId(productId);
     setInventoryOpen(true);
     void loadInventory();
   }
@@ -413,9 +426,13 @@ export default function Home() {
       const session = (await sessionResponse.json()) as {
         connected?: boolean;
         email?: string;
+        name?: string;
+        canManage?: boolean;
       };
       setInventoryConnected(Boolean(session.connected));
+      setInventoryCanManage(Boolean(session.canManage));
       if (session.email) setInventoryEmail(session.email);
+      if (session.name) setInventoryUserName(session.name);
       if (!session.connected) return false;
       const response = await fetch('/api/inventory');
       const data = (await response.json()) as {
@@ -463,12 +480,16 @@ export default function Home() {
       });
       const data = (await response.json()) as {
         connected?: boolean;
+        name?: string;
+        canManage?: boolean;
         error?: string;
       };
       if (!response.ok || !data.connected)
         throw new Error(data.error || 'Inventar-Anmeldung fehlgeschlagen.');
       setInventoryPassword('');
       setInventoryConnected(true);
+      setInventoryCanManage(Boolean(data.canManage));
+      if (data.name) setInventoryUserName(data.name);
       const inventoryResponse = await fetch('/api/inventory');
       const inventory = (await inventoryResponse.json()) as {
         items?: InventoryItem[];
@@ -1044,64 +1065,70 @@ export default function Home() {
               <span className="flex-1">{label}</span>
             </button>
           ))}
-          {navGroups.map((group) => (
-            <details
-              key={group.label}
-              className="group rounded-xl"
-              open={
-                group.items.some(([label]) => navigationActive(label)) ||
-                undefined
-              }
-            >
-              <summary className="cursor-pointer list-none rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68 transition hover:bg-white/7 hover:text-white">
-                <span className="flex items-center justify-between gap-2">
-                  {group.label}
-                  <span className="text-xs transition group-open:rotate-180">
-                    ⌄
+          {navGroups
+            .filter((group) => !('restricted' in group) || inventoryCanManage)
+            .map((group) => (
+              <details
+                key={group.label}
+                className="group rounded-xl"
+                open={
+                  group.items.some(([label]) => navigationActive(label)) ||
+                  undefined
+                }
+              >
+                <summary className="cursor-pointer list-none rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68 transition hover:bg-white/7 hover:text-white">
+                  <span className="flex items-center justify-between gap-2">
+                    {group.label}
+                    <span className="text-xs transition group-open:rotate-180">
+                      ⌄
+                    </span>
                   </span>
-                </span>
-              </summary>
-              <div className="ml-2 space-y-0.5 border-l border-white/10 pl-2">
-                {group.items.map(([label, Icon]) => (
-                  <button
-                    key={label}
-                    onClick={() => openNavigation(label)}
-                    className={
-                      'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ' +
-                      (navigationActive(label)
-                        ? 'bg-[var(--fp-paper)] text-[var(--fp-ink)]'
-                        : 'text-[var(--fp-paper)]/62 hover:bg-white/7 hover:text-white')
-                    }
-                  >
-                    <Icon className="size-4" />
-                    <span className="flex-1">{label}</span>
-                  </button>
-                ))}
-              </div>
-            </details>
-          ))}
+                </summary>
+                <div className="ml-2 space-y-0.5 border-l border-white/10 pl-2">
+                  {group.items.map(([label, Icon]) => (
+                    <button
+                      key={label}
+                      onClick={() => openNavigation(label)}
+                      className={
+                        'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ' +
+                        (navigationActive(label)
+                          ? 'bg-[var(--fp-paper)] text-[var(--fp-ink)]'
+                          : 'text-[var(--fp-paper)]/62 hover:bg-white/7 hover:text-white')
+                      }
+                    >
+                      <Icon className="size-4" />
+                      <span className="flex-1">{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </details>
+            ))}
         </nav>
         <div className="mt-auto space-y-1">
-          <button
-            type="button"
-            onClick={openTrash}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68"
-          >
-            <Trash2 className="size-4" />
-            Papierkorb
-            {trashedProducts.length ? (
-              <span className="ml-auto rounded-full bg-white/10 px-2 py-0.5 text-[10px]">
-                {trashedProducts.length}
-              </span>
-            ) : null}
-          </button>
-          <button
-            onClick={() => void openSettings()}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68"
-          >
-            <Settings2 className="size-4" />
-            Profile & Regeln
-          </button>
+          {inventoryCanManage ? (
+            <button
+              type="button"
+              onClick={openTrash}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68"
+            >
+              <Trash2 className="size-4" />
+              Papierkorb
+              {trashedProducts.length ? (
+                <span className="ml-auto rounded-full bg-white/10 px-2 py-0.5 text-[10px]">
+                  {trashedProducts.length}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+          {inventoryCanManage ? (
+            <button
+              onClick={() => void openSettings()}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68"
+            >
+              <Settings2 className="size-4" />
+              Profile & Regeln
+            </button>
+          ) : null}
           <button
             onClick={() => setHelpOpen(true)}
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68"
@@ -1185,15 +1212,25 @@ export default function Home() {
                 <Check className="size-3" /> 3DFormPoesie
               </Badge>
             </a>
-            <button
-              aria-label="Profile und Regeln öffnen"
-              onClick={() => void openSettings()}
-              className="grid size-8 place-items-center rounded-full border bg-white/45 text-[var(--fp-primary)] lg:hidden"
+            {inventoryCanManage ? (
+              <button
+                aria-label="Profile und Regeln öffnen"
+                onClick={() => void openSettings()}
+                className="grid size-8 place-items-center rounded-full border bg-white/45 text-[var(--fp-primary)] lg:hidden"
+              >
+                <Settings2 className="size-4" />
+              </button>
+            ) : null}
+            <div
+              className="grid size-8 place-items-center rounded-full bg-[var(--fp-primary)] text-xs font-medium text-white"
+              title={inventoryUserName || inventoryEmail}
             >
-              <Settings2 className="size-4" />
-            </button>
-            <div className="grid size-8 place-items-center rounded-full bg-[var(--fp-primary)] text-xs font-medium text-white">
-              MS
+              {(inventoryUserName || inventoryEmail || 'FP')
+                .split(/[\s@._-]+/)
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((part) => part[0]?.toLocaleUpperCase('de'))
+                .join('')}
             </div>
           </div>
         </header>
@@ -1215,6 +1252,8 @@ export default function Home() {
         ) : inventoryOpen ? (
           <InventoryWorkspace
             initialArea={inventoryArea}
+            initialProductId={inventoryProductId}
+            canManage={inventoryCanManage}
             onCreateListing={createFromInventory}
           />
         ) : draftModule ? (
@@ -1238,6 +1277,9 @@ export default function Home() {
             inventoryCount={inventoryItems.length}
             onInventory={() => openInventory('overview')}
             onCalendar={() => setCalendarOpen(true)}
+            onInventoryProduct={(productId) =>
+              openInventory('products', productId)
+            }
             onContentCalendar={() => {
               closeModules();
               setContentCalendarOpen(true);
@@ -1246,6 +1288,7 @@ export default function Home() {
               closeModules();
               setAccountsOpen(true);
             }}
+            canManage={inventoryCanManage}
             onDelete={moveToTrash}
           />
         ) : (
@@ -3143,9 +3186,16 @@ type ActivityEvent = {
   detail?: string;
   sourceUrl?: string;
   occurredAt: string;
+  productId?: string;
 };
 
-function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
+function DailyNewsFeed({
+  onCalendar,
+  onProduct,
+}: {
+  onCalendar: () => void;
+  onProduct: (productId: string) => void;
+}) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [automation, setAutomation] = useState<Record<string, string>>({});
   const [feedError, setFeedError] = useState('');
@@ -3208,7 +3258,17 @@ function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="font-medium">{event.title}</div>
+                {event.kind === 'model-of-month' && event.productId ? (
+                  <button
+                    type="button"
+                    className="font-medium underline decoration-[var(--fp-primary)]/35 underline-offset-4 hover:decoration-[var(--fp-primary)]"
+                    onClick={() => onProduct(event.productId || '')}
+                  >
+                    {event.title}
+                  </button>
+                ) : (
+                  <div className="font-medium">{event.title}</div>
+                )}
                 <div className="mt-1 text-xs text-muted-foreground">
                   {[
                     event.detail,
@@ -3230,6 +3290,14 @@ function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
                 >
                   <ExternalLink className="size-4" />
                 </a>
+              ) : event.kind === 'model-of-month' && event.productId ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onProduct(event.productId || '')}
+                >
+                  Artikel öffnen
+                </Button>
               ) : null}
             </div>
           ))}
@@ -3273,6 +3341,153 @@ function DailyNewsFeed({ onCalendar }: { onCalendar: () => void }) {
         </aside>
       </div>
     </section>
+  );
+}
+
+type DashboardFulfillmentRow = Record<string, unknown>;
+
+function dashboardText(value: unknown, fallback = '') {
+  return typeof value === 'string' || typeof value === 'number'
+    ? String(value)
+    : fallback;
+}
+
+function DashboardFulfillment() {
+  const [items, setItems] = useState<DashboardFulfillmentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  async function load() {
+    setLoading(true);
+    const response = await fetch('/api/inventory/workspace?area=online');
+    const result = (await response.json()) as {
+      onlineSales?: DashboardFulfillmentRow[];
+      fulfillmentTasks?: DashboardFulfillmentRow[];
+      error?: string;
+    };
+    if (!response.ok) {
+      setError(result.error || 'Druck- und Versandaufgaben nicht erreichbar.');
+      setLoading(false);
+      return;
+    }
+    setItems(
+      [
+        ...(result.onlineSales || []),
+        ...(result.fulfillmentTasks || []),
+      ].filter((item) => item.isPrinted !== true || item.isShipped !== true),
+    );
+    setError('');
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    queueMicrotask(() => void load());
+  }, []);
+
+  async function toggle(
+    item: DashboardFulfillmentRow,
+    key: 'isPrinted' | 'isShipped',
+  ) {
+    const response = await fetch('/api/inventory/workspace', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entity:
+          item.sourceType === 'cash-sale'
+            ? 'fulfillment_tasks'
+            : 'online_sales',
+        id: item.id,
+        values: { [key]: item[key] !== true },
+      }),
+    });
+    if (!response.ok) {
+      setError('Status konnte nicht gespeichert werden.');
+      return;
+    }
+    await load();
+  }
+
+  const openPrint = items.filter((item) => item.isPrinted !== true).length;
+  const openShipping = items.filter(
+    (item) =>
+      item.isShipped !== true &&
+      item.shippingMethod !== 'abholung' &&
+      item.fulfillmentMode !== 'pickup',
+  ).length;
+
+  return (
+    <details className="group mt-6 rounded-[24px] border bg-white/60 open:bg-white/75">
+      <summary className="flex cursor-pointer list-none items-center gap-3 p-5 md:px-6">
+        <span className="grid size-10 place-items-center rounded-xl bg-[var(--fp-mist)]">
+          <Truck className="size-5 text-[var(--fp-primary)]" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-heading text-xl">Druck & Versand</span>
+          <span className="block text-xs text-muted-foreground">
+            {loading
+              ? 'Aufgaben werden geladen …'
+              : `${openPrint} zu drucken · ${openShipping} zu versenden`}
+          </span>
+        </span>
+        <Badge>{items.length}</Badge>
+        <span className="text-sm transition group-open:rotate-180">⌄</span>
+      </summary>
+      <div className="space-y-2 border-t p-4 md:px-6">
+        {items.map((item) => {
+          const name = dashboardText(
+            item.articleName || item.productName,
+            'Verkaufter Artikel',
+          );
+          const pickup =
+            item.shippingMethod === 'abholung' ||
+            item.fulfillmentMode === 'pickup';
+          return (
+            <article
+              key={String(item.id)}
+              className="flex flex-col gap-3 rounded-xl border bg-white/65 p-3 sm:flex-row sm:items-center"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{name}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {[item.variantName, item.shippingRecipient, item.saleDate]
+                    .map((value) => dashboardText(value))
+                    .filter(Boolean)
+                    .join(' · ')}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant={item.isPrinted === true ? 'default' : 'outline'}
+                  onClick={() => void toggle(item, 'isPrinted')}
+                >
+                  {item.isPrinted === true ? 'Gedruckt' : 'Druck offen'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant={item.isShipped === true ? 'default' : 'outline'}
+                  onClick={() => void toggle(item, 'isShipped')}
+                >
+                  {item.isShipped === true
+                    ? pickup
+                      ? 'Abgeholt'
+                      : 'Versendet'
+                    : pickup
+                      ? 'Abholung offen'
+                      : 'Versand offen'}
+                </Button>
+              </div>
+            </article>
+          );
+        })}
+        {!loading && !items.length ? (
+          <p className="py-3 text-sm text-muted-foreground">
+            Aktuell sind keine verkauften Artikel zu drucken oder zu versenden.
+          </p>
+        ) : null}
+        {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      </div>
+    </details>
   );
 }
 
@@ -3399,8 +3614,10 @@ function Dashboard({
   inventoryCount,
   onInventory,
   onCalendar,
+  onInventoryProduct,
   onContentCalendar,
   onAccounts,
+  canManage,
   onDelete,
 }: {
   products: ProductRow[];
@@ -3410,8 +3627,10 @@ function Dashboard({
   inventoryCount: number;
   onInventory: () => void;
   onCalendar: () => void;
+  onInventoryProduct: (productId: string) => void;
   onContentCalendar: () => void;
   onAccounts: () => void;
+  canManage: boolean;
   onDelete: (row: ProductRow) => void;
 }) {
   return (
@@ -3501,22 +3720,26 @@ function Dashboard({
             Social Media Backlog aus Canva
           </p>
         </button>
-        <button
-          type="button"
-          onClick={onAccounts}
-          className="rounded-2xl border bg-white/55 p-4 text-left transition hover:border-[var(--fp-primary)]/50 hover:bg-white"
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <CreditCard className="size-4 text-[var(--fp-primary)]" /> Konten &
-            Abos
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Laufzeiten und Profile zentral verwalten
-          </p>
-        </button>
+        {canManage ? (
+          <button
+            type="button"
+            onClick={onAccounts}
+            className="rounded-2xl border bg-white/55 p-4 text-left transition hover:border-[var(--fp-primary)]/50 hover:bg-white"
+          >
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <CreditCard className="size-4 text-[var(--fp-primary)]" /> Konten
+              & Abos
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Laufzeiten und Profile zentral verwalten
+            </p>
+          </button>
+        ) : null}
       </div>
 
-      <DailyNewsFeed onCalendar={onCalendar} />
+      <DashboardFulfillment />
+
+      <DailyNewsFeed onCalendar={onCalendar} onProduct={onInventoryProduct} />
 
       <div className="mt-9 grid gap-5 xl:grid-cols-[1.6fr_.9fr]">
         <article className="overflow-hidden rounded-[28px] bg-[var(--fp-primary)] text-white shadow-[0_18px_50px_rgba(40,45,42,.14)]">

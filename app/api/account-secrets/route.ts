@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { requireInventoryAdmin } from '@/lib/inventory-bridge';
+import { requireInventoryManager } from '@/lib/inventory-bridge';
 
 type EncryptedSecret = {
   accountId: string;
@@ -23,7 +23,7 @@ function validSecret(value: unknown): value is EncryptedSecret {
 }
 
 export async function GET(request: Request) {
-  const denied = await requireInventoryAdmin(request);
+  const denied = await requireInventoryManager(request);
   if (denied) return denied;
   const rows = await env.DB.prepare(
     `SELECT account_id AS accountId, ciphertext, iv, salt, iterations
@@ -33,7 +33,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const denied = await requireInventoryAdmin(request);
+  const denied = await requireInventoryManager(request);
   if (denied) return denied;
   const body = (await request.json()) as { secret?: unknown };
   if (!validSecret(body.secret))
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const denied = await requireInventoryAdmin(request);
+  const denied = await requireInventoryManager(request);
   if (denied) return denied;
   const body = (await request.json()) as { accountId?: string };
   if (!body.accountId)

@@ -1,6 +1,8 @@
 import {
   INVENTORY_SUPABASE_URL,
+  canManageInventory,
   getInventoryUser,
+  getInventoryProfile,
   inventoryHeaders,
   readCookie,
   sessionCookie,
@@ -38,10 +40,17 @@ function addSessionCookies(
 export async function GET(request: Request) {
   const currentUser = await getInventoryUser(request);
   if (currentUser)
-    return Response.json({
-      connected: true,
-      email: currentUser.email || '',
-    });
+    return getInventoryProfile(
+      readCookie(request, accessName),
+      currentUser.id,
+    ).then((profile) =>
+      Response.json({
+        connected: true,
+        email: currentUser.email || '',
+        name: profile?.name || '',
+        canManage: canManageInventory(currentUser, profile),
+      }),
+    );
 
   const refreshToken = readCookie(request, refreshName);
   if (!refreshToken) return Response.json({ connected: false });
@@ -58,10 +67,19 @@ export async function GET(request: Request) {
     access_token: string;
     refresh_token: string;
     expires_in?: number;
-    user?: { email?: string };
+    user?: { email?: string; id?: string };
   };
+  const profile = await getInventoryProfile(
+    session.access_token,
+    session.user?.id,
+  );
   return addSessionCookies(
-    Response.json({ connected: true, email: session.user?.email || '' }),
+    Response.json({
+      connected: true,
+      email: session.user?.email || '',
+      name: profile?.name || '',
+      canManage: canManageInventory(session.user || null, profile),
+    }),
     request,
     session,
   );
@@ -89,7 +107,7 @@ export async function POST(request: Request) {
     access_token?: string;
     refresh_token?: string;
     expires_in?: number;
-    user?: { email?: string };
+    user?: { email?: string; id?: string };
     error_description?: string;
     msg?: string;
   };
@@ -103,8 +121,17 @@ export async function POST(request: Request) {
       },
       { status: 401 },
     );
+  const profile = await getInventoryProfile(
+    result.access_token,
+    result.user?.id,
+  );
   return addSessionCookies(
-    Response.json({ connected: true, email: result.user?.email || body.email }),
+    Response.json({
+      connected: true,
+      email: result.user?.email || body.email,
+      name: profile?.name || '',
+      canManage: canManageInventory(result.user || null, profile),
+    }),
     request,
     result as {
       access_token: string;

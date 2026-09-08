@@ -3,6 +3,7 @@ import {
   getInventoryUser,
   inventoryHeaders,
   readCookie,
+  requireInventoryManager,
 } from '@/lib/inventory-bridge';
 import { env } from 'cloudflare:workers';
 import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
@@ -254,41 +255,55 @@ async function classifyMarkets(value: unknown) {
 
 async function loadArea(accessToken: string, area: string, request: Request) {
   if (area === 'products') {
-    const [products, families, designers, components, accessories, materials] =
-      await Promise.all([
-        query(
-          accessToken,
-          'products',
-          'select=' +
-            encodeURIComponent(
-              '*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))',
-            ) +
-            '&deleted_at=is.null&order=name.asc',
-        ),
-        query(
-          accessToken,
-          'product_families',
-          'select=*&deleted_at=is.null&order=name.asc',
-        ),
-        query(
-          accessToken,
-          'designers',
-          'select=*&deleted_at=is.null&order=name.asc',
-        ),
-        query(accessToken, 'product_components', 'select=*&order=id.asc'),
-        query(
-          accessToken,
-          'product_accessories',
-          'select=*&order=id.asc',
-        ).catch(() => []),
-        query(
-          accessToken,
-          'materials',
-          'select=' +
-            encodeURIComponent('*,brand:brands(*)') +
-            '&deleted_at=is.null&order=name.asc',
-        ),
-      ]);
+    const [
+      products,
+      families,
+      designers,
+      components,
+      accessories,
+      materials,
+      marketArticles,
+    ] = await Promise.all([
+      query(
+        accessToken,
+        'products',
+        'select=' +
+          encodeURIComponent(
+            '*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))',
+          ) +
+          '&deleted_at=is.null&order=name.asc',
+      ),
+      query(
+        accessToken,
+        'product_families',
+        'select=*&deleted_at=is.null&order=name.asc',
+      ),
+      query(
+        accessToken,
+        'designers',
+        'select=*&deleted_at=is.null&order=name.asc',
+      ),
+      query(accessToken, 'product_components', 'select=*&order=id.asc'),
+      query(accessToken, 'product_accessories', 'select=*&order=id.asc').catch(
+        () => [],
+      ),
+      query(
+        accessToken,
+        'materials',
+        'select=' +
+          encodeURIComponent('*,brand:brands(*)') +
+          '&deleted_at=is.null&order=name.asc',
+      ),
+      query(
+        accessToken,
+        'articles',
+        'select=' +
+          encodeURIComponent(
+            'product_id,variants:article_variants(quantity_in_stock)',
+          ) +
+          '&deleted_at=is.null',
+      ),
+    ]);
     return {
       products,
       families,
@@ -296,6 +311,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       components,
       accessories,
       materials,
+      marketArticles,
     };
   }
   if (area === 'materials') {
@@ -350,21 +366,13 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'select=*&deleted_at=is.null&order=created_at.desc',
       ),
     ]);
-    const onlineSales =
-      area === 'cash'
-        ? await query(
-            accessToken,
-            'online_sales',
-            'select=*&deleted_at=is.null&order=date.desc',
-          )
-        : [];
     return {
       markets: await classifyMarkets(markets),
-      demands,
+      demands: area === 'cash' ? [] : demands,
       articles,
-      sales,
-      expenses,
-      onlineSales,
+      sales: area === 'cash' ? [] : sales,
+      expenses: area === 'cash' ? [] : expenses,
+      onlineSales: [],
     };
   }
   if (area === 'online') {
@@ -486,6 +494,10 @@ export async function GET(request: Request) {
       { status: 401 },
     );
   const area = new URL(request.url).searchParams.get('area') || 'products';
+  if (['sales', 'months', 'account', 'trash'].includes(area)) {
+    const denied = await requireInventoryManager(request);
+    if (denied) return denied;
+  }
   try {
     return Response.json(await loadArea(accessToken, area, request));
   } catch (error) {

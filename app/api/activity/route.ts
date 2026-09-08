@@ -1,5 +1,9 @@
 import { env } from 'cloudflare:workers';
-import { readCookie, requireInventoryAdmin } from '@/lib/inventory-bridge';
+import {
+  getInventoryAccess,
+  readCookie,
+  requireInventoryAdmin,
+} from '@/lib/inventory-bridge';
 import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
 
 type Activity = {
@@ -9,24 +13,30 @@ type Activity = {
   detail: string | null;
   sourceUrl: string | null;
   occurredAt: string;
+  productId: string | null;
 };
 
 export async function GET(request: Request) {
   const denied = await requireInventoryAdmin(request);
   if (denied) return denied;
   const accessToken = readCookie(request, 'fp_inventory_access');
-  if (accessToken) {
+  const access = await getInventoryAccess(request);
+  if (accessToken && access.canManage) {
     await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
   }
   const [events, meta] = await Promise.all([
     env.DB.prepare(
       `SELECT id, kind, title, detail, source_url AS sourceUrl,
-              occurred_at AS occurredAt
+              occurred_at AS occurredAt,
+              json_extract(payload_json, '$.productId') AS productId
        FROM activity_events
-       WHERE kind != 'calendar-news'
-          OR json_extract(payload_json, '$.erfasstAm') = date('now')
+       WHERE (kind != 'calendar-news'
+          OR json_extract(payload_json, '$.erfasstAm') = date('now'))
+         AND (? = 1 OR kind != 'model-of-month')
        ORDER BY occurred_at DESC LIMIT 40`,
-    ).all<Activity>(),
+    )
+      .bind(access.canManage ? 1 : 0)
+      .all<Activity>(),
     env.DB.prepare(
       `SELECT key, value, updated_at AS updatedAt
        FROM news_calendar_meta WHERE key IN

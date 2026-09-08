@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { requireInventoryAdmin } from '@/lib/inventory-bridge';
+import { requireInventoryManager } from '@/lib/inventory-bridge';
 import type { AccountItem } from '@/app/api/accounts/route';
 
 type Snapshot = {
@@ -189,7 +189,7 @@ async function runMonitor() {
 export async function POST(request: Request) {
   const scheduled = new URL(request.url).searchParams.get('scheduled') === '1';
   if (!scheduled) {
-    const denied = await requireInventoryAdmin(request);
+    const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
   try {
