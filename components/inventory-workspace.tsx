@@ -815,6 +815,7 @@ function Products({
       variantCostBreakdown(product, variant, source, components),
     );
   const averageMargin = (product: Row) => {
+    if (productMissing(product)) return null;
     const values = metrics(product)
       .map((item) => item.marginPercent)
       .filter((item): item is number => item != null);
@@ -911,7 +912,10 @@ function Products({
   }>(
     (summary, product) => {
       if (product.archivedAt) return summary;
-      if (productMissing(product)) summary.missing += 1;
+      if (productMissing(product)) {
+        summary.missing += 1;
+        return summary;
+      }
       for (const [index, variant] of rows(product.variants).entries()) {
         const quantity = number(variant.quantity);
         const cost = metrics(product)[index];
@@ -1042,8 +1046,11 @@ function Products({
         </div>
       ) : null}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat value={source.length} label="Artikel im Portfolio" />
-        <Stat value={portfolio.stock} label="Stück im Hauptbestand" />
+        <Stat
+          value={source.filter((item) => !item.archivedAt).length}
+          label="aktive Artikel"
+        />
+        <Stat value={portfolio.stock} label="kalkulierte Stück im Bestand" />
         <Stat value={cents(portfolio.profitCents)} label="Gewinn im Bestand" />
         <Stat
           value={`${cents(portfolio.boundCents)} · ${portfolio.missing} offen`}
@@ -1068,7 +1075,7 @@ function Products({
           );
           const grams = Math.max(
             0,
-            ...productMetrics.map((item) => item.netGrams),
+            ...productMetrics.map((item) => item.netGrams + item.wasteGrams),
           );
           const marketStock = rows(data.marketArticles)
             .filter(
