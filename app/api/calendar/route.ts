@@ -230,7 +230,9 @@ export async function GET(request: Request) {
     ]);
     const dueAfterEight =
       berlinHour() >= 20 &&
-      (!lastSync?.value || berlinDate(new Date(lastSync.value)) !== berlinDate());
+      (!lastSync?.value ||
+        berlinDate(new Date(lastSync.value)) !== berlinDate() ||
+        berlinHour(new Date(lastSync.value)) < 20);
     let syncResult: {
       imported: number;
       added: number;
