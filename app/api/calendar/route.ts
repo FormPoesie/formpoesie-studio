@@ -11,6 +11,25 @@ type CalendarEntry = Record<string, unknown> & {
   ereignisDatum?: string;
 };
 
+function berlinDate(value: Date = new Date()) {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Berlin',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(value);
+}
+
+function berlinHour(value: Date = new Date()) {
+  return Number(
+    new Intl.DateTimeFormat('de-DE', {
+      timeZone: 'Europe/Berlin',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).format(value),
+  );
+}
+
 type CalendarArchive = {
   meta?: Record<string, unknown>;
   eintraege?: CalendarEntry[];
@@ -69,6 +88,10 @@ async function syncCalendar() {
       .map((item) => item.id),
   );
   const instant = new Date().toISOString();
+  const today = berlinDate();
+  const todayCount = archive.eintraege.filter(
+    (entry) => text(entry.erfasstAm).slice(0, 10) === today,
+  ).length;
   const newEntries: CalendarEntry[] = [];
   const statements = archive.eintraege.map((entry) => {
     const id = entryId(entry);
@@ -138,10 +161,15 @@ async function syncCalendar() {
     saveMeta('last_synced_at', instant, instant),
     saveMeta('last_result', 'success', instant),
     saveMeta('last_new_count', String(newEntries.length), instant),
+    saveMeta('last_today_count', String(todayCount), instant),
     saveMeta('automation_status', 'ACTIVE', instant),
-    saveMeta('automation_schedule', 'Täglich um 20:00 Uhr', instant),
+    saveMeta('automation_schedule', 'Täglich ab 20:00 Uhr', instant),
   ]);
-  return { imported: archive.eintraege.length, added: newEntries.length };
+  return {
+    imported: archive.eintraege.length,
+    added: newEntries.length,
+    todayCount,
+  };
 }
 
 async function loadCalendar() {
@@ -171,10 +199,11 @@ async function loadCalendar() {
       ...sourceMeta,
       masterbrainSync: {
         status: metaMap.automation_status || 'ACTIVE',
-        schedule: metaMap.automation_schedule || 'Täglich um 20:00 Uhr',
+        schedule: metaMap.automation_schedule || 'Täglich ab 20:00 Uhr',
         lastSyncedAt: metaMap.last_synced_at || '',
         lastResult: metaMap.last_result || 'pending',
-        newCount: Number(metaMap.last_new_count || 0),
+        importedCount: Number(metaMap.last_new_count || 0),
+        todayCount: Number(metaMap.last_today_count || 0),
       },
     },
     eintraege: (entryRows.results || []).flatMap((row) => {
@@ -190,11 +219,23 @@ async function loadCalendar() {
 export async function GET(request: Request) {
   const forceSync = new URL(request.url).searchParams.get('sync') === '1';
   try {
-    const count = await env.DB.prepare(
-      'SELECT COUNT(*) AS count FROM news_calendar_entries',
-    ).first<{ count: number }>();
-    let syncResult: { imported: number; added: number } | null = null;
-    if (forceSync || !Number(count?.count || 0))
+    const [count, lastSync] = await Promise.all([
+      env.DB.prepare(
+        'SELECT COUNT(*) AS count FROM news_calendar_entries',
+      ).first<{ count: number }>(),
+      env.DB.prepare(
+        `SELECT value FROM news_calendar_meta WHERE key = 'last_synced_at'`,
+      ).first<{ value: string }>(),
+    ]);
+    const dueAfterEight =
+      berlinHour() >= 20 &&
+      (!lastSync?.value || berlinDate(new Date(lastSync.value)) !== berlinDate());
+    let syncResult: {
+      imported: number;
+      added: number;
+      todayCount: number;
+    } | null = null;
+    if (forceSync || dueAfterEight || !Number(count?.count || 0))
       syncResult = await syncCalendar();
     return Response.json(
       { ...(await loadCalendar()), syncResult },

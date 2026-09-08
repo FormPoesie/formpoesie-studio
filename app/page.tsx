@@ -138,7 +138,8 @@ type CalendarArchive = {
       schedule?: string;
       lastSyncedAt?: string;
       lastResult?: string;
-      newCount?: number;
+      importedCount?: number;
+      todayCount?: number;
     };
   };
   eintraege: CalendarEntry[];
@@ -277,6 +278,7 @@ export default function Home() {
   const [trashedProducts, setTrashedProducts] = useState<ProductRow[]>([]);
   const [activeProduct, setActiveProduct] = useState<Created | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarEntryId, setCalendarEntryId] = useState('');
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [inventoryArea, setInventoryArea] = useState<InventoryArea>('overview');
   const [inventoryProductId, setInventoryProductId] = useState('');
@@ -341,6 +343,13 @@ export default function Home() {
     setDraftModule(null);
   }
 
+  function openCalendar(entryId = '') {
+    setActiveProduct(null);
+    closeModules();
+    setCalendarEntryId(entryId);
+    setCalendarOpen(true);
+  }
+
   function openInventory(area: InventoryArea = 'overview', productId = '') {
     if (
       ['sales', 'months', 'account', 'trash'].includes(area) &&
@@ -370,9 +379,7 @@ export default function Home() {
       closeModules();
       setDraftModule('workflow');
     } else if (label === 'News-Kalender') {
-      setActiveProduct(null);
-      closeModules();
-      setCalendarOpen(true);
+      openCalendar();
     } else if (label === 'Content-Kalender') {
       setActiveProduct(null);
       closeModules();
@@ -1248,7 +1255,7 @@ export default function Home() {
         ) : null}
 
         {calendarOpen ? (
-          <NewsCalendar />
+          <NewsCalendar initialEntryId={calendarEntryId} />
         ) : inventoryOpen ? (
           <InventoryWorkspace
             initialArea={inventoryArea}
@@ -1261,6 +1268,7 @@ export default function Home() {
             products={products}
             onOpen={(row, step) => void openProduct(row, step)}
             onStart={() => beginCreate('inventory')}
+            onDelete={moveToTrash}
           />
         ) : contentCalendarOpen ? (
           <ContentCalendar />
@@ -1270,26 +1278,11 @@ export default function Home() {
           <TrashBin rows={trashedProducts} onRestore={restoreProduct} />
         ) : !activeProduct ? (
           <Dashboard
-            products={products}
-            onCreate={() => beginCreate('inventory')}
-            onOpen={openProduct}
-            inventoryConnected={inventoryConnected}
-            inventoryCount={inventoryItems.length}
-            onInventory={() => openInventory('overview')}
-            onCalendar={() => setCalendarOpen(true)}
+            onCalendar={openCalendar}
             onInventoryProduct={(productId) =>
               openInventory('products', productId)
             }
-            onContentCalendar={() => {
-              closeModules();
-              setContentCalendarOpen(true);
-            }}
-            onAccounts={() => {
-              closeModules();
-              setAccountsOpen(true);
-            }}
             canManage={inventoryCanManage}
-            onDelete={moveToTrash}
           />
         ) : (
           <Workspace
@@ -1682,7 +1675,7 @@ function AdminLogin({
   );
 }
 
-function NewsCalendar() {
+function NewsCalendar({ initialEntryId = '' }: { initialEntryId?: string }) {
   const [archive, setArchive] = useState<CalendarArchive | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1690,6 +1683,7 @@ function NewsCalendar() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [focusedEntryId, setFocusedEntryId] = useState(initialEntryId);
   const [editingEntry, setEditingEntry] = useState<CalendarEntry | null>(null);
   const [savingEntry, setSavingEntry] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -1747,8 +1741,10 @@ function NewsCalendar() {
       );
     });
   }, [archive, category, search]);
-  const selectedEntries = visibleEntries.filter(
-    (entry) => entry.ereignisDatum === selectedDay,
+  const selectedEntries = visibleEntries.filter((entry) =>
+    focusedEntryId
+      ? entry.id === focusedEntryId
+      : entry.ereignisDatum === selectedDay,
   );
 
   const monthDate = month ? new Date(month + '-01T00:00:00Z') : null;
@@ -1864,7 +1860,7 @@ function NewsCalendar() {
         <div className="rounded-2xl border bg-white/62 p-4">
           <div className="text-xs text-muted-foreground">Rhythmus</div>
           <div className="mt-1 font-medium">
-            {archive?.meta?.masterbrainSync?.schedule || 'Täglich um 20:00 Uhr'}
+            {archive?.meta?.masterbrainSync?.schedule || 'Täglich ab 20:00 Uhr'}
           </div>
         </div>
         <div className="rounded-2xl border bg-white/62 p-4">
@@ -1888,7 +1884,10 @@ function NewsCalendar() {
               : archive?.meta?.masterbrainSync?.lastResult === 'failed'
                 ? 'Fehlgeschlagen'
                 : 'Noch kein Lauf'}{' '}
-            · {archive?.meta?.masterbrainSync?.newCount || 0} neu
+            · {archive?.meta?.masterbrainSync?.todayCount || 0}{' '}
+            {archive?.meta?.masterbrainSync?.todayCount === 1
+              ? 'heutige News'
+              : 'heutige News'}
           </div>
         </div>
       </section>
@@ -1992,7 +1991,10 @@ function NewsCalendar() {
                   <button
                     key={date}
                     type="button"
-                    onClick={() => setSelectedDay(date)}
+                    onClick={() => {
+                      setFocusedEntryId('');
+                      setSelectedDay(date);
+                    }}
                     aria-label={
                       formatCalendarDate(date) +
                       (events.length ? ', ' + events.length + ' Einträge' : '')
@@ -2038,15 +2040,20 @@ function NewsCalendar() {
       </section>
 
       <Dialog
-        open={selectedDay !== null}
+        open={selectedDay !== null || Boolean(focusedEntryId)}
         onOpenChange={(open) => {
-          if (!open) setSelectedDay(null);
+          if (!open) {
+            setSelectedDay(null);
+            setFocusedEntryId('');
+          }
         }}
       >
         <DialogContent className="max-h-[90vh] overflow-y-auto border-[#d9d0c3] bg-[#f8f4ed] sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle className="font-heading text-3xl">
-              {formatCalendarDate(selectedDay || '')}
+              {formatCalendarDate(
+                selectedEntries[0]?.ereignisDatum || selectedDay || '',
+              )}
             </DialogTitle>
             <DialogDescription>
               {selectedEntries.length === 1
@@ -3187,13 +3194,14 @@ type ActivityEvent = {
   sourceUrl?: string;
   occurredAt: string;
   productId?: string;
+  calendarEntryId?: string;
 };
 
 function DailyNewsFeed({
   onCalendar,
   onProduct,
 }: {
-  onCalendar: () => void;
+  onCalendar: (entryId?: string) => void;
   onProduct: (productId: string) => void;
 }) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
@@ -3201,7 +3209,8 @@ function DailyNewsFeed({
   const [feedError, setFeedError] = useState('');
 
   useEffect(() => {
-    void fetch('/api/activity')
+    void fetch('/api/calendar?sync=auto')
+      .then(() => fetch('/api/activity'))
       .then(async (response) => {
         const result = (await response.json()) as {
           events?: ActivityEvent[];
@@ -3240,7 +3249,7 @@ function DailyNewsFeed({
               ? 'Automation aktiv'
               : 'Status wird geprüft'}
           </Badge>
-          <Button variant="outline" onClick={onCalendar}>
+          <Button variant="outline" onClick={() => onCalendar()}>
             Kalender öffnen
           </Button>
         </div>
@@ -3281,7 +3290,15 @@ function DailyNewsFeed({
                     .join(' · ')}
                 </div>
               </div>
-              {safeExternalUrl(event.sourceUrl) ? (
+              {event.kind === 'calendar-news' && event.calendarEntryId ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onCalendar(event.calendarEntryId || '')}
+                >
+                  Zusammenfassung
+                </Button>
+              ) : safeExternalUrl(event.sourceUrl) ? (
                 <a
                   href={safeExternalUrl(event.sourceUrl)}
                   target="_blank"
@@ -3304,14 +3321,14 @@ function DailyNewsFeed({
           {!events.length ? (
             <p className="p-6 text-sm text-muted-foreground">
               {feedError ||
-                'Noch keine neuen News oder Designer-Modelle seit der ersten Synchronisierung.'}
+                'Heute gibt es noch keine neuen News oder Designer-Modelle.'}
             </p>
           ) : null}
         </div>
         <aside className="border-t bg-[var(--fp-paper)]/55 p-5 text-sm lg:border-t-0 lg:border-l md:p-6">
           <div className="text-xs text-muted-foreground">Zeitplan</div>
           <div className="mt-1 font-medium">
-            {automation.automation_schedule || 'Täglich um 20:00 Uhr'}
+            {automation.automation_schedule || 'Täglich ab 20:00 Uhr'}
           </div>
           <div className="mt-5 text-xs text-muted-foreground">
             Letzte Synchronisierung
@@ -3327,7 +3344,7 @@ function DailyNewsFeed({
           <div className="mt-5 text-xs text-muted-foreground">Letzter Lauf</div>
           <div className="mt-1 font-medium">
             {automation.last_result === 'success'
-              ? `Erfolgreich · ${automation.last_new_count || '0'} neu`
+              ? `Erfolgreich · ${automation.last_today_count || '0'} heutige News`
               : automation.last_result === 'failed'
                 ? 'Fehlgeschlagen'
                 : 'Noch kein Ergebnis'}
@@ -3495,10 +3512,12 @@ function EtsyWorkflowHub({
   products,
   onOpen,
   onStart,
+  onDelete,
 }: {
   products: ProductRow[];
   onOpen: (row: ProductRow, step: string) => void;
   onStart: () => void;
+  onDelete: (row: ProductRow) => void;
 }) {
   return (
     <div className="mx-auto max-w-[1260px] px-4 py-8 md:px-8">
@@ -3587,6 +3606,14 @@ function EtsyWorkflowHub({
                   <ImageIcon className="size-3.5" /> Bilder
                 </Button>
               </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mt-3 w-full text-muted-foreground hover:text-[#8b453a]"
+                onClick={() => onDelete(product)}
+              >
+                <Trash2 className="size-3.5" /> In den Papierkorb
+              </Button>
             </article>
           ))}
         </div>
@@ -3606,295 +3633,115 @@ function EtsyWorkflowHub({
   );
 }
 
+function WeeklySuccesses({ enabled }: { enabled: boolean }) {
+  const [stats, setStats] = useState<{
+    pieces: number;
+    bookings: number;
+    revenue: number;
+    top: string;
+    topCount: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void fetch('/api/inventory/workspace?area=sales')
+      .then(async (response) => (await response.json()) as {
+        sales?: Record<string, unknown>[];
+        onlineSales?: Record<string, unknown>[];
+      })
+      .then((data) => {
+        const now = new Date();
+        const day = (now.getDay() + 6) % 7;
+        const start = new Date(now);
+        start.setHours(0, 0, 0, 0);
+        start.setDate(start.getDate() - day);
+        const inWeek = (value: unknown) => {
+          const date = new Date(String(value));
+          return Number.isFinite(date.getTime()) && date >= start && date <= now;
+        };
+        const sales = (data.sales || []).filter(
+          (sale) => sale.isCancelled !== true && inWeek(sale.date),
+        );
+        const online = (data.onlineSales || []).filter((sale) => inWeek(sale.date));
+        let pieces = 0;
+        let revenue = 0;
+        const counts = new Map<string, number>();
+        for (const sale of sales) {
+          const items = Array.isArray(sale.items) ? sale.items as Record<string, unknown>[] : [];
+          let itemRevenue = 0;
+          for (const item of items) {
+            const quantity = Number(item.quantity || 0);
+            pieces += quantity;
+            itemRevenue += quantity * Number(item.unitSalePriceCents || 0);
+            const variant = (item.articleVariant || {}) as Record<string, unknown>;
+            const article = (variant.article || {}) as Record<string, unknown>;
+            const name = dashboardText(article.name, 'Artikel');
+            counts.set(name, (counts.get(name) || 0) + quantity);
+          }
+          revenue += sale.pricingMode === 'TOTAL'
+            ? Number(sale.totalPriceCents || 0)
+            : itemRevenue - Number(sale.discountCents || 0);
+        }
+        for (const sale of online) {
+          const quantity = Math.max(0, Number(sale.quantity || 1));
+          const name = dashboardText(sale.articleName, 'Online-Artikel');
+          pieces += quantity;
+          revenue += quantity * Number(sale.salePriceCents || 0);
+          counts.set(name, (counts.get(name) || 0) + quantity);
+        }
+        const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+        setStats({
+          pieces,
+          bookings: sales.length + online.length,
+          revenue,
+          top: top?.[0] || 'Noch kein Verkauf',
+          topCount: top?.[1] || 0,
+        });
+      });
+  }, [enabled]);
+
+  if (!enabled) return null;
+  const cards = [
+    [stats?.pieces ?? '…', 'verkaufte Artikel diese Woche'],
+    [stats?.bookings ?? '…', 'Buchungen diese Woche'],
+    [stats ? money(stats.revenue / 100) : '…', 'Umsatz diese Woche'],
+    [stats?.top || '…', stats ? `${stats.topCount} Stück · stärkster Artikel` : 'stärkster Artikel'],
+  ];
+  return (
+    <section className="mt-7">
+      <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">Erfolge</p>
+      <h2 className="mt-1 font-heading text-3xl">Diese Woche</h2>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map(([value, label]) => (
+          <div key={String(label)} className="rounded-2xl border bg-white/65 p-5">
+            <div className="truncate text-2xl font-semibold">{value}</div>
+            <div className="mt-2 text-xs text-muted-foreground">{label}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Dashboard({
-  products,
-  onCreate,
-  onOpen,
-  inventoryConnected,
-  inventoryCount,
-  onInventory,
   onCalendar,
   onInventoryProduct,
-  onContentCalendar,
-  onAccounts,
   canManage,
-  onDelete,
 }: {
-  products: ProductRow[];
-  onCreate: () => void;
-  onOpen: (row: ProductRow) => void;
-  inventoryConnected: boolean;
-  inventoryCount: number;
-  onInventory: () => void;
-  onCalendar: () => void;
+  onCalendar: (entryId?: string) => void;
   onInventoryProduct: (productId: string) => void;
-  onContentCalendar: () => void;
-  onAccounts: () => void;
   canManage: boolean;
-  onDelete: (row: ProductRow) => void;
 }) {
   return (
     <div className="mx-auto max-w-[1220px] px-5 py-7 md:px-8 md:py-10">
-      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-        <div>
-          <p className="mb-2 text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
-            FormPoesie Masterbrain
-          </p>
-          <h1 className="font-heading text-4xl leading-none tracking-tight md:text-5xl">
-            Was entsteht heute?
-          </h1>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            className="rounded-full bg-white/40"
-            onClick={onCalendar}
-          >
-            <CalendarDays className="size-4" /> News-Kalender
-          </Button>
-          <Button
-            variant="outline"
-            className="rounded-full bg-white/40"
-            onClick={onInventory}
-          >
-            <Package className="size-4" /> Inventar öffnen
-          </Button>
-          <Button
-            size="lg"
-            className="h-11 rounded-full bg-[var(--fp-ink)] px-5 text-[var(--fp-paper)] hover:bg-[var(--fp-primary)]"
-            onClick={onCreate}
-          >
-            <Plus className="size-4" /> Neues Listing erstellen
-          </Button>
-        </div>
-      </div>
+      <p className="mb-2 text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">FormPoesie Masterbrain</p>
+      <h1 className="font-heading text-4xl leading-none tracking-tight md:text-5xl">Was läuft heute?</h1>
 
-      <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <button
-          type="button"
-          onClick={onInventory}
-          className="rounded-2xl border bg-white/55 p-4 text-left transition hover:border-[var(--fp-primary)]/50 hover:bg-white"
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <Leaf className="size-4 text-[var(--fp-primary)]" /> Inventar
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {inventoryConnected
-              ? inventoryCount + ' Artikel live verfügbar'
-              : 'Bereit zur einmaligen Anmeldung'}
-          </p>
-        </button>
-        <div className="rounded-2xl border bg-white/55 p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <FilePenLine className="size-4 text-[var(--fp-primary)]" />{' '}
-            Etsy-Listings
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {products.length} {products.length === 1 ? 'Entwurf' : 'Entwürfe'}{' '}
-            gespeichert
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onCalendar}
-          className="rounded-2xl border bg-white/55 p-4 text-left transition hover:border-[var(--fp-primary)]/50 hover:bg-white"
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <CalendarDays className="size-4 text-[var(--fp-primary)]" />{' '}
-            News-Kalender
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Täglich aus der bestehenden Automatisierung
-          </p>
-        </button>
-        <button
-          type="button"
-          onClick={onContentCalendar}
-          className="rounded-2xl border bg-white/55 p-4 text-left transition hover:border-[var(--fp-primary)]/50 hover:bg-white"
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <ClipboardList className="size-4 text-[var(--fp-primary)]" />{' '}
-            Content-Kalender
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Social Media Backlog aus Canva
-          </p>
-        </button>
-        {canManage ? (
-          <button
-            type="button"
-            onClick={onAccounts}
-            className="rounded-2xl border bg-white/55 p-4 text-left transition hover:border-[var(--fp-primary)]/50 hover:bg-white"
-          >
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <CreditCard className="size-4 text-[var(--fp-primary)]" /> Konten
-              & Abos
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Laufzeiten und Profile zentral verwalten
-            </p>
-          </button>
-        ) : null}
-      </div>
+      <WeeklySuccesses enabled={canManage} />
 
       <DashboardFulfillment />
 
       <DailyNewsFeed onCalendar={onCalendar} onProduct={onInventoryProduct} />
-
-      <div className="mt-9 grid gap-5 xl:grid-cols-[1.6fr_.9fr]">
-        <article className="overflow-hidden rounded-[28px] bg-[var(--fp-primary)] text-white shadow-[0_18px_50px_rgba(40,45,42,.14)]">
-          <div className="grid min-h-[312px] md:grid-cols-[1.1fr_.9fr]">
-            <div className="flex flex-col p-7 md:p-9">
-              <div className="flex items-center gap-2 text-xs font-semibold tracking-[.12em] text-[var(--fp-mist)] uppercase">
-                <Sparkles className="size-4" /> Produkt zuerst
-              </div>
-              <h2 className="mt-7 max-w-md font-heading text-4xl leading-[1.03] md:text-5xl">
-                Vom ersten Foto zum ruhigen, klaren Listing.
-              </h2>
-              <p className="mt-5 max-w-md text-[15px] leading-7 text-white/72">
-                Fakten bestätigen, Suchabsicht belegen und das Ergebnis in einem
-                prüfbaren Entwurf zusammenführen.
-              </p>
-              <button
-                onClick={onCreate}
-                className="mt-auto flex w-fit items-center gap-2 pt-7 text-sm font-semibold"
-              >
-                Produkt anlegen <ArrowRight className="size-4" />
-              </button>
-            </div>
-            <div className="relative hidden overflow-hidden border-l border-white/10 md:block">
-              <div className="absolute inset-7 rounded-[120px_24px_24px_120px] border border-white/14 bg-[#31443f]" />
-              <div className="absolute right-[-28px] top-[45px] h-56 w-44 rounded-[48%_52%_44%_56%] bg-[var(--fp-sand)] shadow-[inset_20px_0_30px_rgba(26,26,24,.2),-24px_28px_60px_rgba(18,24,22,.35)]" />
-              <div className="absolute bottom-8 left-8 max-w-[175px] text-xs leading-5 text-white/58">
-                Original bleibt archiviert. Fehlende Perspektiven werden nicht
-                erfunden.
-              </div>
-            </div>
-          </div>
-        </article>
-
-        <aside className="rounded-[28px] border bg-card p-6 md:p-7">
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="font-heading text-2xl">Verbindungen</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Stand 08.09.2026
-              </p>
-            </div>
-            <ShieldCheck className="size-5 text-[var(--fp-primary)]" />
-          </div>
-          <div className="mt-7 space-y-5">
-            <div className="flex items-center gap-3">
-              <StatusDot ok />
-              <div className="flex-1">
-                <div className="text-sm">Etsy · 3DFormPoesie</div>
-                <div className="text-xs text-muted-foreground">
-                  Shop bestätigt · API noch nicht verbunden
-                </div>
-              </div>
-              <a
-                href="https://www.etsy.com/de/shop/3DFormPoesie"
-                target="_blank"
-                rel="noreferrer"
-              >
-                <ExternalLink className="size-4" />
-              </a>
-            </div>
-            <button
-              type="button"
-              onClick={onInventory}
-              className="flex w-full items-center gap-3 text-left"
-            >
-              <StatusDot ok={inventoryConnected} />
-              <div className="flex-1">
-                <div className="text-sm">Inventar</div>
-                <div className="text-xs text-muted-foreground">
-                  {inventoryConnected
-                    ? 'Verbunden · Artikeldaten verfügbar'
-                    : 'Erreichbar · Anmeldung erforderlich'}
-                </div>
-              </div>
-              <ArrowRight className="size-4" />
-            </button>
-          </div>
-          <Button
-            variant="outline"
-            className="mt-7 w-full rounded-full"
-            onClick={onInventory}
-          >
-            Inventar im Masterbrain öffnen
-          </Button>
-          <p className="mt-4 text-xs leading-5 text-muted-foreground">
-            Das Inventar-Passwort wird nicht gespeichert. Nach der einmaligen
-            Anmeldung sind Artikeldaten und Produktionskosten direkt sichtbar.
-          </p>
-        </aside>
-      </div>
-
-      <section id="entwuerfe" className="mt-9 scroll-mt-24">
-        <div className="flex items-center justify-between">
-          <h2 className="font-heading text-2xl">Produkte & Entwürfe</h2>
-          <span className="text-sm text-muted-foreground">
-            {products.length} gespeichert
-          </span>
-        </div>
-        {products.length ? (
-          <div className="mt-4 grid gap-3">
-            {products.map((row) => (
-              <div
-                key={row.id}
-                className="group flex w-full items-center gap-2 rounded-2xl border bg-white/60 p-2 transition hover:border-[var(--fp-primary)]/45 hover:bg-white"
-              >
-                <button
-                  type="button"
-                  onClick={() => onOpen(row)}
-                  className="flex min-w-0 flex-1 items-center gap-4 p-2 text-left"
-                >
-                  <div className="grid size-12 place-items-center rounded-xl bg-[var(--fp-mist)]">
-                    <Leaf className="size-5 text-[var(--fp-primary)]" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium">{row.model_name}</div>
-                    <div className="mt-1 truncate text-xs text-muted-foreground">
-                      {row.product_type} · {row.buyer_world} ·{' '}
-                      {row.asset_count || 0} Fotos
-                    </div>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={
-                      row.material
-                        ? 'border-[var(--fp-primary)]/35'
-                        : 'border-[var(--fp-accent)]/55'
-                    }
-                  >
-                    {row.material ? 'Fakten begonnen' : 'Material offen'}
-                  </Badge>
-                  <ArrowRight className="size-4 text-muted-foreground transition group-hover:translate-x-1" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={row.model_name + ' löschen'}
-                  title="In den Papierkorb"
-                  onClick={() => onDelete(row)}
-                  className="grid size-10 shrink-0 place-items-center rounded-xl text-muted-foreground transition hover:bg-[#f0dfd5] hover:text-[#8b453a]"
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="mt-4 rounded-2xl border border-dashed bg-white/35 p-8 text-center">
-            <Leaf className="mx-auto size-7 text-[var(--fp-primary)]" />
-            <p className="mt-3 text-sm">Noch kein Produkt gespeichert.</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Lege eines aus dem Inventar an oder erfasse einen wirklich neuen
-              Artikel.
-            </p>
-          </div>
-        )}
-      </section>
     </div>
   );
 }
