@@ -82,7 +82,7 @@ const sections: Array<{
   { id: 'cash', label: 'Kasse', icon: CircleDollarSign },
   { id: 'expenses', label: 'Einkäufe & Ausgaben', icon: FileArchive },
   { id: 'sales', label: 'Verkaufshistorie', icon: ShoppingBag },
-  { id: 'months', label: 'Monate', icon: CalendarDays },
+  { id: 'months', label: 'Monatsübersicht', icon: CalendarDays },
   { id: 'account', label: 'Konto', icon: UserRound },
   { id: 'trash', label: 'Papierkorb', icon: Trash2 },
 ];
