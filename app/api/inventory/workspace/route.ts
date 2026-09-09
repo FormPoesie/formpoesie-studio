@@ -541,7 +541,16 @@ async function createInvoiceDraft({
   const id = crypto.randomUUID();
   const businessSnapshot = {
     name: 'FormPoesie',
-    verified: false,
+    street: 'Bendhecker Straße 63',
+    postalCode: '41236',
+    city: 'Mönchengladbach',
+    country: 'Deutschland',
+    vatId: 'DE325062674',
+    taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
+    paypal: 'formpoesie1@gmail.com',
+    iban: 'DE32 5002 4024 4662 6752 44',
+    bic: 'DEFFDEFFXXX',
+    verified: true,
   };
   await env.DB.prepare(
     `INSERT INTO invoices
@@ -550,7 +559,7 @@ async function createInvoiceDraft({
         channel, currency, items_json, subtotal_cents, shipping_cents,
         total_cents, business_snapshot_json, note, created_by,
         created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, 'EUR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, 'EUR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -578,7 +587,7 @@ async function createInvoiceDraft({
   return {
     id,
     invoiceNumber,
-    status: 'draft',
+    status: 'issued',
     issueDate,
     customerName: scalarText(
       order.customerName || order.shippingRecipient,

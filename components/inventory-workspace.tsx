@@ -2191,6 +2191,9 @@ function html(value: unknown) {
 
 function printInvoice(invoice: Row) {
   const items = rows(invoice.items);
+  const business = object(invoice.business);
+  const verified = boolean(business.verified);
+  const documentTitle = verified ? 'Rechnung' : 'Rechnungsentwurf';
   const popup = window.open('', '_blank');
   if (!popup) return false;
   popup.opener = null;
@@ -2203,12 +2206,13 @@ function printInvoice(invoice: Row) {
   popup.document
     .write(`<!doctype html><html lang="de"><head><meta charset="utf-8"><title>${html(invoice.invoiceNumber)}</title><style>
     @page{size:A4;margin:18mm}*{box-sizing:border-box}body{font:14px/1.5 Arial,sans-serif;color:#1f2522;margin:0}header{display:flex;justify-content:space-between;gap:30px;border-bottom:2px solid #425b54;padding-bottom:22px}h1{font:36px Georgia,serif;margin:0}.brand{font-size:20px;font-weight:700;color:#425b54}.warning{margin:24px 0;padding:12px;border:2px solid #a86d32;background:#fff8ed;font-weight:700}.meta{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin:28px 0;white-space:pre-line}.meta h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#66716d}table{width:100%;border-collapse:collapse;margin-top:28px}th,td{padding:10px 8px;border-bottom:1px solid #ccd2cf;text-align:left}th:nth-child(n+2),td:nth-child(n+2){text-align:right}small{display:block;color:#66716d}.totals{margin:24px 0 0 auto;width:280px}.totals div{display:flex;justify-content:space-between;padding:5px}.totals .total{border-top:2px solid #425b54;font-size:18px;font-weight:700;margin-top:6px;padding-top:10px}footer{margin-top:70px;border-top:1px solid #ccd2cf;padding-top:14px;color:#66716d;font-size:12px}@media print{button{display:none}}</style></head><body>
-    <header><div><div class="brand">FormPoesie</div><div>3D-gedruckte Formpoesie</div></div><div><h1>Rechnungsentwurf</h1><div>${html(invoice.invoiceNumber)}</div></div></header>
-    <div class="warning">ENTWURF – noch nicht als steuerliche Rechnung verwenden. Unternehmens- und Steuerangaben müssen zuerst verifiziert werden.</div>
+    <header><div><div class="brand">${html(business.name || 'FormPoesie')}</div><div>${html(business.street)} · ${html(business.postalCode)} ${html(business.city)}</div><div>USt-IdNr. ${html(business.vatId)}</div></div><div><h1>${documentTitle}</h1><div>${html(invoice.invoiceNumber)}</div></div></header>
+    ${verified ? '' : '<div class="warning">ENTWURF – noch nicht als steuerliche Rechnung verwenden. Unternehmens- und Steuerangaben müssen zuerst verifiziert werden.</div>'}
     <div class="meta"><section><h2>Rechnung an</h2><strong>${html(invoice.customerName)}</strong><br>${html(invoice.customerAddress).replaceAll('\n', '<br>')}<br>${html(invoice.customerEmail)}</section><section><h2>Angaben</h2>Rechnungsdatum: ${html(date(invoice.issueDate))}<br>Verkaufskanal: ${html(invoice.channel)}<br>Bestellung: ${html(invoice.orderKey || '–')}</section></div>
     <table><thead><tr><th>Position</th><th>Menge</th><th>Einzelpreis</th><th>Gesamt</th></tr></thead><tbody>${itemRows}${number(invoice.shippingCents) ? `<tr><td>Versand</td><td>1</td><td>${html(cents(invoice.shippingCents))}</td><td>${html(cents(invoice.shippingCents))}</td></tr>` : ''}</tbody></table>
     <div class="totals"><div><span>Zwischensumme</span><span>${html(cents(invoice.subtotalCents))}</span></div>${number(invoice.shippingCents) ? `<div><span>Versand</span><span>${html(cents(invoice.shippingCents))}</span></div>` : ''}<div class="total"><span>Gesamt</span><span>${html(cents(invoice.totalCents))}</span></div></div>
-    ${invoice.note ? `<p><strong>Hinweis:</strong> ${html(invoice.note)}</p>` : ''}<footer>FormPoesie · Rechnungsentwurf aus FORMPOESIE STUDIO</footer><script>window.addEventListener('load',()=>window.print())</script></body></html>`);
+    <section style="margin-top:35px"><strong>Zahlung</strong><p>PayPal: ${html(business.paypal)}<br>Überweisung: IBAN ${html(business.iban)} · BIC ${html(business.bic)}</p></section>
+    <p>${html(business.taxNote)}</p>${invoice.note ? `<p><strong>Hinweis:</strong> ${html(invoice.note)}</p>` : ''}<footer>${html(business.name || 'FormPoesie')} · ${html(business.street)} · ${html(business.postalCode)} ${html(business.city)} · USt-IdNr. ${html(business.vatId)}</footer><script>window.addEventListener('load',()=>window.print())</script></body></html>`);
   popup.document.close();
   return true;
 }
@@ -2221,21 +2225,26 @@ function InvoiceDialog({
   onClose: () => void;
 }) {
   if (!invoice) return null;
+  const business = object(invoice.business);
+  const verified = boolean(business.verified);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">
-            Rechnungsentwurf {string(invoice.invoiceNumber)}
+            {verified ? 'Rechnung' : 'Rechnungsentwurf'}{' '}
+            {string(invoice.invoiceNumber)}
           </DialogTitle>
           <DialogDescription>
             Gespeicherter Stand zur Bestellung {string(invoice.orderKey, '–')}
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded-xl border border-amber-700/40 bg-amber-50 p-3 text-sm text-amber-950">
-          Noch nicht als steuerliche Rechnung verwenden: Unternehmens- und
-          Steuerangaben sind nicht verifiziert.
-        </div>
+        {!verified ? (
+          <div className="rounded-xl border border-amber-700/40 bg-amber-50 p-3 text-sm text-amber-950">
+            Noch nicht als steuerliche Rechnung verwenden: Unternehmens- und
+            Steuerangaben sind nicht verifiziert.
+          </div>
+        ) : null}
         <div className="grid gap-4 rounded-2xl border bg-white/70 p-5 sm:grid-cols-2">
           <div>
             <p className="text-xs text-muted-foreground">Rechnung an</p>
@@ -2281,12 +2290,23 @@ function InvoiceDialog({
               <strong>{cents(invoice.totalCents)}</strong>
             </div>
           </div>
+          {verified ? (
+            <div className="space-y-2 border-t pt-4 text-sm sm:col-span-2">
+              <p>{string(business.taxNote)}</p>
+              <p>
+                <strong>PayPal:</strong> {string(business.paypal)}
+                <br />
+                <strong>Überweisung:</strong> IBAN {string(business.iban)} · BIC{' '}
+                {string(business.bic)}
+              </p>
+            </div>
+          ) : null}
         </div>
         <DialogFooter>
           {invoice.customerEmail ? (
             <a
               className="inline-flex h-9 items-center justify-center rounded-lg border bg-white px-4 text-sm"
-              href={`mailto:${encodeURIComponent(string(invoice.customerEmail))}?subject=${encodeURIComponent('Rechnungsentwurf ' + string(invoice.invoiceNumber))}&body=${encodeURIComponent('Hallo ' + string(invoice.customerName) + ',\n\nanbei erhältst du den Rechnungsentwurf ' + string(invoice.invoiceNumber) + '. Bitte die zuvor als PDF gespeicherte Datei anhängen.\n\nLiebe Grüße\nFormPoesie')}`}
+              href={`mailto:${encodeURIComponent(string(invoice.customerEmail))}?subject=${encodeURIComponent((verified ? 'Rechnung ' : 'Rechnungsentwurf ') + string(invoice.invoiceNumber))}&body=${encodeURIComponent('Hallo ' + string(invoice.customerName) + `,\n\nanbei erhältst du ${verified ? 'die Rechnung ' : 'den Rechnungsentwurf '}` + string(invoice.invoiceNumber) + '. Bitte die zuvor als PDF gespeicherte Datei anhängen.\n\nLiebe Grüße\nFormPoesie')}`}
             >
               E-Mail vorbereiten
             </a>
@@ -2459,8 +2479,8 @@ function GeneralCashRegister({
     }
     setMessage(
       result.invoiceError
-        ? `Verkauf gespeichert. Der Rechnungsentwurf konnte nicht angelegt werden: ${result.invoiceError}`
-        : `Verkauf ${result.orderKey ? result.orderKey + ' ' : ''}gespeichert.${result.invoice ? ' Rechnungsentwurf angelegt.' : ''} Offene Positionen stehen auf der Übersicht unter Druck & Versand.`,
+        ? `Verkauf gespeichert. Die Rechnung konnte nicht angelegt werden: ${result.invoiceError}`
+        : `Verkauf ${result.orderKey ? result.orderKey + ' ' : ''}gespeichert.${result.invoice ? ' Rechnung angelegt.' : ''} Offene Positionen stehen auf der Übersicht unter Druck & Versand.`,
     );
     if (result.invoice) setSelectedInvoice(result.invoice);
     setCart([]);
@@ -2676,7 +2696,7 @@ function GeneralCashRegister({
                 checked={issueInvoice}
                 onChange={(event) => setIssueInvoice(event.target.checked)}
               />
-              Rechnungsentwurf anlegen
+              Rechnung erstellen
             </label>
             {issueInvoice ? (
               <div className="mt-3 grid gap-3">
@@ -2726,7 +2746,7 @@ function GeneralCashRegister({
             <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
               Gespeichert
             </p>
-            <h2 className="font-heading text-2xl">Rechnungsentwürfe</h2>
+            <h2 className="font-heading text-2xl">Rechnungen</h2>
           </div>
           <Badge variant="outline">{rows(data.invoices).length}</Badge>
         </div>
@@ -2752,7 +2772,7 @@ function GeneralCashRegister({
           ))}
           {!rows(data.invoices).length ? (
             <p className="text-sm text-muted-foreground">
-              Noch keine Rechnungsentwürfe gespeichert.
+              Noch keine Rechnungen gespeichert.
             </p>
           ) : null}
         </div>
