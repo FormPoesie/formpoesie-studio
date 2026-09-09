@@ -62,8 +62,43 @@ function parseEuro(value) {
   return Number.isFinite(amount) ? amount : 0;
 }
 
+function normalizePlace(value) {
+  const place = String(value || "").toLowerCase();
+  if (place.includes("kleinanzeigen")) return "kleinanzeigen";
+  if (place.includes("vinted")) return "vinted";
+  if (place.includes("ebay")) return "ebay";
+  if (place.includes("etsy")) return "etsy";
+  if (place.includes("abholung")) return "abholung";
+  if (place.includes("whatsapp")) return "whatsapp";
+  return place.trim();
+}
+
+const normalizeItem = value => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+const moneyKey = value => Number(value || 0).toFixed(2);
+const exactSaleKey = sale => [parseSheetDate(sale.date || sale.dateRaw || ""), normalizePlace(sale.place), normalizeItem(sale.item), moneyKey(sale.total)].join("|");
+const legacySaleKey = sale => [parseSheetDate(sale.date || sale.dateRaw || ""), normalizePlace(sale.place), moneyKey(sale.total)].join("|");
+
+function countKeys(sales, keyForSale) {
+  return sales.reduce((counts, sale) => {
+    const key = keyForSale(sale);
+    counts.set(key, (counts.get(key) || 0) + 1);
+    return counts;
+  }, new Map());
+}
+
+function useMatch(counts, key) {
+  const remaining = counts.get(key) || 0;
+  if (!remaining) return false;
+  counts.set(key, remaining - 1);
+  return true;
+}
+
 async function importSales(files) {
   const knownIds = new Set(state.sales.map(s => String(s.id)));
+  // Match pre-existing records one-for-one so two legitimate identical sales remain two sales.
+  const exactMatches = countKeys(state.sales.filter(sale => normalizeItem(sale.item)), exactSaleKey);
+  // Older cash-register entries did not store an item name. Only single-unit entries are safe to match.
+  const legacyMatches = countKeys(state.sales.filter(sale => !normalizeItem(sale.item) && Number(sale.units || 1) === 1), legacySaleKey);
   let imported = 0; let duplicates = 0; let missingDates = 0; let missingPrices = 0;
   for (const file of files) {
     const rows = parseCsv(await file.text());
@@ -79,7 +114,9 @@ async function importSales(files) {
       const id = `sheet:${file.name}:${sourceRow}`;
       if (knownIds.has(id)) { duplicates += 1; return; }
       const dateRaw = (row[dateIndex] || "").trim(); const priceRaw = (row[priceIndex] || "").trim();
-      state.sales.push({ id, date: parseSheetDate(dateRaw), dateRaw, place, item, total: parseEuro(priceRaw), units: 1, invoice: false, importedFrom: "Canva Sheet", sourceFile: file.name, sourceRow });
+      const candidate = { id, date: parseSheetDate(dateRaw), dateRaw, place, item, total: parseEuro(priceRaw), units: 1, invoice: false, importedFrom: "Canva Sheet", sourceFile: file.name, sourceRow };
+      if (useMatch(exactMatches, exactSaleKey(candidate)) || useMatch(legacyMatches, legacySaleKey(candidate))) { duplicates += 1; return; }
+      state.sales.push(candidate);
       knownIds.add(id); imported += 1; if (!dateRaw) missingDates += 1; if (!priceRaw) missingPrices += 1;
     });
   }
