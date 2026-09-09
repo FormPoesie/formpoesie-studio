@@ -13,12 +13,14 @@ import {
   ExternalLink,
   Factory,
   FileArchive,
+  FileText,
   ImagePlus,
   Loader2,
   MapPin,
   Package,
   Pencil,
   Plus,
+  Printer,
   RefreshCw,
   RotateCcw,
   Search,
@@ -2178,6 +2180,126 @@ const GENERAL_SALES_CHANNELS = [
   'Bestellformular',
 ] as const;
 
+function html(value: unknown) {
+  return string(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function printInvoice(invoice: Row) {
+  const items = rows(invoice.items);
+  const popup = window.open('', '_blank');
+  if (!popup) return false;
+  popup.opener = null;
+  const itemRows = items
+    .map(
+      (item) =>
+        `<tr><td>${html(item.description)}${item.variant ? `<small>${html(item.variant)}</small>` : ''}</td><td>${number(item.quantity, 1)}</td><td>${html(cents(item.unitPriceCents))}</td><td>${html(cents(number(item.quantity, 1) * number(item.unitPriceCents)))}</td></tr>`,
+    )
+    .join('');
+  popup.document
+    .write(`<!doctype html><html lang="de"><head><meta charset="utf-8"><title>${html(invoice.invoiceNumber)}</title><style>
+    @page{size:A4;margin:18mm}*{box-sizing:border-box}body{font:14px/1.5 Arial,sans-serif;color:#1f2522;margin:0}header{display:flex;justify-content:space-between;gap:30px;border-bottom:2px solid #425b54;padding-bottom:22px}h1{font:36px Georgia,serif;margin:0}.brand{font-size:20px;font-weight:700;color:#425b54}.warning{margin:24px 0;padding:12px;border:2px solid #a86d32;background:#fff8ed;font-weight:700}.meta{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin:28px 0;white-space:pre-line}.meta h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#66716d}table{width:100%;border-collapse:collapse;margin-top:28px}th,td{padding:10px 8px;border-bottom:1px solid #ccd2cf;text-align:left}th:nth-child(n+2),td:nth-child(n+2){text-align:right}small{display:block;color:#66716d}.totals{margin:24px 0 0 auto;width:280px}.totals div{display:flex;justify-content:space-between;padding:5px}.totals .total{border-top:2px solid #425b54;font-size:18px;font-weight:700;margin-top:6px;padding-top:10px}footer{margin-top:70px;border-top:1px solid #ccd2cf;padding-top:14px;color:#66716d;font-size:12px}@media print{button{display:none}}</style></head><body>
+    <header><div><div class="brand">FormPoesie</div><div>3D-gedruckte Formpoesie</div></div><div><h1>Rechnungsentwurf</h1><div>${html(invoice.invoiceNumber)}</div></div></header>
+    <div class="warning">ENTWURF – noch nicht als steuerliche Rechnung verwenden. Unternehmens- und Steuerangaben müssen zuerst verifiziert werden.</div>
+    <div class="meta"><section><h2>Rechnung an</h2><strong>${html(invoice.customerName)}</strong><br>${html(invoice.customerAddress).replaceAll('\n', '<br>')}<br>${html(invoice.customerEmail)}</section><section><h2>Angaben</h2>Rechnungsdatum: ${html(date(invoice.issueDate))}<br>Verkaufskanal: ${html(invoice.channel)}<br>Bestellung: ${html(invoice.orderKey || '–')}</section></div>
+    <table><thead><tr><th>Position</th><th>Menge</th><th>Einzelpreis</th><th>Gesamt</th></tr></thead><tbody>${itemRows}${number(invoice.shippingCents) ? `<tr><td>Versand</td><td>1</td><td>${html(cents(invoice.shippingCents))}</td><td>${html(cents(invoice.shippingCents))}</td></tr>` : ''}</tbody></table>
+    <div class="totals"><div><span>Zwischensumme</span><span>${html(cents(invoice.subtotalCents))}</span></div>${number(invoice.shippingCents) ? `<div><span>Versand</span><span>${html(cents(invoice.shippingCents))}</span></div>` : ''}<div class="total"><span>Gesamt</span><span>${html(cents(invoice.totalCents))}</span></div></div>
+    ${invoice.note ? `<p><strong>Hinweis:</strong> ${html(invoice.note)}</p>` : ''}<footer>FormPoesie · Rechnungsentwurf aus FORMPOESIE STUDIO</footer><script>window.addEventListener('load',()=>window.print())</script></body></html>`);
+  popup.document.close();
+  return true;
+}
+
+function InvoiceDialog({
+  invoice,
+  onClose,
+}: {
+  invoice: Row | null;
+  onClose: () => void;
+}) {
+  if (!invoice) return null;
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="font-heading text-3xl">
+            Rechnungsentwurf {string(invoice.invoiceNumber)}
+          </DialogTitle>
+          <DialogDescription>
+            Gespeicherter Stand zur Bestellung {string(invoice.orderKey, '–')}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-xl border border-amber-700/40 bg-amber-50 p-3 text-sm text-amber-950">
+          Noch nicht als steuerliche Rechnung verwenden: Unternehmens- und
+          Steuerangaben sind nicht verifiziert.
+        </div>
+        <div className="grid gap-4 rounded-2xl border bg-white/70 p-5 sm:grid-cols-2">
+          <div>
+            <p className="text-xs text-muted-foreground">Rechnung an</p>
+            <p className="font-medium">{string(invoice.customerName)}</p>
+            <p className="mt-1 whitespace-pre-line text-sm">
+              {string(invoice.customerAddress)}
+            </p>
+            <p className="text-sm">{string(invoice.customerEmail)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Rechnungsdatum</p>
+            <p>{date(invoice.issueDate)}</p>
+            <p className="mt-3 text-xs text-muted-foreground">Kanal</p>
+            <p>{string(invoice.channel)}</p>
+          </div>
+          <div className="sm:col-span-2 space-y-2">
+            {rows(invoice.items).map((item, index) => (
+              <div
+                key={index}
+                className="grid grid-cols-[1fr_auto] gap-3 border-t pt-2 text-sm"
+              >
+                <span>
+                  {number(item.quantity, 1)} × {string(item.description)}{' '}
+                  <span className="text-muted-foreground">
+                    {string(item.variant)}
+                  </span>
+                </span>
+                <strong>
+                  {cents(
+                    number(item.quantity, 1) * number(item.unitPriceCents),
+                  )}
+                </strong>
+              </div>
+            ))}
+            {number(invoice.shippingCents) ? (
+              <div className="flex justify-between border-t pt-2 text-sm">
+                <span>Versand</span>
+                <strong>{cents(invoice.shippingCents)}</strong>
+              </div>
+            ) : null}
+            <div className="flex justify-between border-t-2 pt-3 text-lg">
+              <strong>Gesamt</strong>
+              <strong>{cents(invoice.totalCents)}</strong>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          {invoice.customerEmail ? (
+            <a
+              className="inline-flex h-9 items-center justify-center rounded-lg border bg-white px-4 text-sm"
+              href={`mailto:${encodeURIComponent(string(invoice.customerEmail))}?subject=${encodeURIComponent('Rechnungsentwurf ' + string(invoice.invoiceNumber))}&body=${encodeURIComponent('Hallo ' + string(invoice.customerName) + ',\n\nanbei erhältst du den Rechnungsentwurf ' + string(invoice.invoiceNumber) + '. Bitte die zuvor als PDF gespeicherte Datei anhängen.\n\nLiebe Grüße\nFormPoesie')}`}
+            >
+              E-Mail vorbereiten
+            </a>
+          ) : null}
+          <Button onClick={() => printInvoice(invoice)}>
+            <Printer className="size-4" /> Drucken / als PDF sichern
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function GeneralCashRegister({
   data,
   onBooked,
@@ -2196,6 +2318,10 @@ function GeneralCashRegister({
   const [recipient, setRecipient] = useState('');
   const [shippingCost, setShippingCost] = useState('');
   const [note, setNote] = useState('');
+  const [issueInvoice, setIssueInvoice] = useState(false);
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [selectedInvoice, setSelectedInvoice] = useState<Row | null>(null);
   const [cart, setCart] = useState<GeneralCartItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -2277,6 +2403,10 @@ function GeneralCashRegister({
             Math.round(Number(shippingCost.replace(',', '.')) * 100) || 0,
           ),
           note,
+          issueInvoice,
+          customerName: recipient,
+          customerEmail,
+          customerAddress,
         },
         items: cart.map((item) => {
           const breakdown = variantCostBreakdown(
@@ -2319,6 +2449,8 @@ function GeneralCashRegister({
     const result = (await response.json()) as {
       error?: string;
       orderKey?: string;
+      invoice?: Row;
+      invoiceError?: string;
     };
     setSaving(false);
     if (!response.ok) {
@@ -2326,223 +2458,310 @@ function GeneralCashRegister({
       return;
     }
     setMessage(
-      `Verkauf ${result.orderKey ? result.orderKey + ' ' : ''}gespeichert. Offene Positionen stehen auf der Übersicht unter Druck & Versand.`,
+      result.invoiceError
+        ? `Verkauf gespeichert. Der Rechnungsentwurf konnte nicht angelegt werden: ${result.invoiceError}`
+        : `Verkauf ${result.orderKey ? result.orderKey + ' ' : ''}gespeichert.${result.invoice ? ' Rechnungsentwurf angelegt.' : ''} Offene Positionen stehen auf der Übersicht unter Druck & Versand.`,
     );
+    if (result.invoice) setSelectedInvoice(result.invoice);
     setCart([]);
     setRecipient('');
     setShippingCost('');
     setNote('');
+    setCustomerEmail('');
+    setCustomerAddress('');
+    setIssueInvoice(false);
     onBooked();
   }
 
   return (
-    <section className="mt-6 grid gap-5 xl:grid-cols-[1.35fr_.85fr]">
-      <div className="rounded-[26px] border bg-white/65 p-5 md:p-6">
-        <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
-          Allgemeiner Verkauf
-        </p>
-        <h2 className="mt-1 font-heading text-3xl">Kasse</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Märkte und Regalflächen werden ausschließlich in ihrem eigenen Bereich
-          gebucht.
-        </p>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-            Verkaufsort
-            <select
-              className="h-10 rounded-lg border bg-white px-3 text-sm text-foreground"
-              value={channel}
-              onChange={(event) =>
-                setChannel(
-                  event.target.value as (typeof GENERAL_SALES_CHANNELS)[number],
-                )
+    <>
+      <section className="mt-6 grid gap-5 xl:grid-cols-[1.35fr_.85fr]">
+        <div className="rounded-[26px] border bg-white/65 p-5 md:p-6">
+          <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+            Allgemeiner Verkauf
+          </p>
+          <h2 className="mt-1 font-heading text-3xl">Kasse</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Märkte und Regalflächen werden ausschließlich in ihrem eigenen
+            Bereich gebucht.
+          </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              Verkaufsort
+              <select
+                className="h-10 rounded-lg border bg-white px-3 text-sm text-foreground"
+                value={channel}
+                onChange={(event) =>
+                  setChannel(
+                    event.target
+                      .value as (typeof GENERAL_SALES_CHANNELS)[number],
+                  )
+                }
+              >
+                {GENERAL_SALES_CHANNELS.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Field
+              label="Verkaufsdatum"
+              type="date"
+              value={saleDate}
+              onChange={setSaleDate}
+            />
+            <Field
+              label={
+                channel === 'Abholung'
+                  ? 'Name (optional)'
+                  : 'Empfänger (optional)'
+              }
+              value={recipient}
+              onChange={setRecipient}
+            />
+            {channel !== 'Abholung' ? (
+              <Field
+                label="Versandkosten in €"
+                value={shippingCost}
+                onChange={setShippingCost}
+              />
+            ) : (
+              <div />
+            )}
+          </div>
+          <div className="relative mt-4">
+            <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
+            <Input
+              className="bg-white pl-9"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Artikel oder Variante suchen"
+            />
+          </div>
+          <div className="mt-3 grid max-h-[500px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+            {choices.map(({ product, variant }) => {
+              const breakdown = variantCostBreakdown(
+                product,
+                variant,
+                products,
+                components,
+              );
+              const price =
+                number(variant.priceCents) || number(product.defaultPriceCents);
+              return (
+                <button
+                  type="button"
+                  key={itemKey(product, variant)}
+                  onClick={() => add(product, variant)}
+                  className="flex items-center gap-3 rounded-xl border bg-white/70 p-3 text-left transition hover:border-[var(--fp-primary)]"
+                >
+                  <div className="size-14 shrink-0">
+                    <InventoryImage
+                      product={{
+                        ...product,
+                        variants: variant.id ? [variant] : [],
+                      }}
+                      alt={string(product.name)}
+                    />
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">
+                      {string(product.name)}
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {string(
+                        variant.name || variant.appearance || variant.size,
+                        'Standard',
+                      )}{' '}
+                      · Kosten {cents(breakdown.totalCents)}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-semibold">{cents(price)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <aside className="rounded-[26px] border bg-[var(--fp-ink)] p-5 text-[var(--fp-paper)] md:p-6">
+          <div className="flex items-center justify-between">
+            <h2 className="font-heading text-2xl">Warenkorb</h2>
+            <Badge className="bg-white/10 text-white">
+              {cart.reduce((sum, item) => sum + item.quantity, 0)} Stück
+            </Badge>
+          </div>
+          <div className="mt-5 space-y-3">
+            {cart.map((item) => {
+              const key = itemKey(item.product, item.variant);
+              return (
+                <div
+                  key={key}
+                  className="rounded-xl border border-white/15 p-3"
+                >
+                  <div className="text-sm font-medium">
+                    {string(item.product.name)}
+                  </div>
+                  <div className="text-xs text-white/60">
+                    {string(item.variant.name || item.variant.size, 'Standard')}
+                  </div>
+                  <div className="mt-3 grid grid-cols-[auto_1fr] gap-2">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          patchCart(key, { quantity: item.quantity - 1 })
+                        }
+                      >
+                        −
+                      </Button>
+                      <span className="min-w-6 text-center text-sm">
+                        {item.quantity}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          patchCart(key, { quantity: item.quantity + 1 })
+                        }
+                      >
+                        +
+                      </Button>
+                    </div>
+                    <Input
+                      aria-label={`Einzelpreis ${string(item.product.name)}`}
+                      className="h-9 bg-white text-black"
+                      value={(item.salePriceCents / 100)
+                        .toFixed(2)
+                        .replace('.', ',')}
+                      onChange={(event) =>
+                        patchCart(key, {
+                          salePriceCents: Math.max(
+                            0,
+                            Math.round(
+                              Number(event.target.value.replace(',', '.')) *
+                                100,
+                            ) || 0,
+                          ),
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            {!cart.length ? (
+              <p className="text-sm text-white/60">
+                Wähle links einen Artikel aus.
+              </p>
+            ) : null}
+          </div>
+          <div className="mt-6 border-t border-white/15 pt-5">
+            <div className="flex items-end justify-between">
+              <span className="text-sm text-white/65">Gesamtsumme</span>
+              <span className="font-heading text-4xl">{cents(total)}</span>
+            </div>
+            <label className="mt-5 grid gap-1.5 text-xs text-white/65">
+              Notiz (optional)
+              <Textarea
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                className="border-white/20 bg-white text-black"
+              />
+            </label>
+            <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-white/15 p-3 text-sm">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={issueInvoice}
+                onChange={(event) => setIssueInvoice(event.target.checked)}
+              />
+              Rechnungsentwurf anlegen
+            </label>
+            {issueInvoice ? (
+              <div className="mt-3 grid gap-3">
+                <Input
+                  className="bg-white text-black"
+                  type="email"
+                  value={customerEmail}
+                  onChange={(event) => setCustomerEmail(event.target.value)}
+                  placeholder="E-Mail (optional)"
+                />
+                <Textarea
+                  className="bg-white text-black"
+                  value={customerAddress}
+                  onChange={(event) => setCustomerAddress(event.target.value)}
+                  placeholder="Rechnungsanschrift (optional)"
+                />
+                {!recipient.trim() ? (
+                  <p className="text-xs text-amber-200">
+                    Bitte oben einen Kunden- oder Empfängernamen eintragen.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            <Button
+              className="mt-4 w-full bg-[var(--fp-paper)] text-[var(--fp-ink)] hover:bg-white"
+              onClick={() => void book()}
+              disabled={
+                !cart.length || saving || (issueInvoice && !recipient.trim())
               }
             >
-              {GENERAL_SALES_CHANNELS.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Field
-            label="Verkaufsdatum"
-            type="date"
-            value={saleDate}
-            onChange={setSaleDate}
-          />
-          <Field
-            label={
-              channel === 'Abholung'
-                ? 'Name (optional)'
-                : 'Empfänger (optional)'
-            }
-            value={recipient}
-            onChange={setRecipient}
-          />
-          {channel !== 'Abholung' ? (
-            <Field
-              label="Versandkosten in €"
-              value={shippingCost}
-              onChange={setShippingCost}
-            />
-          ) : (
-            <div />
-          )}
+              {saving ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <CircleDollarSign className="size-4" />
+              )}{' '}
+              Verkauf speichern
+            </Button>
+            {message ? (
+              <p className="mt-3 text-xs text-white/75">{message}</p>
+            ) : null}
+          </div>
+        </aside>
+      </section>
+      <section className="mt-5 rounded-[26px] border bg-white/65 p-5 md:p-6">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+              Gespeichert
+            </p>
+            <h2 className="font-heading text-2xl">Rechnungsentwürfe</h2>
+          </div>
+          <Badge variant="outline">{rows(data.invoices).length}</Badge>
         </div>
-        <div className="relative mt-4">
-          <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
-          <Input
-            className="bg-white pl-9"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Artikel oder Variante suchen"
-          />
-        </div>
-        <div className="mt-3 grid max-h-[500px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
-          {choices.map(({ product, variant }) => {
-            const breakdown = variantCostBreakdown(
-              product,
-              variant,
-              products,
-              components,
-            );
-            const price =
-              number(variant.priceCents) || number(product.defaultPriceCents);
-            return (
-              <button
-                type="button"
-                key={itemKey(product, variant)}
-                onClick={() => add(product, variant)}
-                className="flex items-center gap-3 rounded-xl border bg-white/70 p-3 text-left transition hover:border-[var(--fp-primary)]"
-              >
-                <div className="size-14 shrink-0">
-                  <InventoryImage
-                    product={{
-                      ...product,
-                      variants: variant.id ? [variant] : [],
-                    }}
-                    alt={string(product.name)}
-                  />
-                </div>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">
-                    {string(product.name)}
-                  </span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {string(
-                      variant.name || variant.appearance || variant.size,
-                      'Standard',
-                    )}{' '}
-                    · Kosten {cents(breakdown.totalCents)}
-                  </span>
+        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {rows(data.invoices).map((invoice) => (
+            <button
+              type="button"
+              key={string(invoice.id)}
+              onClick={() => setSelectedInvoice(invoice)}
+              className="flex items-center gap-3 rounded-xl border bg-white p-3 text-left hover:border-[var(--fp-primary)]"
+            >
+              <FileText className="size-5 shrink-0" />
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium">
+                  {string(invoice.invoiceNumber)}
                 </span>
-                <span className="shrink-0 font-semibold">{cents(price)}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      <aside className="rounded-[26px] border bg-[var(--fp-ink)] p-5 text-[var(--fp-paper)] md:p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="font-heading text-2xl">Warenkorb</h2>
-          <Badge className="bg-white/10 text-white">
-            {cart.reduce((sum, item) => sum + item.quantity, 0)} Stück
-          </Badge>
-        </div>
-        <div className="mt-5 space-y-3">
-          {cart.map((item) => {
-            const key = itemKey(item.product, item.variant);
-            return (
-              <div key={key} className="rounded-xl border border-white/15 p-3">
-                <div className="text-sm font-medium">
-                  {string(item.product.name)}
-                </div>
-                <div className="text-xs text-white/60">
-                  {string(item.variant.name || item.variant.size, 'Standard')}
-                </div>
-                <div className="mt-3 grid grid-cols-[auto_1fr] gap-2">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() =>
-                        patchCart(key, { quantity: item.quantity - 1 })
-                      }
-                    >
-                      −
-                    </Button>
-                    <span className="min-w-6 text-center text-sm">
-                      {item.quantity}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() =>
-                        patchCart(key, { quantity: item.quantity + 1 })
-                      }
-                    >
-                      +
-                    </Button>
-                  </div>
-                  <Input
-                    aria-label={`Einzelpreis ${string(item.product.name)}`}
-                    className="h-9 bg-white text-black"
-                    value={(item.salePriceCents / 100)
-                      .toFixed(2)
-                      .replace('.', ',')}
-                    onChange={(event) =>
-                      patchCart(key, {
-                        salePriceCents: Math.max(
-                          0,
-                          Math.round(
-                            Number(event.target.value.replace(',', '.')) * 100,
-                          ) || 0,
-                        ),
-                      })
-                    }
-                  />
-                </div>
-              </div>
-            );
-          })}
-          {!cart.length ? (
-            <p className="text-sm text-white/60">
-              Wähle links einen Artikel aus.
+                <span className="block truncate text-xs text-muted-foreground">
+                  {date(invoice.issueDate)} · {string(invoice.customerName)} ·{' '}
+                  {cents(invoice.totalCents)}
+                </span>
+              </span>
+            </button>
+          ))}
+          {!rows(data.invoices).length ? (
+            <p className="text-sm text-muted-foreground">
+              Noch keine Rechnungsentwürfe gespeichert.
             </p>
           ) : null}
         </div>
-        <div className="mt-6 border-t border-white/15 pt-5">
-          <div className="flex items-end justify-between">
-            <span className="text-sm text-white/65">Gesamtsumme</span>
-            <span className="font-heading text-4xl">{cents(total)}</span>
-          </div>
-          <label className="mt-5 grid gap-1.5 text-xs text-white/65">
-            Notiz (optional)
-            <Textarea
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              className="border-white/20 bg-white text-black"
-            />
-          </label>
-          <Button
-            className="mt-4 w-full bg-[var(--fp-paper)] text-[var(--fp-ink)] hover:bg-white"
-            onClick={() => void book()}
-            disabled={!cart.length || saving}
-          >
-            {saving ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <CircleDollarSign className="size-4" />
-            )}{' '}
-            Verkauf speichern
-          </Button>
-          {message ? (
-            <p className="mt-3 text-xs text-white/75">{message}</p>
-          ) : null}
-        </div>
-      </aside>
-    </section>
+      </section>
+      <InvoiceDialog
+        invoice={selectedInvoice}
+        onClose={() => setSelectedInvoice(null)}
+      />
+    </>
   );
 }
 

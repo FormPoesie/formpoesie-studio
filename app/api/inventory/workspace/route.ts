@@ -474,6 +474,129 @@ async function saveExpenseMetadata(
     .run();
 }
 
+async function loadInvoices() {
+  try {
+    const result = await env.DB.prepare(
+      `SELECT id, invoice_number AS invoiceNumber, order_key AS orderKey,
+              status, issue_date AS issueDate, customer_name AS customerName,
+              customer_email AS customerEmail,
+              customer_address AS customerAddress, channel, currency,
+              items_json AS itemsJson, subtotal_cents AS subtotalCents,
+              shipping_cents AS shippingCents, total_cents AS totalCents,
+              business_snapshot_json AS businessSnapshotJson, note,
+              created_at AS createdAt
+       FROM invoices ORDER BY issue_date DESC, created_at DESC LIMIT 150`,
+    ).all<JsonRecord>();
+    return (result.results || []).map((row) => ({
+      ...row,
+      items: JSON.parse(scalarText(row.itemsJson, '[]')),
+      business: JSON.parse(scalarText(row.businessSnapshotJson, '{}')),
+      itemsJson: undefined,
+      businessSnapshotJson: undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function createInvoiceDraft({
+  orderKey,
+  saleIds,
+  order,
+  items,
+  userId,
+}: {
+  orderKey: string;
+  saleIds: string[];
+  order: JsonRecord;
+  items: JsonRecord[];
+  userId: string | null;
+}) {
+  const issueDate = scalarText(order.date).slice(0, 10);
+  const year = Number(issueDate.slice(0, 4));
+  const counter = await env.DB.prepare(
+    `INSERT INTO invoice_counters (year, last_number) VALUES (?, 1)
+     ON CONFLICT(year) DO UPDATE SET last_number = last_number + 1
+     RETURNING last_number AS lastNumber`,
+  )
+    .bind(year)
+    .first<{ lastNumber: number }>();
+  if (!counter?.lastNumber) throw new Error('Rechnungsnummer fehlt.');
+  const invoiceNumber = `FP-${year}-${String(counter.lastNumber).padStart(4, '0')}`;
+  const shippingCents = Math.max(
+    0,
+    Math.trunc(Number(order.shippingCostCents) || 0),
+  );
+  const invoiceItems = items.map((item) => ({
+    description: scalarText(item.articleName, 'Artikel').slice(0, 240),
+    variant: scalarText(item.size).slice(0, 160),
+    quantity: Math.max(1, Math.trunc(Number(item.quantity) || 1)),
+    unitPriceCents: Math.max(0, Math.trunc(Number(item.salePriceCents) || 0)),
+  }));
+  const subtotalCents = invoiceItems.reduce(
+    (sum, item) => sum + item.quantity * item.unitPriceCents,
+    0,
+  );
+  const instant = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const businessSnapshot = {
+    name: 'FormPoesie',
+    verified: false,
+  };
+  await env.DB.prepare(
+    `INSERT INTO invoices
+       (id, invoice_number, order_key, source_sale_ids_json, status,
+        issue_date, customer_name, customer_email, customer_address,
+        channel, currency, items_json, subtotal_cents, shipping_cents,
+        total_cents, business_snapshot_json, note, created_by,
+        created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, 'EUR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      id,
+      invoiceNumber,
+      orderKey || null,
+      JSON.stringify(saleIds),
+      issueDate,
+      scalarText(order.customerName || order.shippingRecipient, 'Kundin/Kunde')
+        .trim()
+        .slice(0, 200),
+      scalarText(order.customerEmail).trim().slice(0, 320) || null,
+      scalarText(order.customerAddress).trim().slice(0, 1000) || null,
+      scalarText(order.channel).slice(0, 80),
+      JSON.stringify(invoiceItems),
+      subtotalCents,
+      shippingCents,
+      subtotalCents + shippingCents,
+      JSON.stringify(businessSnapshot),
+      scalarText(order.note).trim().slice(0, 2000) || null,
+      userId,
+      instant,
+      instant,
+    )
+    .run();
+  return {
+    id,
+    invoiceNumber,
+    status: 'draft',
+    issueDate,
+    customerName: scalarText(
+      order.customerName || order.shippingRecipient,
+      'Kundin/Kunde',
+    ),
+    customerEmail: scalarText(order.customerEmail),
+    customerAddress: scalarText(order.customerAddress),
+    channel: scalarText(order.channel),
+    currency: 'EUR',
+    items: invoiceItems,
+    subtotalCents,
+    shippingCents,
+    totalCents: subtotalCents + shippingCents,
+    business: businessSnapshot,
+    note: scalarText(order.note),
+  };
+}
+
 async function loadArea(accessToken: string, area: string, request: Request) {
   if (area === 'products') {
     const [
@@ -560,7 +683,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     return { materials, brands, storageLocations };
   }
   if (area === 'cash') {
-    const [products, components] = await Promise.all([
+    const [products, components, invoices] = await Promise.all([
       query(
         accessToken,
         'products',
@@ -571,8 +694,13 @@ async function loadArea(accessToken: string, area: string, request: Request) {
           '&deleted_at=is.null&archived_at=is.null&order=name.asc',
       ),
       query(accessToken, 'product_components', 'select=*&order=id.asc'),
+      loadInvoices(),
     ]);
-    return { products: await decorateProducts(products), components };
+    return {
+      products: await decorateProducts(products),
+      components,
+      invoices,
+    };
   }
   if (area === 'markets' || area === 'shelves') {
     const [markets, demands, articles, sales, expenses, products] =
@@ -813,6 +941,16 @@ export async function POST(request: Request) {
           },
           { status: 400 },
         );
+      if (
+        body.order?.issueInvoice === true &&
+        !scalarText(
+          body.order?.customerName || body.order?.shippingRecipient,
+        ).trim()
+      )
+        return Response.json(
+          { error: 'Für einen Rechnungsentwurf wird ein Kundenname benötigt.' },
+          { status: 400 },
+        );
 
       let orderKey = '';
       const createdIds: string[] = [];
@@ -894,8 +1032,26 @@ export async function POST(request: Request) {
         orderKey = scalarText(created.orderKey || created.order_key, orderKey);
       }
       await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
+      let invoice: JsonRecord | null = null;
+      let invoiceError = '';
+      if (body.order?.issueInvoice === true) {
+        try {
+          invoice = await createInvoiceDraft({
+            orderKey,
+            saleIds: createdIds,
+            order: body.order,
+            items: submitted,
+            userId: user.id || null,
+          });
+        } catch (error) {
+          invoiceError =
+            error instanceof Error
+              ? error.message
+              : 'Rechnungsentwurf konnte nicht erstellt werden.';
+        }
+      }
       return Response.json(
-        { saved: true, orderKey, createdIds },
+        { saved: true, orderKey, createdIds, invoice, invoiceError },
         { status: 201 },
       );
     }
