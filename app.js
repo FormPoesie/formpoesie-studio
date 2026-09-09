@@ -28,6 +28,67 @@ const state = {
   menuOpen: false
 };
 
+const salePlaces = ["Etsy", "🛍️ Vinted", "🛒 Ebay", "🏠 Kleinanzeigen", "Abholung", "WhatsApp Basar"];
+
+function parseCsv(text) {
+  const rows = []; let row = []; let cell = ""; let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (char === '"') {
+      if (quoted && text[i + 1] === '"') { cell += '"'; i += 1; }
+      else quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      row.push(cell); cell = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && text[i + 1] === "\n") i += 1;
+      row.push(cell); rows.push(row); row = []; cell = "";
+    } else cell += char;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+function parseSheetDate(value) {
+  if (!value) return "";
+  const months = { Jan: 0, Feb: 1, Mar: 2, Mär: 2, Apr: 3, May: 4, Mai: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Okt: 9, Nov: 10, Dec: 11, Dez: 11 };
+  const match = value.trim().match(/^(\d{1,2})\.?\s+([A-Za-zÄÖÜäöü]{3})\s+(\d{4})$/);
+  if (!match || months[match[2]] === undefined) return value.trim();
+  return `${match[3]}-${String(months[match[2]] + 1).padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+}
+
+function parseEuro(value) {
+  if (!value) return 0;
+  const amount = Number(value.replace(/\s|€/g, "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+async function importSales(files) {
+  const knownIds = new Set(state.sales.map(s => String(s.id)));
+  let imported = 0; let duplicates = 0; let missingDates = 0; let missingPrices = 0;
+  for (const file of files) {
+    const rows = parseCsv(await file.text());
+    const headerIndex = rows.findIndex(row => row.includes("Ort") && row.includes("Datum") && row.includes("Artikelname"));
+    if (headerIndex < 0) continue;
+    const header = rows[headerIndex].map(value => value.trim());
+    const placeIndex = header.indexOf("Ort"); const dateIndex = header.indexOf("Datum");
+    const itemIndex = header.indexOf("Artikelname"); const priceIndex = header.indexOf("Preis (€)");
+    rows.slice(headerIndex + 1).forEach((row, offset) => {
+      const sourceRow = headerIndex + offset + 2;
+      const place = (row[placeIndex] || "").trim(); const item = (row[itemIndex] || "").trim();
+      if (!item || !salePlaces.some(prefix => place.startsWith(prefix))) return;
+      const id = `sheet:${file.name}:${sourceRow}`;
+      if (knownIds.has(id)) { duplicates += 1; return; }
+      const dateRaw = (row[dateIndex] || "").trim(); const priceRaw = (row[priceIndex] || "").trim();
+      state.sales.push({ id, date: parseSheetDate(dateRaw), dateRaw, place, item, total: parseEuro(priceRaw), units: 1, invoice: false, importedFrom: "Canva Sheet", sourceFile: file.name, sourceRow });
+      knownIds.add(id); imported += 1; if (!dateRaw) missingDates += 1; if (!priceRaw) missingPrices += 1;
+    });
+  }
+  localStorage.setItem("fp-sales", JSON.stringify(state.sales));
+  render();
+  toast(`${imported} Verkäufe importiert · ${duplicates} bereits vorhanden · ${missingDates} ohne Datum · ${missingPrices} ohne Preis`);
+
+}
+
 const euro = value => new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(value);
 const today = () => new Date().toISOString().slice(0, 10);
 const el = document.querySelector("#app");
@@ -57,10 +118,12 @@ function topbar() {
 function overview() {
   const revenue = state.sales.reduce((sum,s) => sum + s.total, 0);
   const units = state.sales.reduce((sum,s) => sum + s.units, 0);
+  const itemCounts = state.sales.reduce((counts, sale) => { if (sale.item) counts[sale.item] = (counts[sale.item] || 0) + sale.units; return counts; }, {});
+  const topItem = Object.entries(itemCounts).sort((a,b) => b[1] - a[1])[0];
   return `<section class="page">
     <p class="eyebrow">FormPoesie Studio · Interne Arbeitsfläche</p><h1>Was läuft heute?</h1>
     <p class="section-label">Erfolge</p><h2>Diese Woche</h2>
-    <div class="metrics"><div class="metric"><strong>${units}</strong><span>verkaufte Artikel diese Woche</span></div><div class="metric"><strong>${euro(revenue)}</strong><span>Umsatz diese Woche</span></div><div class="metric"><strong>${units ? "Apollo Vase" : "Noch kein Verkauf"}</strong><span>${units} Stück · stärkster Artikel</span></div></div>
+    <div class="metrics"><div class="metric"><strong>${units}</strong><span>gespeicherte verkaufte Artikel</span></div><div class="metric"><strong>${euro(revenue)}</strong><span>gespeicherter Umsatz</span></div><div class="metric"><strong>${topItem ? topItem[0] : "Noch kein Verkauf"}</strong><span>${topItem ? topItem[1] : 0} Stück · stärkster Artikel</span></div></div>
     <p class="section-label">Direktzugriff</p><h2>Social Media</h2>
     <div class="quick-grid"><a class="quick-card" href="https://www.instagram.com/form.poesie/" target="_blank" rel="noreferrer"><span class="quick-symbol">◎</span><span><strong>Instagram</strong><small>@form.poesie</small></span></a><a class="quick-card" href="https://www.tiktok.com/" target="_blank" rel="noreferrer"><span class="quick-symbol">♪</span><span><strong>TikTok</strong><small>formpoesie</small></span></a><a class="quick-card" href="https://www.pinterest.de/3DFormPoesie/" target="_blank" rel="noreferrer"><span class="quick-symbol">⌖</span><span><strong>Pinterest</strong><small>@3DFormPoesie</small></span></a><a class="quick-card" href="https://www.paypal.com/" target="_blank" rel="noreferrer"><span class="quick-symbol">€</span><span><strong>PayPal</strong><small>Geschäftskonto</small></span></a></div>
     <div class="panel"><div class="panel-head"><div><h3>Druck & Versand</h3><p>2 zu drucken · 1 zu versenden</p></div><span class="status-pill">3 offen</span></div></div>
@@ -89,7 +152,9 @@ function posPage() {
   const filtered = products.filter(p => `${p.name} ${p.variant}`.toLowerCase().includes(state.search.toLowerCase()));
   const lines = Object.entries(state.cart).map(([id,qty])=>[products.find(p=>p.id===Number(id)),qty]).filter(x=>x[0]);
   const units = lines.reduce((s,[,q])=>s+q,0); const total = lines.reduce((s,[p,q])=>s+p.price*q,0);
-  return `<section class="page"><div class="page-head"><div><p class="eyebrow">Ein System · lokale Beispieldaten</p><h1>Kasse</h1><p class="lead">Verkäufe werden mit zentralen Artikel-, Bestands- und Verkaufsdaten erfasst.</p></div><button class="btn ghost" data-placeholder="Aktualisieren">↻ Aktualisieren</button></div>
+  const importedCount = state.sales.filter(s => s.importedFrom === "Canva Sheet").length;
+  return `<section class="page"><div class="page-head"><div><p class="eyebrow">Ein System · lokale Daten</p><h1>Kasse</h1><p class="lead">Verkäufe werden mit zentralen Artikel-, Bestands- und Verkaufsdaten erfasst.</p></div><div class="page-actions"><input id="sales-import" type="file" accept=".csv,text/csv" multiple hidden><button class="btn ghost" id="import-sales">CSV-Sheets importieren</button><button class="btn ghost" data-placeholder="Aktualisieren">↻ Aktualisieren</button></div></div>
+    <div class="panel"><div class="panel-head"><div><h3>Verkaufshistorie</h3><p>${state.sales.length} Verkäufe lokal gespeichert · ${importedCount} aus Canva-Sheets importiert</p></div><span class="status-pill">Browserlokal</span></div></div>
     <div class="pos-layout"><div><div class="sale-form"><div class="field"><label for="place">Verkaufsort</label><select id="place" class="select"><option>Abholung</option><option>Etsy</option><option>Markt</option><option>Bestellformular</option></select></div><div class="field"><label for="date">Verkaufsdatum</label><input id="date" class="input" type="date" value="${today()}"></div><div class="field"><label for="customer">Name (optional)</label><input id="customer" class="input" placeholder="Kundin oder Kunde"></div></div><input class="input" id="product-search" type="search" placeholder="Artikel oder Variante suchen" value="${state.search}"><div class="pos-products"><div class="sale-list" style="margin-top:10px">${filtered.map(p=>`<button class="sale-item" data-add="${p.id}"><span><strong>${p.name}</strong><small>${p.variant} · Kosten ${euro(p.cost)}</small></span><b>${euro(p.price)}</b></button>`).join("")}</div></div></div>
     <aside class="cart"><div class="cart-head"><h2>Warenkorb</h2><span class="cart-count">${units} Stück</span></div>${lines.length ? lines.map(([p,q])=>`<div class="cart-line"><span><strong>${p.name}</strong><small>${euro(p.price*q)}</small></span><span class="qty"><button data-qty="${p.id}" data-delta="-1">−</button><small>${q}</small><button data-qty="${p.id}" data-delta="1">＋</button></span></div>`).join("") : `<p class="cart-empty">Wähle links einen Artikel aus.</p>`}<div class="cart-foot"><div class="cart-total"><span>Gesamtsumme</span><strong>${euro(total)}</strong></div><textarea class="textarea" id="sale-note" placeholder="Notiz (optional)"></textarea><label class="check"><input id="invoice" type="checkbox"> Rechnung erstellen</label><button class="btn primary" id="save-sale" style="width:100%" ${lines.length ? "" : "disabled"}>Verkauf speichern</button></div></aside></div>
   </section>`;
@@ -115,6 +180,9 @@ function bind() {
   document.querySelectorAll("[data-add]").forEach(b=>b.addEventListener("click",()=>{ const id=b.dataset.add; state.cart[id]=(state.cart[id]||0)+1; saveCart(); render(); toast("Artikel zum Warenkorb hinzugefügt."); }));
   document.querySelectorAll("[data-qty]").forEach(b=>b.addEventListener("click",()=>{ const id=b.dataset.qty; state.cart[id]=(state.cart[id]||0)+Number(b.dataset.delta); if(state.cart[id]<=0) delete state.cart[id]; saveCart(); render(); }));
   document.querySelector("#save-sale")?.addEventListener("click", saveSale);
+  const salesImport = document.querySelector("#sales-import");
+  document.querySelector("#import-sales")?.addEventListener("click", () => salesImport?.click());
+  salesImport?.addEventListener("change", async event => { await importSales([...event.target.files]); event.target.value = ""; });
   document.querySelector("#new-product")?.addEventListener("click", () => openDialog("Neuen Artikel anlegen", "Der Formularentwurf demonstriert die lokale Produkterfassung.", "Artikel anlegen"));
   document.querySelector("#start-workflow")?.addEventListener("click", () => openDialog("Listing-Erstellung starten", "Lege Modellname und Produktart für den neuen Etsy-Workflow fest.", "Workflow anlegen"));
   document.querySelector("#resume-workflow")?.addEventListener("click",()=>toast("Entwurf geöffnet: Als Nächstes Produktbilder hinzufügen."));

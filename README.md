@@ -8,6 +8,7 @@ Eine eigenständige, GitHub-taugliche Frontend-Nachbildung der FormPoesie-Arbeit
 - Durchsuchbares Beispiel-Inventar
 - Funktionsfähige Kasse mit Warenkorb, Mengen und Verkaufsspeicherung
 - Verkäufe und Warenkorb werden im Browser über `localStorage` gespeichert
+- Mehrfachauswahl-Import der Canva-Monats-CSV-Dateien mit Dublettenschutz
 - Etsy-Workflow mit lokalem Entwurfsdialog
 - Tastatur-Fokus, mobile Navigation und Unterstützung für reduzierte Bewegung
 - Vorbereiteter GitHub-Pages-Workflow
@@ -40,7 +41,7 @@ git push -u origin main
 
 ## Daten und Backend
 
-Dieses Repository enthält absichtlich keine privaten Daten oder API-Zugänge der Ausgangsseite. Die Oberfläche verwendet lokale Beispieldaten. Für den produktiven Einsatz können die Datenzugriffe in `app.js` später durch eine eigene API ersetzt werden.
+Dieses Repository enthält absichtlich keine privaten Daten oder API-Zugänge der Ausgangsseite. Die Oberfläche verwendet lokale Beispieldaten. Importierte Verkaufsdaten bleiben ausschließlich im `localStorage` des verwendeten Browsers und werden nicht in GitHub hochgeladen. Für den produktiven Einsatz können die Datenzugriffe in `app.js` später durch eine eigene API ersetzt werden.
 
 ## Herkunft
 

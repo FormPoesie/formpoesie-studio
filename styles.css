@@ -108,6 +108,7 @@ h3 { margin: 0; font-size: 20px; }
 .btn.primary { border-color: var(--primary); background: var(--primary); color: var(--paper); }
 .btn.ghost { background: transparent; }
 .btn:disabled { cursor: not-allowed; opacity: .45; transform: none; }
+.page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
 .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .metric { min-height: 98px; padding: 20px; background: color-mix(in srgb, var(--white), transparent 18%); border: 1px solid color-mix(in srgb, var(--sand), transparent 50%); border-radius: var(--radius); box-shadow: 0 7px 25px #6c5c4510; }
@@ -216,6 +217,7 @@ h3 { margin: 0; font-size: 20px; }
   .metrics, .workflow-track { grid-template-columns:1fr; }
   .quick-grid, .product-grid, .sale-list { grid-template-columns:1fr; }
   .toolbar, .sale-form { grid-template-columns:1fr; }
+  .page-actions { width: 100%; justify-content: flex-start; }
   .inventory-summary { grid-template-columns:repeat(2,1fr); }
   .article-row { grid-template-columns:54px 1fr; }
   .article-visual { width:54px; }
