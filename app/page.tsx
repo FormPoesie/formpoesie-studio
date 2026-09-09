@@ -12,7 +12,6 @@ import {
   Camera,
   Check,
   CheckCircle2,
-  ClipboardList,
   CircleHelp,
   CircleDollarSign,
   CreditCard,
@@ -27,6 +26,7 @@ import {
   Lock,
   MoreHorizontal,
   Music2,
+  Network,
   Package,
   Palette,
   Plus,
@@ -73,6 +73,7 @@ import {
   InventoryWorkspace,
   type InventoryArea,
 } from '@/components/inventory-workspace';
+import { MindMapWorkspace } from '@/components/mind-map-workspace';
 
 type ProductRow = {
   id: string;
@@ -243,7 +244,7 @@ const navGroups = [
     label: 'Social Media',
     items: [
       ['News-Kalender', CalendarDays],
-      ['Content-Kalender', ClipboardList],
+      ['Mindmap', Network],
     ],
   },
   {
@@ -310,7 +311,7 @@ export default function Home() {
   const [inventoryArea, setInventoryArea] = useState<InventoryArea>('overview');
   const [inventoryProductId, setInventoryProductId] = useState('');
   const [draftModule, setDraftModule] = useState<'workflow' | null>(null);
-  const [contentCalendarOpen, setContentCalendarOpen] = useState(false);
+  const [mindMapOpen, setMindMapOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [catalogsOpen, setCatalogsOpen] = useState(false);
   const [orderFormOpen, setOrderFormOpen] = useState(false);
@@ -367,7 +368,7 @@ export default function Home() {
   function closeModules() {
     setCalendarOpen(false);
     setInventoryOpen(false);
-    setContentCalendarOpen(false);
+    setMindMapOpen(false);
     setAccountsOpen(false);
     setCatalogsOpen(false);
     setOrderFormOpen(false);
@@ -413,10 +414,10 @@ export default function Home() {
       setDraftModule('workflow');
     } else if (label === 'News-Kalender') {
       openCalendar();
-    } else if (label === 'Content-Kalender') {
+    } else if (label === 'Mindmap') {
       setActiveProduct(null);
       closeModules();
-      setContentCalendarOpen(true);
+      setMindMapOpen(true);
     } else if (label === 'Konten & Abos') {
       setActiveProduct(null);
       closeModules();
@@ -443,7 +444,7 @@ export default function Home() {
         !activeProduct &&
         !calendarOpen &&
         !inventoryOpen &&
-        !contentCalendarOpen &&
+        !mindMapOpen &&
         !accountsOpen &&
         !catalogsOpen &&
         !orderFormOpen &&
@@ -463,7 +464,7 @@ export default function Home() {
       return inventoryOpen && inventoryArea === inventoryTarget[label];
     if (label === 'Etsy Workflow') return draftModule === 'workflow';
     if (label === 'News-Kalender') return calendarOpen;
-    if (label === 'Content-Kalender') return contentCalendarOpen;
+    if (label === 'Mindmap') return mindMapOpen;
     if (label === 'Konten & Abos') return accountsOpen;
     if (label === 'Kataloge') return catalogsOpen;
     if (label === 'Bestellformular') return orderFormOpen;
@@ -1400,7 +1401,7 @@ export default function Home() {
             calendarOpen ||
             inventoryOpen ||
             draftModule ||
-            contentCalendarOpen ||
+            mindMapOpen ||
             accountsOpen ||
             catalogsOpen ||
             orderFormOpen ||
@@ -1433,8 +1434,8 @@ export default function Home() {
                                   : 'Inventar'
                     : draftModule === 'workflow'
                       ? 'Etsy Workflow'
-                      : contentCalendarOpen
-                        ? 'Content-Kalender'
+                      : mindMapOpen
+                        ? 'Mindmap'
                         : accountsOpen
                           ? 'Konten & Abos'
                           : catalogsOpen
@@ -1527,8 +1528,8 @@ export default function Home() {
             onStart={() => beginCreate('inventory')}
             onDelete={moveToTrash}
           />
-        ) : contentCalendarOpen ? (
-          <ContentCalendar />
+        ) : mindMapOpen ? (
+          <MindMapWorkspace />
         ) : accountsOpen ? (
           <AccountsHub onInventory={() => openInventory('products')} />
         ) : catalogsOpen ? (
@@ -3094,59 +3095,6 @@ function OrderFormHub() {
         >
           Formular öffnen <ExternalLink className="size-4" />
         </a>
-      </section>
-    </div>
-  );
-}
-
-function ContentCalendar() {
-  const canvaUrl =
-    'https://www.canva.com/design/DAHUOCyy3zA/NdUMQ8evw3xseJa2zPQt6A/edit';
-  return (
-    <div className="mx-auto max-w-[1220px] px-5 py-7 md:px-8 md:py-10">
-      <p className="mb-2 text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
-        Social Media Backlog
-      </p>
-      <h1 className="font-heading text-4xl leading-none md:text-5xl">
-        Content-Kalender
-      </h1>
-      <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-        Der richtige Canva-Arbeitsbereich „FormPoesie – Social Media Backlog“
-        ist hier als zentrale Content-Quelle hinterlegt.
-      </p>
-      <section className="mt-7 overflow-hidden rounded-[28px] border bg-white/65">
-        <div className="grid gap-0 lg:grid-cols-[1.2fr_.8fr]">
-          <div className="p-7 md:p-10">
-            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--fp-primary)]">
-              <CheckCircle2 className="size-4" /> Canva verbunden
-            </div>
-            <h2 className="mt-5 font-heading text-3xl">
-              Idee → Plattform → Format → Veröffentlichung
-            </h2>
-            <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              Die Tabelle enthält unter anderem Idee, Plattform, Format, Hook,
-              Beschreibung, Inspiration und Ziel. Bearbeitet wird sie weiterhin
-              direkt in Canva, damit bestehende Formeln und Medien erhalten
-              bleiben.
-            </p>
-            <a href={canvaUrl} target="_blank" rel="noreferrer">
-              <Button className="mt-6 rounded-full bg-[var(--fp-ink)] px-5">
-                Content-Kalender bearbeiten <ExternalLink className="size-4" />
-              </Button>
-            </a>
-          </div>
-          <div className="border-t bg-[var(--fp-primary)] p-7 text-white lg:border-t-0 lg:border-l md:p-10">
-            <ClipboardList className="size-8 text-[var(--fp-mist)]" />
-            <h3 className="mt-6 font-heading text-2xl">
-              Zentraler Redaktionsfluss
-            </h3>
-            <ul className="mt-4 space-y-3 text-sm leading-6 text-white/75">
-              <li>Instagram und TikTok gemeinsam planen</li>
-              <li>Hooks und Beschreibungen an einem Ort</li>
-              <li>Inspiration und Ziel pro Idee nachvollziehbar</li>
-            </ul>
-          </div>
-        </div>
       </section>
     </div>
   );

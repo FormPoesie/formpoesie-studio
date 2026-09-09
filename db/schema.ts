@@ -429,6 +429,61 @@ export const accountSecrets = sqliteTable('account_secrets', {
   ...timestamps,
 });
 
+export const mindMapNodes = sqliteTable(
+  'mind_map_nodes',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    note: text('note').notNull().default(''),
+    color: text('color').notNull().default('#4a5c58'),
+    positionX: real('position_x').notNull(),
+    positionY: real('position_y').notNull(),
+    createdBy: text('created_by'),
+    updatedBy: text('updated_by'),
+    ...timestamps,
+  },
+  (table) => [index('idx_mind_map_nodes_updated_at').on(table.updatedAt)],
+);
+
+export const mindMapEdges = sqliteTable(
+  'mind_map_edges',
+  {
+    id: text('id').primaryKey(),
+    sourceNodeId: text('source_node_id')
+      .notNull()
+      .references(() => mindMapNodes.id, { onDelete: 'cascade' }),
+    targetNodeId: text('target_node_id')
+      .notNull()
+      .references(() => mindMapNodes.id, { onDelete: 'cascade' }),
+    createdBy: text('created_by'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_mind_map_edges_nodes').on(
+      table.sourceNodeId,
+      table.targetNodeId,
+    ),
+    index('idx_mind_map_edges_target').on(table.targetNodeId),
+  ],
+);
+
+export const mindMapComments = sqliteTable(
+  'mind_map_comments',
+  {
+    id: text('id').primaryKey(),
+    nodeId: text('node_id')
+      .notNull()
+      .references(() => mindMapNodes.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    authorId: text('author_id'),
+    authorName: text('author_name').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_mind_map_comments_node').on(table.nodeId, table.createdAt),
+  ],
+);
+
 export const newsCalendarEntries = sqliteTable(
   'news_calendar_entries',
   {
