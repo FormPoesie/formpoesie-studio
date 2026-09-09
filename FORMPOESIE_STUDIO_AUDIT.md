@@ -27,6 +27,8 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 - Artikelstatus `Entwurf`/`Final`, Bestätigungsdatum und der davon unabhängige Etsy-Status als persistente Studiometadaten ergänzt. Bestehende gepflegte Inventarartikel bleiben beim Übergang final sichtbar; neue Artikel starten als Entwurf.
 - Markt- und Regalflächenmasken laden das zentrale Produktportfolio wieder direkt. Final überarbeitete Artikel und Entwürfe sind bei der Bestandszuordnung getrennt; beide bleiben buchbar.
 - Zentrale Artikel-Assetbibliothek ergänzt: mehrere JPEG-/PNG-/WebP-Bilder, ein frei definierbares Hauptbild und mehrere geschützte STL-/3MF-/OBJ-/ZIP-Druckdateien. Das Hauptbild wird in Inventar und allen darauf basierenden Artikelansichten wiederverwendet; Druckdateien werden nur nach FormPoesie-Anmeldung als Download ausgeliefert.
+- Geschützte Verwaltungsseite `Einkäufe & Ausgaben` ergänzt. Vorhandene Ausgaben bleiben erhalten und können um Kategorie, einmalige/monatliche/jährliche Wiederholung sowie PDF-/Bildbelege ergänzt werden. Die API prüft Marlon/Jasmin auch bei direkten Schreib- und Löschaufrufen.
+- Monatsübersicht um das responsive Diagramm `Einnahmen vs. Ausgaben` erweitert; monatliche und jährliche Ausgaben werden anhand Start- und optionalem Enddatum periodengerecht berücksichtigt.
 
 ## Vorhanden, aber noch weiter abzusichern
 
@@ -41,8 +43,7 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 - Rechnungsdaten, eindeutige Rechnungsnummer, A4-PDF, Wiederaufruf und E-Mail-Versand. Unternehmens-/Steuerdaten dürfen erst nach verifizierter Übernahme der Canva-Referenz gespeichert werden.
 - Bestandsfehler Place to Be anhand einer kontrollierten Testbuchung und Datenbankfunktion verifizieren.
 - Restbestand einer Regalfläche mit Historie in den Folgemonat übertragen.
-- Belegupload für Einkäufe, allgemeine Dokumentenverwaltung und wiederkehrende Ausgaben samt korrekter Monatsabgrenzung.
-- Einnahmen-vs.-Ausgaben-Diagramm mit wiederkehrenden Ausgaben.
+- Allgemeine, von Einkäufen unabhängige Dokumentenverwaltung.
 - Kollaborative Mindmap mit Knoten, Kanten, Positionen und nutzergebundenen Kommentaren; der bestehende Canva-Bereich ist bis dahin weiterhin nur eine externe Quelle.
 - Öffentliche Katalogdaten/-suche sind architektonisch vorzubereiten, aber laut Masterprompt noch nicht als vollständige Plattform zu bauen.
 

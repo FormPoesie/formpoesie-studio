@@ -255,6 +255,7 @@ const navGroups = [
     items: [
       ['Verkaufshistorie', FilePenLine],
       ['Monatsübersicht', CalendarDays],
+      ['Einkäufe & Ausgaben', WalletCards],
       ['Konten & Abos', CreditCard],
     ],
   },
@@ -378,7 +379,10 @@ export default function Home() {
   }
 
   function openInventory(area: InventoryArea = 'overview', productId = '') {
-    if (['sales', 'months', 'trash'].includes(area) && !inventoryCanManage)
+    if (
+      ['sales', 'months', 'expenses', 'trash'].includes(area) &&
+      !inventoryCanManage
+    )
       return;
     setActiveProduct(null);
     closeModules();
@@ -398,6 +402,7 @@ export default function Home() {
     else if (label === 'Regalflächen') openInventory('shelves');
     else if (label === 'Verkaufshistorie') openInventory('sales');
     else if (label === 'Monatsübersicht') openInventory('months');
+    else if (label === 'Einkäufe & Ausgaben') openInventory('expenses');
     else if (label === 'Etsy Workflow') {
       setActiveProduct(null);
       closeModules();
@@ -448,6 +453,7 @@ export default function Home() {
       Regalflächen: 'shelves',
       Verkaufshistorie: 'sales',
       Monatsübersicht: 'months',
+      'Einkäufe & Ausgaben': 'expenses',
     };
     if (inventoryTarget[label])
       return inventoryOpen && inventoryArea === inventoryTarget[label];
@@ -1339,9 +1345,11 @@ export default function Home() {
                           ? 'Kasse'
                           : inventoryArea === 'sales'
                             ? 'Verkaufshistorie'
-                            : inventoryArea === 'online'
-                              ? 'Druck & Versand'
-                              : 'Inventar'
+                            : inventoryArea === 'expenses'
+                              ? 'Einkäufe & Ausgaben'
+                              : inventoryArea === 'online'
+                                ? 'Druck & Versand'
+                                : 'Inventar'
                     : draftModule === 'workflow'
                       ? 'Etsy Workflow'
                       : contentCalendarOpen

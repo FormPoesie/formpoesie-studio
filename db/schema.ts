@@ -136,6 +136,41 @@ export const inventoryProductAssets = sqliteTable(
   ],
 );
 
+export const inventoryExpenseMetadata = sqliteTable(
+  'inventory_expense_metadata',
+  {
+    expenseId: text('expense_id').primaryKey(),
+    category: text('category'),
+    recurrence: text('recurrence').notNull().default('none'),
+    createdBy: text('created_by'),
+    ...timestamps,
+  },
+  (table) => [index('idx_inventory_expense_recurrence').on(table.recurrence)],
+);
+
+export const businessDocuments = sqliteTable(
+  'business_documents',
+  {
+    id: text('id').primaryKey(),
+    relationType: text('relation_type').notNull(),
+    relationId: text('relation_id'),
+    documentKind: text('document_kind').notNull(),
+    title: text('title'),
+    objectKey: text('object_key').notNull(),
+    filename: text('filename').notNull(),
+    contentType: text('content_type').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    createdBy: text('created_by'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_business_documents_relation').on(
+      table.relationType,
+      table.relationId,
+    ),
+  ],
+);
+
 export const variants = sqliteTable(
   'variants',
   {

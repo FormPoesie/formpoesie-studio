@@ -389,6 +389,91 @@ async function saveProductMetadata(
     .run();
 }
 
+async function decorateExpenses(value: unknown) {
+  const expenses = Array.isArray(value) ? (value as JsonRecord[]) : [];
+  let metadataRows: JsonRecord[] = [];
+  let documentRows: JsonRecord[] = [];
+  try {
+    const result = await env.DB.prepare(
+      `SELECT expense_id AS expenseId, category, recurrence,
+              updated_at AS studioUpdatedAt
+       FROM inventory_expense_metadata`,
+    ).all<JsonRecord>();
+    metadataRows = result.results || [];
+  } catch {
+    // Existing expenses remain visible before the supplemental migration.
+  }
+  try {
+    const result = await env.DB.prepare(
+      `SELECT id, relation_id AS relationId, filename,
+              content_type AS contentType, size_bytes AS sizeBytes,
+              created_at AS createdAt
+       FROM business_documents WHERE relation_type = 'expense'
+       ORDER BY created_at DESC`,
+    ).all<JsonRecord>();
+    documentRows = result.results || [];
+  } catch {
+    // Receipt metadata is optional for legacy expenses.
+  }
+  const metadata = new Map(
+    metadataRows.map((row) => [scalarText(row.expenseId), row]),
+  );
+  return expenses.map((expense) => {
+    const expenseId = scalarText(expense.id);
+    const saved = metadata.get(expenseId);
+    return {
+      ...expense,
+      category: scalarText(saved?.category),
+      recurrence: scalarText(
+        saved?.recurrence,
+        expense.isMonthly === true ? 'monthly' : 'none',
+      ),
+      studioUpdatedAt: saved?.studioUpdatedAt || null,
+      documents: documentRows
+        .filter((document) => scalarText(document.relationId) === expenseId)
+        .map((document) => ({
+          ...document,
+          url:
+            '/api/inventory/expense-documents?id=' +
+            encodeURIComponent(scalarText(document.id)),
+        })),
+    };
+  });
+}
+
+async function saveExpenseMetadata(
+  expenseId: string,
+  values: JsonRecord,
+  userId: string | null,
+) {
+  const recurrence = ['monthly', 'yearly'].includes(
+    scalarText(values.recurrence),
+  )
+    ? scalarText(values.recurrence)
+    : values.isMonthly === true
+      ? 'monthly'
+      : 'none';
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO inventory_expense_metadata
+       (expense_id, category, recurrence, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(expense_id) DO UPDATE SET
+       category = excluded.category,
+       recurrence = excluded.recurrence,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(
+      expenseId,
+      scalarText(values.category).trim() || null,
+      recurrence,
+      userId,
+      now,
+      now,
+    )
+    .run();
+}
+
 async function loadArea(accessToken: string, area: string, request: Request) {
   if (area === 'products') {
     const [
@@ -560,6 +645,14 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     ]);
     return { onlineSales, fulfillmentTasks: fulfillmentTasks.results || [] };
   }
+  if (area === 'expenses') {
+    const expenses = await query(
+      accessToken,
+      'other_expenses',
+      'select=*&deleted_at=is.null&order=invoice_date.desc',
+    );
+    return { expenses: await decorateExpenses(expenses) };
+  }
   if (area === 'sales') {
     const [sales, markets, onlineSales] = await Promise.all([
       query(
@@ -617,7 +710,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       sales,
       expenses,
       onlineSales,
-      otherExpenses,
+      otherExpenses: await decorateExpenses(otherExpenses),
       markets,
       highlights,
     };
@@ -653,7 +746,7 @@ export async function GET(request: Request) {
       { status: 401 },
     );
   const area = new URL(request.url).searchParams.get('area') || 'products';
-  if (['sales', 'months', 'trash'].includes(area)) {
+  if (['sales', 'months', 'expenses', 'trash'].includes(area)) {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
@@ -687,6 +780,10 @@ export async function POST(request: Request) {
     order?: JsonRecord;
     items?: JsonRecord[];
   };
+  if (body.entity === 'other_expenses') {
+    const denied = await requireInventoryManager(request);
+    if (denied) return denied;
+  }
   try {
     if (body.action === 'create_online_order') {
       const allowedChannels = new Set([
@@ -920,6 +1017,17 @@ export async function POST(request: Request) {
           user.id || null,
         );
     }
+    if (body.entity === 'other_expenses') {
+      const created = Array.isArray(result)
+        ? (result[0] as JsonRecord | undefined)
+        : undefined;
+      if (created?.id != null)
+        await saveExpenseMetadata(
+          scalarText(created.id),
+          body.values,
+          user.id || null,
+        );
+    }
     if (body.entity === 'markets') {
       const created = Array.isArray(result)
         ? (result[0] as JsonRecord | undefined)
@@ -963,6 +1071,10 @@ export async function PATCH(request: Request) {
   };
   if (!body.entity || body.id == null || !body.values)
     return Response.json({ error: 'Datensatz fehlt.' }, { status: 400 });
+  if (body.entity === 'other_expenses') {
+    const denied = await requireInventoryManager(request);
+    if (denied) return denied;
+  }
   if (body.entity === 'fulfillment_tasks') {
     const allowed = Object.fromEntries(
       Object.entries(body.values).filter(([key]) =>
@@ -991,7 +1103,14 @@ export async function PATCH(request: Request) {
     ['studioStatus', 'finalReviewed', 'finalizedAt', 'etsyListed'].some(
       (key) => key in body.values!,
     );
-  if ((!values || !Object.keys(values).length) && !hasProductMetadata)
+  const hasExpenseMetadata =
+    body.entity === 'other_expenses' &&
+    ['category', 'recurrence'].some((key) => key in body.values!);
+  if (
+    (!values || !Object.keys(values).length) &&
+    !hasProductMetadata &&
+    !hasExpenseMetadata
+  )
     return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });
   try {
     let previousOnlineSale: JsonRecord | null = null;
@@ -1020,6 +1139,8 @@ export async function PATCH(request: Request) {
       : [];
     if (hasProductMetadata)
       await saveProductMetadata(String(body.id), body.values, user.id || null);
+    if (hasExpenseMetadata)
+      await saveExpenseMetadata(String(body.id), body.values, user.id || null);
     if (body.entity === 'online_sales' && previousOnlineSale) {
       const wasShipped = previousOnlineSale.isShipped === true;
       const isShipped = body.values.isShipped === true;
@@ -1108,6 +1229,10 @@ export async function DELETE(request: Request) {
   };
   if (!body.entity || body.id == null || !trashableEntities.has(body.entity))
     return Response.json({ error: 'Datensatz fehlt.' }, { status: 400 });
+  if (body.entity === 'other_expenses') {
+    const denied = await requireInventoryManager(request);
+    if (denied) return denied;
+  }
   try {
     const result = await inventoryFetch(
       accessToken,
