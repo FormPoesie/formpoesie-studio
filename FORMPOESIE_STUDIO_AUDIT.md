@@ -24,6 +24,8 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 - Katalogübersicht und Bestellformular als auffindbare, responsive Bereiche ergänzt.
 - Allgemeine Kasse von Markt-/Regalbeständen getrennt. Sie schreibt Bestellungen mit mehreren Positionen in die vorhandene `online_sales`-Struktur und bietet ausschließlich Abholung, eBay, eBay Kleinanzeigen, Vinted, Etsy und Bestellformular an.
 - Druck-/Versandstatus wieder speicherbar gemacht; die Erledigung des Versands nutzt wie die ursprüngliche Inventarseite `versand_buchen`/`versand_zuruecknehmen` und setzt den Status bei einem Bestandsfehler zurück.
+- Artikelstatus `Entwurf`/`Final`, Bestätigungsdatum und der davon unabhängige Etsy-Status als persistente Studiometadaten ergänzt. Bestehende gepflegte Inventarartikel bleiben beim Übergang final sichtbar; neue Artikel starten als Entwurf.
+- Markt- und Regalflächenmasken laden das zentrale Produktportfolio wieder direkt. Final überarbeitete Artikel und Entwürfe sind bei der Bestandszuordnung getrennt; beide bleiben buchbar.
 
 ## Vorhanden, aber noch weiter abzusichern
 
@@ -34,7 +36,6 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 
 ## Noch offen – neue Backend-/Migrationsarbeit
 
-- Artikelstatus `Entwurf`/`Final`, Bestätigungsdatum und `Auf Etsy inseriert` als zentrale Inventarmetadaten samt Migration und UI.
 - Mehrere Bilder mit definierbarem Hauptbild.
 - Mehrere interne STL-/Druckdateien pro Artikel mit geschütztem Download.
 - Vollständige Bulk-Aktionen über Kategorie hinaus, inklusive Vorschau.

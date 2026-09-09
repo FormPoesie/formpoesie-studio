@@ -715,7 +715,11 @@ export function InventoryWorkspace({
       <MarketDetail
         market={selectedMarket}
         data={data[active] || data.markets || {}}
-        products={products}
+        products={
+          rows((data[active] || {}).products).length
+            ? rows((data[active] || {}).products)
+            : products
+        }
         onClose={() => setSelectedMarket(null)}
         onChanged={() =>
           void fetchArea(active === 'shelves' ? 'shelves' : 'markets')
@@ -886,6 +890,9 @@ function Products({
   const [category, setCategory] = useState('');
   const [familyId, setFamilyId] = useState('');
   const [designerId, setDesignerId] = useState('');
+  const [reviewFilter, setReviewFilter] = useState<'final' | 'draft' | 'all'>(
+    'final',
+  );
   const [sort, setSort] = useState<
     'name' | 'margin' | 'cost' | 'printTime' | 'updated'
   >('name');
@@ -954,6 +961,11 @@ function Products({
     if (category && string(product.category) !== category) return false;
     if (familyId && string(product.familyId) !== familyId) return false;
     if (designerId && string(product.designerId) !== designerId) return false;
+    if (
+      reviewFilter !== 'all' &&
+      string(product.studioStatus, 'final') !== reviewFilter
+    )
+      return false;
     if (mainFilter === 'missing' && !productMissing(product)) return false;
     return true;
   });
@@ -1028,6 +1040,30 @@ function Products({
         </Button>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
+        {(
+          [
+            ['final', 'Final'],
+            ['draft', 'Entwürfe'],
+            ['all', 'Alle Status'],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            size="sm"
+            variant={reviewFilter === value ? 'default' : 'outline'}
+            onClick={() => setReviewFilter(value)}
+          >
+            {label}
+            {' · '}
+            {
+              source.filter((item) =>
+                value === 'all'
+                  ? true
+                  : string(item.studioStatus, 'final') === value,
+              ).length
+            }
+          </Button>
+        ))}
         {(
           [
             ['all', 'Alle'],
@@ -1267,7 +1303,24 @@ function Products({
                   </div>
                   {product.archivedAt ? (
                     <Badge variant="outline">Archiv</Badge>
-                  ) : null}
+                  ) : (
+                    <div className="flex flex-wrap justify-end gap-1">
+                      <Badge
+                        variant={
+                          string(product.studioStatus, 'final') === 'final'
+                            ? 'default'
+                            : 'outline'
+                        }
+                      >
+                        {string(product.studioStatus, 'final') === 'final'
+                          ? 'Final'
+                          : 'Entwurf'}
+                      </Badge>
+                      {boolean(product.etsyListed) ? (
+                        <Badge variant="outline">Etsy</Badge>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
                 <dl className="mt-4 grid grid-cols-3 gap-2 text-xs">
                   <div>
@@ -3065,6 +3118,43 @@ function EntityEditor({
                 />{' '}
                 Gewerbliche Lizenz vorhanden
               </label>
+              <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={
+                    string(
+                      form.studioStatus,
+                      editor.row.id ? 'final' : 'draft',
+                    ) === 'final'
+                  }
+                  onChange={(event) =>
+                    setValue(
+                      'studioStatus',
+                      event.target.checked ? 'final' : 'draft',
+                    )
+                  }
+                />{' '}
+                Final überarbeitet
+              </label>
+              <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={boolean(form.etsyListed)}
+                  onChange={(event) =>
+                    setValue('etsyListed', event.target.checked)
+                  }
+                />{' '}
+                Auf Etsy inseriert
+              </label>
+              {string(form.studioStatus, editor.row.id ? 'final' : 'draft') ===
+              'final' ? (
+                <Field
+                  label="Datum der finalen Bestätigung"
+                  type="date"
+                  value={string(form.finalizedAt).slice(0, 10)}
+                  onChange={(value) => setValue('finalizedAt', value)}
+                />
+              ) : null}
               <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
                 Notiz
                 <Textarea
@@ -4223,13 +4313,32 @@ function MarketDetail({
                 }}
               >
                 <option value="">Portfolio-Artikel wählen</option>
-                {products
-                  .filter((item) => !item.archivedAt)
-                  .map((item) => (
-                    <option key={string(item.id)} value={string(item.id)}>
-                      {string(item.name)}
-                    </option>
-                  ))}
+                <optgroup label="Final überarbeitet">
+                  {products
+                    .filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        string(item.studioStatus, 'final') === 'final',
+                    )
+                    .map((item) => (
+                      <option key={string(item.id)} value={string(item.id)}>
+                        {string(item.name)}
+                      </option>
+                    ))}
+                </optgroup>
+                <optgroup label="Entwürfe">
+                  {products
+                    .filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        string(item.studioStatus, 'final') === 'draft',
+                    )
+                    .map((item) => (
+                      <option key={string(item.id)} value={string(item.id)}>
+                        {string(item.name)} · Entwurf
+                      </option>
+                    ))}
+                </optgroup>
               </select>
               <select
                 className="h-9 rounded-lg border bg-white px-3 text-sm"

@@ -91,6 +91,23 @@ export const products = sqliteTable(
   ],
 );
 
+export const inventoryProductMetadata = sqliteTable(
+  'inventory_product_metadata',
+  {
+    productId: text('product_id').primaryKey(),
+    reviewStatus: text('review_status').notNull().default('draft'),
+    finalizedAt: text('finalized_at'),
+    etsyListed: integer('etsy_listed', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    updatedBy: text('updated_by'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_inventory_product_metadata_status').on(table.reviewStatus),
+  ],
+);
+
 export const variants = sqliteTable(
   'variants',
   {

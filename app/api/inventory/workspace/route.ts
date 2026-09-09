@@ -271,6 +271,95 @@ async function classifyMarkets(value: unknown) {
   }));
 }
 
+async function decorateProducts(value: unknown) {
+  const products = Array.isArray(value) ? (value as JsonRecord[]) : [];
+  let metadataRows: JsonRecord[] = [];
+  try {
+    const result = await env.DB.prepare(
+      `SELECT product_id AS productId, review_status AS studioStatus,
+              finalized_at AS finalizedAt, etsy_listed AS etsyListed,
+              updated_by AS studioUpdatedBy, updated_at AS studioUpdatedAt
+       FROM inventory_product_metadata`,
+    ).all<JsonRecord>();
+    metadataRows = result.results || [];
+  } catch {
+    // Existing inventory data remains usable while a new metadata migration
+    // is being applied. Only newly created products default to draft.
+  }
+  const metadata = new Map(
+    metadataRows.map((row) => [scalarText(row.productId), row]),
+  );
+  return products.map((product) => ({
+    ...product,
+    studioStatus: scalarText(
+      metadata.get(scalarText(product.id))?.studioStatus,
+      'final',
+    ),
+    finalizedAt: metadata.get(scalarText(product.id))?.finalizedAt || null,
+    etsyListed: [1, true].includes(
+      metadata.get(scalarText(product.id))?.etsyListed as boolean | number,
+    ),
+    studioUpdatedBy:
+      metadata.get(scalarText(product.id))?.studioUpdatedBy || null,
+    studioUpdatedAt:
+      metadata.get(scalarText(product.id))?.studioUpdatedAt || null,
+  }));
+}
+
+async function saveProductMetadata(
+  productId: string,
+  values: JsonRecord,
+  userId: string | null,
+) {
+  const current = await env.DB.prepare(
+    `SELECT review_status AS reviewStatus, finalized_at AS finalizedAt,
+            etsy_listed AS etsyListed, created_at AS createdAt
+     FROM inventory_product_metadata WHERE product_id = ?`,
+  )
+    .bind(productId)
+    .first<JsonRecord>();
+  const instant = new Date().toISOString();
+  const reviewStatus =
+    values.studioStatus === 'final' ||
+    (values.finalReviewed === true && values.studioStatus !== 'draft')
+      ? 'final'
+      : values.studioStatus === 'draft' || values.finalReviewed === false
+        ? 'draft'
+        : scalarText(current?.reviewStatus, 'draft');
+  const finalizedAt =
+    reviewStatus === 'final'
+      ? scalarText(values.finalizedAt).trim() ||
+        scalarText(current?.finalizedAt).trim() ||
+        instant
+      : null;
+  const etsyListed =
+    typeof values.etsyListed === 'boolean'
+      ? values.etsyListed
+      : [1, true].includes(current?.etsyListed as boolean | number);
+  await env.DB.prepare(
+    `INSERT INTO inventory_product_metadata
+       (product_id, review_status, finalized_at, etsy_listed, updated_by,
+        created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(product_id) DO UPDATE SET
+       review_status = excluded.review_status,
+       finalized_at = excluded.finalized_at,
+       etsy_listed = excluded.etsy_listed,
+       updated_by = excluded.updated_by,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(
+      productId,
+      reviewStatus,
+      finalizedAt,
+      etsyListed ? 1 : 0,
+      userId,
+      scalarText(current?.createdAt, instant),
+      instant,
+    )
+    .run();
+}
+
 async function loadArea(accessToken: string, area: string, request: Request) {
   if (area === 'products') {
     const [
@@ -323,7 +412,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       ),
     ]);
     return {
-      products,
+      products: await decorateProducts(products),
       families,
       designers,
       components,
@@ -369,42 +458,51 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       ),
       query(accessToken, 'product_components', 'select=*&order=id.asc'),
     ]);
-    return { products, components };
+    return { products: await decorateProducts(products), components };
   }
   if (area === 'markets' || area === 'shelves') {
-    const [markets, demands, articles, sales, expenses] = await Promise.all([
-      query(
-        accessToken,
-        'markets',
-        'select=*&deleted_at=is.null&order=date.desc',
-      ),
-      query(accessToken, 'market_demands', 'select=*&order=id.desc'),
-      query(
-        accessToken,
-        'articles',
-        'select=' +
-          encodeURIComponent('*,variants:article_variants(*)') +
-          '&deleted_at=is.null&order=id.desc',
-      ),
-      query(
-        accessToken,
-        'sales',
-        'select=' +
-          encodeURIComponent('*,items:sale_items(*)') +
-          '&deleted_at=is.null&order=date.desc',
-      ),
-      query(
-        accessToken,
-        'expenses',
-        'select=*&deleted_at=is.null&order=created_at.desc',
-      ),
-    ]);
+    const [markets, demands, articles, sales, expenses, products] =
+      await Promise.all([
+        query(
+          accessToken,
+          'markets',
+          'select=*&deleted_at=is.null&order=date.desc',
+        ),
+        query(accessToken, 'market_demands', 'select=*&order=id.desc'),
+        query(
+          accessToken,
+          'articles',
+          'select=' +
+            encodeURIComponent('*,variants:article_variants(*)') +
+            '&deleted_at=is.null&order=id.desc',
+        ),
+        query(
+          accessToken,
+          'sales',
+          'select=' +
+            encodeURIComponent('*,items:sale_items(*)') +
+            '&deleted_at=is.null&order=date.desc',
+        ),
+        query(
+          accessToken,
+          'expenses',
+          'select=*&deleted_at=is.null&order=created_at.desc',
+        ),
+        query(
+          accessToken,
+          'products',
+          'select=' +
+            encodeURIComponent('*,variants:product_variants(*)') +
+            '&deleted_at=is.null&order=name.asc',
+        ),
+      ]);
     return {
       markets: await classifyMarkets(markets),
       demands,
       articles,
       sales,
       expenses,
+      products: await decorateProducts(products),
     };
   }
   if (area === 'online') {
@@ -782,6 +880,17 @@ export async function POST(request: Request) {
       method: 'POST',
       body: JSON.stringify(createValues),
     });
+    if (body.entity === 'products') {
+      const created = Array.isArray(result)
+        ? (result[0] as JsonRecord | undefined)
+        : undefined;
+      if (created?.id != null)
+        await saveProductMetadata(
+          scalarText(created.id),
+          body.values,
+          user.id || null,
+        );
+    }
     if (body.entity === 'markets') {
       const created = Array.isArray(result)
         ? (result[0] as JsonRecord | undefined)
@@ -848,7 +957,12 @@ export async function PATCH(request: Request) {
     return Response.json({ saved: true });
   }
   const values = safeValues(body.entity, body.values);
-  if (!values || !Object.keys(values).length)
+  const hasProductMetadata =
+    body.entity === 'products' &&
+    ['studioStatus', 'finalReviewed', 'finalizedAt', 'etsyListed'].some(
+      (key) => key in body.values!,
+    );
+  if ((!values || !Object.keys(values).length) && !hasProductMetadata)
     return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });
   try {
     let previousOnlineSale: JsonRecord | null = null;
@@ -864,15 +978,19 @@ export async function PATCH(request: Request) {
     }
     const updateValues = entitiesWithUpdatedBy.has(body.entity)
       ? { ...values, updated_by: user.id || null }
-      : values;
-    const result = await inventoryFetch(
-      accessToken,
-      `${body.entity}?id=eq.${encodeURIComponent(String(body.id))}`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify(updateValues),
-      },
-    );
+      : values || {};
+    const result = Object.keys(values || {}).length
+      ? await inventoryFetch(
+          accessToken,
+          `${body.entity}?id=eq.${encodeURIComponent(String(body.id))}`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify(updateValues),
+          },
+        )
+      : [];
+    if (hasProductMetadata)
+      await saveProductMetadata(String(body.id), body.values, user.id || null);
     if (body.entity === 'online_sales' && previousOnlineSale) {
       const wasShipped = previousOnlineSale.isShipped === true;
       const isShipped = body.values.isShipped === true;
