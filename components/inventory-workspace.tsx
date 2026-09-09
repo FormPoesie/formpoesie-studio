@@ -35,6 +35,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogFooter,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -893,6 +894,39 @@ function Task({
   );
 }
 
+function BulkSelect({
+  label,
+  value,
+  onChange,
+  options,
+  clearLabel,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  clearLabel?: string;
+}) {
+  return (
+    <label className="grid gap-1 text-xs text-muted-foreground">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+      >
+        <option value="keep">Beibehalten</option>
+        {clearLabel ? <option value="clear">{clearLabel}</option> : null}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function Products({
   data,
   search,
@@ -932,6 +966,15 @@ function Products({
   const [moreFilters, setMoreFilters] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkCategory, setBulkCategory] = useState('');
+  const [bulkFamilyId, setBulkFamilyId] = useState('keep');
+  const [bulkDesignerId, setBulkDesignerId] = useState('keep');
+  const [bulkCommercialLicense, setBulkCommercialLicense] = useState('keep');
+  const [bulkStudioStatus, setBulkStudioStatus] = useState('keep');
+  const [bulkEtsyListed, setBulkEtsyListed] = useState('keep');
+  const [bulkArchiveStatus, setBulkArchiveStatus] = useState('keep');
+  const [bulkNoteEnabled, setBulkNoteEnabled] = useState(false);
+  const [bulkNote, setBulkNote] = useState('');
+  const [bulkPreviewOpen, setBulkPreviewOpen] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
   const source = rows(data.products);
   const components = rows(data.components);
@@ -1023,6 +1066,115 @@ function Products({
   const categories = [
     ...new Set(source.map((item) => string(item.category)).filter(Boolean)),
   ].sort();
+  const selectedProducts = source.filter((product) =>
+    selectedIds.includes(string(product.id)),
+  );
+  const bulkValues: Row = {
+    ...(bulkCategory.trim() ? { category: bulkCategory.trim() } : {}),
+    ...(bulkFamilyId !== 'keep'
+      ? { familyId: bulkFamilyId === 'clear' ? null : Number(bulkFamilyId) }
+      : {}),
+    ...(bulkDesignerId !== 'keep'
+      ? {
+          designerId:
+            bulkDesignerId === 'clear' ? null : Number(bulkDesignerId),
+        }
+      : {}),
+    ...(bulkCommercialLicense !== 'keep'
+      ? { commercialLicense: bulkCommercialLicense === 'yes' }
+      : {}),
+    ...(bulkStudioStatus !== 'keep' ? { studioStatus: bulkStudioStatus } : {}),
+    ...(bulkEtsyListed !== 'keep'
+      ? { etsyListed: bulkEtsyListed === 'yes' }
+      : {}),
+    ...(bulkArchiveStatus !== 'keep'
+      ? {
+          archivedAt:
+            bulkArchiveStatus === 'archived' ? new Date().toISOString() : null,
+        }
+      : {}),
+    ...(bulkNoteEnabled ? { note: bulkNote.trim() || null } : {}),
+  };
+  const bulkChanges: Array<[string, string]> = [
+    ...(bulkCategory.trim()
+      ? ([['Kategorie', bulkCategory.trim()]] as Array<[string, string]>)
+      : []),
+    ...(bulkFamilyId !== 'keep'
+      ? ([
+          [
+            'Produktfamilie',
+            bulkFamilyId === 'clear'
+              ? 'Zuordnung entfernen'
+              : string(
+                  rows(data.families).find(
+                    (item) => string(item.id) === bulkFamilyId,
+                  )?.name,
+                  'Ausgewählte Familie',
+                ),
+          ],
+        ] as Array<[string, string]>)
+      : []),
+    ...(bulkDesignerId !== 'keep'
+      ? ([
+          [
+            'Designer / Lizenzgeber',
+            bulkDesignerId === 'clear'
+              ? 'Zuordnung entfernen'
+              : string(
+                  rows(data.designers).find(
+                    (item) => string(item.id) === bulkDesignerId,
+                  )?.name,
+                  'Ausgewählter Designer',
+                ),
+          ],
+        ] as Array<[string, string]>)
+      : []),
+    ...(bulkCommercialLicense !== 'keep'
+      ? ([
+          [
+            'Gewerbliche Lizenz',
+            bulkCommercialLicense === 'yes' ? 'Vorhanden' : 'Nicht vorhanden',
+          ],
+        ] as Array<[string, string]>)
+      : []),
+    ...(bulkStudioStatus !== 'keep'
+      ? ([
+          ['Studio-Status', bulkStudioStatus === 'final' ? 'Final' : 'Entwurf'],
+        ] as Array<[string, string]>)
+      : []),
+    ...(bulkEtsyListed !== 'keep'
+      ? ([
+          [
+            'Etsy-Status',
+            bulkEtsyListed === 'yes' ? 'Inseriert' : 'Nicht inseriert',
+          ],
+        ] as Array<[string, string]>)
+      : []),
+    ...(bulkArchiveStatus !== 'keep'
+      ? ([
+          [
+            'Archivstatus',
+            bulkArchiveStatus === 'archived' ? 'Archiviert' : 'Aktiv',
+          ],
+        ] as Array<[string, string]>)
+      : []),
+    ...(bulkNoteEnabled
+      ? ([['Notiz', bulkNote.trim() || 'Notiz entfernen']] as Array<
+          [string, string]
+        >)
+      : []),
+  ];
+  const resetBulkEdit = () => {
+    setBulkCategory('');
+    setBulkFamilyId('keep');
+    setBulkDesignerId('keep');
+    setBulkCommercialLicense('keep');
+    setBulkStudioStatus('keep');
+    setBulkEtsyListed('keep');
+    setBulkArchiveStatus('keep');
+    setBulkNoteEnabled(false);
+    setBulkNote('');
+  };
   const portfolio = source.reduce<{
     stock: number;
     boundCents: number;
@@ -1128,51 +1280,203 @@ function Products({
         </Button>
       </div>
       {selectedIds.length ? (
-        <div className="sticky top-20 z-10 mt-3 flex flex-col gap-3 rounded-2xl border border-[var(--fp-primary)]/35 bg-[#eef1ec] p-3 shadow-sm sm:flex-row sm:items-center">
-          <div className="min-w-0 flex-1 text-sm font-medium">
-            {selectedIds.length} Artikel ausgewählt
-          </div>
-          <select
-            value={bulkCategory}
-            onChange={(event) => setBulkCategory(event.target.value)}
-            className="h-9 rounded-lg border bg-white px-3 text-sm"
-          >
-            <option value="">Kategorie beibehalten</option>
-            {categories.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-          <Button
-            type="button"
-            disabled={!bulkCategory || bulkSaving}
-            onClick={async () => {
-              setBulkSaving(true);
-              const saved = await onBulkEdit(selectedIds, {
-                category: bulkCategory,
-              });
-              setBulkSaving(false);
-              if (saved) {
+        <div className="sticky top-20 z-10 mt-3 rounded-2xl border border-[var(--fp-primary)]/35 bg-[#eef1ec] p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1 text-sm font-medium">
+              {selectedIds.length} Artikel ausgewählt
+            </div>
+            <Button
+              type="button"
+              disabled={!bulkChanges.length || bulkSaving}
+              onClick={() => setBulkPreviewOpen(true)}
+            >
+              <Pencil className="size-4" /> Änderungen prüfen
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
                 setSelectedIds([]);
-                setBulkCategory('');
-              }
-            }}
-          >
-            {bulkSaving ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Pencil className="size-4" />
-            )}
-            Gemeinsam ändern
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => setSelectedIds([])}
-          >
-            Auswahl aufheben
-          </Button>
+                resetBulkEdit();
+              }}
+            >
+              Auswahl aufheben
+            </Button>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              Kategorie
+              <Input
+                list="bulk-product-categories"
+                value={bulkCategory}
+                onChange={(event) => setBulkCategory(event.target.value)}
+                className="bg-white text-foreground"
+                placeholder="Beibehalten"
+              />
+              <datalist id="bulk-product-categories">
+                {categories.map((item) => (
+                  <option key={item} value={item} />
+                ))}
+              </datalist>
+            </label>
+            <BulkSelect
+              label="Produktfamilie"
+              value={bulkFamilyId}
+              onChange={setBulkFamilyId}
+              options={rows(data.families).map((item) => ({
+                value: string(item.id),
+                label: string(item.name),
+              }))}
+              clearLabel="Zuordnung entfernen"
+            />
+            <BulkSelect
+              label="Designer / Lizenzgeber"
+              value={bulkDesignerId}
+              onChange={setBulkDesignerId}
+              options={rows(data.designers).map((item) => ({
+                value: string(item.id),
+                label: string(item.name),
+              }))}
+              clearLabel="Zuordnung entfernen"
+            />
+            <BulkSelect
+              label="Gewerbliche Lizenz"
+              value={bulkCommercialLicense}
+              onChange={setBulkCommercialLicense}
+              options={[
+                { value: 'yes', label: 'Vorhanden' },
+                { value: 'no', label: 'Nicht vorhanden' },
+              ]}
+            />
+            <BulkSelect
+              label="Studio-Status"
+              value={bulkStudioStatus}
+              onChange={setBulkStudioStatus}
+              options={[
+                { value: 'final', label: 'Final' },
+                { value: 'draft', label: 'Entwurf' },
+              ]}
+            />
+            <BulkSelect
+              label="Etsy-Status"
+              value={bulkEtsyListed}
+              onChange={setBulkEtsyListed}
+              options={[
+                { value: 'yes', label: 'Inseriert' },
+                { value: 'no', label: 'Nicht inseriert' },
+              ]}
+            />
+            <BulkSelect
+              label="Archivstatus"
+              value={bulkArchiveStatus}
+              onChange={setBulkArchiveStatus}
+              options={[
+                { value: 'active', label: 'Aktiv' },
+                { value: 'archived', label: 'Archiviert' },
+              ]}
+            />
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              Notiz
+              <span className="flex min-h-9 items-center gap-2 rounded-lg border bg-white px-3 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  checked={bulkNoteEnabled}
+                  onChange={(event) => setBulkNoteEnabled(event.target.checked)}
+                  className="size-4"
+                />
+                Gemeinsam ersetzen
+              </span>
+            </label>
+            {bulkNoteEnabled ? (
+              <label className="grid gap-1 text-xs text-muted-foreground sm:col-span-2 xl:col-span-4">
+                Neue gemeinsame Notiz (leer lassen zum Entfernen)
+                <Textarea
+                  value={bulkNote}
+                  onChange={(event) => setBulkNote(event.target.value)}
+                  className="bg-white text-foreground"
+                />
+              </label>
+            ) : null}
+          </div>
         </div>
       ) : null}
+      <Dialog open={bulkPreviewOpen} onOpenChange={setBulkPreviewOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-2xl">
+              Massenänderung prüfen
+            </DialogTitle>
+            <DialogDescription>
+              Erst mit der Bestätigung werden die gemeinsamen Felder bei allen
+              ausgewählten Artikeln überschrieben.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <section className="rounded-xl border bg-white/70 p-4">
+              <h3 className="text-sm font-medium">Geplante Änderungen</h3>
+              <dl className="mt-3 grid gap-2">
+                {bulkChanges.map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="grid gap-1 border-b pb-2 text-sm last:border-0 last:pb-0 sm:grid-cols-[11rem_1fr]"
+                  >
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="font-medium wrap-break-word">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+            <section className="rounded-xl border bg-white/70 p-4">
+              <h3 className="text-sm font-medium">
+                Betroffene Artikel · {selectedProducts.length}
+              </h3>
+              <ul className="mt-3 grid gap-1 text-sm sm:grid-cols-2">
+                {selectedProducts.slice(0, 12).map((product) => (
+                  <li key={string(product.id)} className="truncate">
+                    {string(product.name)}
+                  </li>
+                ))}
+              </ul>
+              {selectedProducts.length > 12 ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  und {selectedProducts.length - 12} weitere Artikel
+                </p>
+              ) : null}
+            </section>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBulkPreviewOpen(false)}
+              disabled={bulkSaving}
+            >
+              Zurück
+            </Button>
+            <Button
+              type="button"
+              disabled={!bulkChanges.length || bulkSaving}
+              onClick={async () => {
+                setBulkSaving(true);
+                const saved = await onBulkEdit(selectedIds, bulkValues);
+                setBulkSaving(false);
+                if (saved) {
+                  setBulkPreviewOpen(false);
+                  setSelectedIds([]);
+                  resetBulkEdit();
+                }
+              }}
+            >
+              {bulkSaving ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Check className="size-4" />
+              )}
+              {selectedIds.length} Artikel ändern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {moreFilters ? (
         <div className="mt-3 grid gap-3 rounded-2xl border bg-white/55 p-4 sm:grid-cols-2 xl:grid-cols-4">
           <label className="grid gap-1 text-xs text-muted-foreground">

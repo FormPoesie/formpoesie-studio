@@ -29,6 +29,7 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 - Zentrale Artikel-Assetbibliothek ergänzt: mehrere JPEG-/PNG-/WebP-Bilder, ein frei definierbares Hauptbild und mehrere geschützte STL-/3MF-/OBJ-/ZIP-Druckdateien. Das Hauptbild wird in Inventar und allen darauf basierenden Artikelansichten wiederverwendet; Druckdateien werden nur nach FormPoesie-Anmeldung als Download ausgeliefert.
 - Geschützte Verwaltungsseite `Einkäufe & Ausgaben` ergänzt. Vorhandene Ausgaben bleiben erhalten und können um Kategorie, einmalige/monatliche/jährliche Wiederholung sowie PDF-/Bildbelege ergänzt werden. Die API prüft Marlon/Jasmin auch bei direkten Schreib- und Löschaufrufen.
 - Monatsübersicht um das responsive Diagramm `Einnahmen vs. Ausgaben` erweitert; monatliche und jährliche Ausgaben werden anhand Start- und optionalem Enddatum periodengerecht berücksichtigt.
+- Artikel-Massenbearbeitung auf Kategorie, Produktfamilie, Designer/Lizenzgeber, gewerbliche Lizenz, Studio- und Etsy-Status, Archivstatus sowie gemeinsame Notizen erweitert. Vor dem Speichern zeigt eine Vorschau alle geplanten Änderungen und die betroffenen Artikel.
 
 ## Vorhanden, aber noch weiter abzusichern
 
@@ -39,7 +40,6 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 
 ## Noch offen – neue Backend-/Migrationsarbeit
 
-- Vollständige Bulk-Aktionen über Kategorie hinaus, inklusive Vorschau.
 - Rechnungsdaten, eindeutige Rechnungsnummer, A4-PDF, Wiederaufruf und E-Mail-Versand. Unternehmens-/Steuerdaten dürfen erst nach verifizierter Übernahme der Canva-Referenz gespeichert werden.
 - Bestandsfehler Place to Be anhand einer kontrollierten Testbuchung und Datenbankfunktion verifizieren.
 - Restbestand einer Regalfläche mit Historie in den Folgemonat übertragen.
