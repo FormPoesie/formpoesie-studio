@@ -4,7 +4,9 @@ import {
   calculatePricing,
   createImagePlan,
   createLocaleContent,
+  createStandardDescription,
   imageMetadata,
+  validateListingContent,
   type ProductInput,
 } from '../lib/listing-engine';
 import {
@@ -77,6 +79,53 @@ void test('alle Etsy-Titel und Tags bleiben innerhalb der technischen Grenzen', 
     assert.ok(content.tags.every((tag) => tag.length <= 20));
     assert.ok(content.tags.length <= 13);
   }
+});
+
+void test('Standardbeschreibung bleibt zweisprachig und nutzt nur bestätigte Maße', () => {
+  const withVariants: ProductInput = {
+    ...base,
+    variants: [
+      { ...base.variant, name: 'Standard Klein', size: '8 × 7 × 17 cm' },
+      { ...base.variant, name: 'Premium Mittel', size: '10 × 8 × 20 cm' },
+    ],
+  };
+  const de = createStandardDescription(withVariants, 'de');
+  const en = createStandardDescription(withVariants, 'en');
+  assert.match(de, /Standard Klein – 8 × 7 × 17 cm/);
+  assert.match(en, /Premium Mittel – 10 × 8 × 20 cm/);
+  assert.match(de, /GRATISVERSAND/);
+  assert.match(en, /Recycling Fabrik GmbH/);
+  assert.doesNotMatch(de, /z\.\s?B\./i);
+  assert.doesNotMatch(en, /e\.g\./i);
+
+  const withoutDimensions = createStandardDescription(
+    {
+      ...base,
+      widthMm: null,
+      heightMm: null,
+      depthMm: null,
+      variant: { ...base.variant, size: undefined },
+      variants: undefined,
+    },
+    'de',
+  );
+  assert.doesNotMatch(withoutDimensions, /Bestätigte Artikelmaße/);
+});
+
+void test('Listingprüfung erkennt Etsy-Grenzen und fehlende Inhalte', () => {
+  const content = createLocaleContent(base, 'de');
+  const issues = validateListingContent([
+    { ...content, titles: ['x'.repeat(141)], tags: ['x'.repeat(21)] },
+  ]);
+  assert.ok(
+    issues.some((issue) => issue.area === 'DE' && /140/.test(issue.text)),
+  );
+  assert.ok(
+    issues.some((issue) => issue.area === 'DE' && /20/.test(issue.text)),
+  );
+  assert.ok(
+    issues.some((issue) => issue.area === 'EN' && /fehlt/.test(issue.text)),
+  );
 });
 
 void test('Dateiendung entspricht dem JPEG-Exportformat', () => {

@@ -1,6 +1,10 @@
 import { env } from 'cloudflare:workers';
 import { strToU8, zipSync } from 'fflate';
 import { requireInventoryAdmin } from '@/lib/inventory-bridge';
+import { validateListingContent } from '@/lib/listing-engine';
+
+const textValue = (value: unknown) =>
+  typeof value === 'string' || typeof value === 'number' ? String(value) : '';
 
 export async function GET(request: Request) {
   const denied = await requireInventoryAdmin(request);
@@ -13,11 +17,13 @@ export async function GET(request: Request) {
     .first<Record<string, unknown>>();
   if (!product)
     return Response.json({ error: 'Produkt nicht gefunden.' }, { status: 404 });
-  const variant = await env.DB.prepare(
-    'SELECT * FROM variants WHERE product_id = ? ORDER BY created_at LIMIT 1',
-  )
-    .bind(productId)
-    .first<Record<string, unknown>>();
+  const variants = (
+    await env.DB.prepare(
+      'SELECT * FROM variants WHERE product_id = ? ORDER BY created_at',
+    )
+      .bind(productId)
+      .all<Record<string, unknown>>()
+  ).results;
   const draft = await env.DB.prepare(
     'SELECT * FROM listing_drafts WHERE product_id = ? ORDER BY updated_at DESC LIMIT 1',
   )
@@ -37,11 +43,13 @@ export async function GET(request: Request) {
   )
     .bind(productId)
     .first<{ roles_json: string }>();
-  const pricing = await env.DB.prepare(
-    'SELECT * FROM pricing_scenarios WHERE product_id = ? ORDER BY updated_at DESC LIMIT 1',
-  )
-    .bind(productId)
-    .first<Record<string, unknown>>();
+  const pricings = (
+    await env.DB.prepare(
+      'SELECT * FROM pricing_scenarios WHERE product_id = ? ORDER BY created_at',
+    )
+      .bind(productId)
+      .all<Record<string, unknown>>()
+  ).results;
   const assets = (
     await env.DB.prepare(
       'SELECT id, filename, object_key, content_type, view FROM original_assets WHERE product_id = ? ORDER BY created_at',
@@ -49,17 +57,46 @@ export async function GET(request: Request) {
       .bind(productId)
       .all<Record<string, unknown>>()
   ).results;
+  const research = (
+    await env.DB.prepare(
+      `SELECT kc.phrase, kc.demand, kc.competition, kc.relevance, kc.intent,
+              kc.evidence_url, rr.language, rr.market, rr.source, rr.fetched_at
+       FROM keyword_candidates kc
+       JOIN research_runs rr ON rr.id = kc.research_run_id
+       WHERE rr.product_id = ?
+       ORDER BY rr.fetched_at DESC, kc.relevance + kc.intent DESC`,
+    )
+      .bind(productId)
+      .all<Record<string, unknown>>()
+  ).results;
+  const listing = contents.map((rawRow) => {
+    const row = rawRow as Record<string, unknown>;
+    return {
+      ...row,
+      titles_json: JSON.parse(String(row.titles_json)) as string[],
+      tags_json: JSON.parse(String(row.tags_json)) as string[],
+    } as Record<string, unknown> & {
+      titles_json: string[];
+      tags_json: string[];
+    };
+  });
+  const validationIssues = validateListingContent(
+    listing.map((row) => ({
+      locale: textValue(row.locale),
+      titles: row.titles_json as string[],
+      selectedTitle: Number(row.selected_title || 0),
+      description: textValue(row.description),
+      tags: row.tags_json as string[],
+    })),
+  );
   const manifest = {
     exportedAt: new Date().toISOString(),
     product,
-    variant,
-    listing: contents.map((row: Record<string, unknown>) => ({
-      ...row,
-      titles_json: JSON.parse(String(row.titles_json)),
-      tags_json: JSON.parse(String(row.tags_json)),
-    })),
+    variants,
+    listing,
     imagePlan: plan ? JSON.parse(plan.roles_json) : [],
-    pricing,
+    pricingByVariant: pricings,
+    research,
     originals: assets.map(
       ({ object_key: _hidden, ...asset }: Record<string, unknown>) => asset,
     ),
@@ -67,6 +104,13 @@ export async function GET(request: Request) {
       shop: '3DFormPoesie',
       status: 'not_connected',
       note: 'Lokaler Entwurf. Keine Veröffentlichung und keine externen Änderungen.',
+      validationIssues,
+      readyForManualTransfer: Boolean(
+        variants.length &&
+        contents.length &&
+        assets.length &&
+        !validationIssues.some((issue) => issue.level === 'error'),
+      ),
     },
   };
   const files: Record<string, Uint8Array> = {

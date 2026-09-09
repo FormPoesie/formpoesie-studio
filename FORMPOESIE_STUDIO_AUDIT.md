@@ -32,6 +32,9 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 - Kasse um persistente Rechnungsentwürfe mit atomar fortlaufender Jahresnummer, Kundendaten, unveränderlicher Positions-/Preiskopie, Wiederaufruf und A4-Druckansicht erweitert. Über den Druckdialog kann der Entwurf als PDF gesichert und eine adressierte E-Mail vorbereitet werden.
 - Verifizierte FormPoesie-Rechnungsangaben ergänzt: §-19-UStG-Hinweis, USt-IdNr., Anschrift sowie PayPal- und Bankverbindung. Neue Rechnungen werden mit unveränderlicher Kopie dieser Angaben ausgestellt; ältere Entwürfe bleiben historisch unverändert.
 - Artikel-Massenbearbeitung auf Kategorie, Produktfamilie, Designer/Lizenzgeber, gewerbliche Lizenz, Studio- und Etsy-Status, Archivstatus sowie gemeinsame Notizen erweitert. Vor dem Speichern zeigt eine Vorschau alle geplanten Änderungen und die betroffenen Artikel.
+- Etsy-Workflow als persistenter Entwurfsprozess vervollständigt: Artikelauswahl mit Bild und Variantenzahl, vollständige Variantenübernahme, editierbare DE-/EN-Titel, Beschreibung und Tags, speicherbare Feldsperren und Recherche, wiederöffnbare Entwürfe, Bildrollen sowie ein Exportpaket für die manuelle Etsy-Übertragung.
+- Zweisprachige FormPoesie-Standardbeschreibung integriert. Produktname, Motiv, Zielgruppe, Verwendung, Varianten, bestätigte Maße und Sicherheit werden artikelspezifisch aufgebaut; Versand-, Farb-, Handarbeit-, Nachhaltigkeits- und PLA-Pflegeblöcke bleiben als geprüfte Standardteile erhalten. Nicht bestätigte Maße werden nicht ergänzt.
+- Etsy-Prüfung ergänzt: beide Sprachen, ausgewählter Titel, Titellänge, maximal 13 Tags, maximale Taglänge und doppelte Tags werden vor der Übertragung geprüft. Ein echter Etsy-Publish bleibt ohne OAuth-Anbindung bewusst gesperrt.
 
 ## Vorhanden, aber noch weiter abzusichern
 
@@ -43,6 +46,7 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 ## Noch offen – neue Backend-/Migrationsarbeit
 
 - Serverseitigen PDF-Anhang und transaktionalen E-Mail-Versand ergänzen. Aktuell wird die A4-Rechnung über den Druckdialog als PDF gespeichert und die adressierte E-Mail vorbereitet.
+- Etsy-OAuth und die Etsy-API für echte Entwurfsübertragung ergänzen. Bis dahin erzeugt der Workflow ein geprüftes, vollständiges Exportpaket und verändert den realen Etsy-Shop nicht.
 - Bestandsfehler Place to Be anhand einer kontrollierten Testbuchung und Datenbankfunktion verifizieren.
 - Restbestand einer Regalfläche mit Historie in den Folgemonat übertragen.
 - Allgemeine, von Einkäufen unabhängige Dokumentenverwaltung.

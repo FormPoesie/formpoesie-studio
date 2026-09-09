@@ -68,6 +68,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import type { InventoryItem } from '@/lib/inventory-bridge';
+import { validateListingContent } from '@/lib/listing-engine';
 import {
   InventoryWorkspace,
   type InventoryArea,
@@ -82,6 +83,9 @@ type ProductRow = {
   status: string;
   updated_at: string;
   asset_count: number;
+  variant_count: number;
+  image_path: string | null;
+  asset_id: string | null;
 };
 type Created = {
   id: string;
@@ -513,6 +517,10 @@ export default function Home() {
 
   function beginCreate(source: 'inventory' | 'new' = 'inventory') {
     closeModules();
+    setKeywords('');
+    setResearchSaved(false);
+    setUploaded([]);
+    setLocks({});
     setCreateSource(source);
     setSelectedInventory(null);
     setForm(initialForm);
@@ -714,6 +722,7 @@ export default function Home() {
     setNotice('');
     const body = {
       inventorySourceId: form.inventorySourceId || undefined,
+      sourceImagePath: selectedInventory?.imagePath || undefined,
       modelName: form.modelName,
       productType: form.productType,
       buyerWorld: form.buyerWorld,
@@ -741,6 +750,7 @@ export default function Home() {
               sku: variant.sku || undefined,
               color: variant.color || undefined,
               material: variant.material || form.material || undefined,
+              size: variant.size || undefined,
               setSize: variant.setSize || 1,
               weightGrams: variant.weightGrams,
               printHours: variant.printHours,
@@ -805,6 +815,15 @@ export default function Home() {
       description: String(item.description),
       tags: JSON.parse(String(item.tags_json)) as string[],
     }));
+    const restoredLocks: Record<string, boolean> = {};
+    for (const item of Array.isArray(data.contents) ? data.contents : []) {
+      const row = item as Record<string, unknown>;
+      const locale = typeof row.locale === 'string' ? row.locale : '';
+      const locked = JSON.parse(
+        typeof row.locked_json === 'string' ? row.locked_json : '[]',
+      ) as string[];
+      for (const key of locked) restoredLocks[`${locale}-${key}`] = true;
+    }
     const pricingRow = (
       data.pricing && typeof data.pricing === 'object' ? data.pricing : {}
     ) as Record<string, unknown>;
@@ -867,6 +886,18 @@ export default function Home() {
         }),
       ),
     );
+    const researchRows = Array.isArray(data.research) ? data.research : [];
+    setKeywords(
+      researchRows
+        .map((item) => {
+          const phrase = (item as Record<string, unknown>).phrase;
+          return typeof phrase === 'string' ? phrase : '';
+        })
+        .filter(Boolean)
+        .join('\n'),
+    );
+    setResearchSaved(researchRows.length > 0);
+    setLocks(restoredLocks);
     setActiveStep(targetStep);
   }
 
@@ -901,6 +932,12 @@ export default function Home() {
   }
 
   function createFromInventory(item: InventoryItem) {
+    const primaryVariant = item.variants[0];
+    closeModules();
+    setKeywords('');
+    setResearchSaved(false);
+    setUploaded([]);
+    setLocks({});
     setCreateSource('inventory');
     setSelectedInventory(item);
     setForm({
@@ -908,8 +945,14 @@ export default function Home() {
       inventorySourceId: String(item.id),
       modelName: item.modelName,
       productType: item.productType,
+      buyerWorld: item.buyerWorld,
       sku: item.sku,
       material: item.material,
+      designOrigin: item.designOrigin,
+      kind: item.buyerWorld === 'Functional Art' ? 'functional' : 'sculpture',
+      variantName: primaryVariant?.name || item.size || 'Standard',
+      color: primaryVariant?.color || '',
+      setSize: String(primaryVariant?.setSize || 1),
       widthMm: item.widthMm == null ? '' : String(item.widthMm),
       heightMm: item.heightMm == null ? '' : String(item.heightMm),
       depthMm: item.depthMm == null ? '' : String(item.depthMm),
@@ -1036,6 +1079,33 @@ export default function Home() {
     });
   }
 
+  function updateTitle(locale: string, index: number, value: string) {
+    if (!activeProduct || locks[locale + '-titles']) return;
+    setActiveProduct({
+      ...activeProduct,
+      content: activeProduct.content.map((item) =>
+        item.locale === locale
+          ? {
+              ...item,
+              titles: item.titles.map((title, titleIndex) =>
+                titleIndex === index ? value : title,
+              ),
+            }
+          : item,
+      ),
+    });
+  }
+
+  function selectTitle(locale: string, index: number) {
+    if (!activeProduct) return;
+    setActiveProduct({
+      ...activeProduct,
+      content: activeProduct.content.map((item) =>
+        item.locale === locale ? { ...item, selectedTitle: index } : item,
+      ),
+    });
+  }
+
   async function persistLocale(locale: string) {
     if (!activeProduct) return;
     const item = activeProduct.content.find((entry) => entry.locale === locale);
@@ -1055,6 +1125,15 @@ export default function Home() {
           .map(([key]) => key.split('-').slice(1).join('-')),
       }),
     });
+    const result = (await response.json().catch(() => ({}))) as {
+      issues?: Created['issues'];
+    };
+    if (response.ok && Array.isArray(result.issues))
+      setActiveProduct((current) =>
+        current
+          ? { ...current, issues: result.issues || current.issues }
+          : current,
+      );
     setNotice(
       response.ok
         ? 'Änderungen gespeichert.'
@@ -1483,6 +1562,8 @@ export default function Home() {
             locks={locks}
             setLocks={setLocks}
             updateContent={updateContent}
+            updateTitle={updateTitle}
+            selectTitle={selectTitle}
             persistLocale={persistLocale}
           />
         )}
@@ -4078,8 +4159,25 @@ function EtsyWorkflowHub({
               className="rounded-2xl border bg-white/70 p-5"
             >
               <div className="flex items-start justify-between gap-3">
-                <span className="grid size-10 place-items-center rounded-xl bg-[var(--fp-mist)]">
-                  <Sparkles className="size-5" />
+                <span className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-[var(--fp-mist)]">
+                  {product.asset_id || product.image_path ? (
+                    <Image
+                      src={
+                        product.asset_id
+                          ? '/api/assets?id=' +
+                            encodeURIComponent(product.asset_id)
+                          : '/api/inventory/image?path=' +
+                            encodeURIComponent(product.image_path || '')
+                      }
+                      alt={product.model_name}
+                      fill
+                      unoptimized
+                      sizes="64px"
+                      className="object-cover"
+                    />
+                  ) : (
+                    <Sparkles className="size-5" />
+                  )}
                 </span>
                 <Badge variant="outline">
                   {product.status === 'draft' ? 'Entwurf' : product.status}
@@ -4092,6 +4190,13 @@ function EtsyWorkflowHub({
                 {[product.product_type, product.buyer_world]
                   .filter(Boolean)
                   .join(' · ')}
+              </p>
+              <p className="mt-2 text-xs font-medium text-[var(--fp-primary)]">
+                {product.variant_count || 1}{' '}
+                {(product.variant_count || 1) === 1 ? 'Variante' : 'Varianten'}
+                {' · '}
+                {product.asset_count || 0}{' '}
+                {(product.asset_count || 0) === 1 ? 'Bild' : 'Bilder'}
               </p>
               <div className="mt-5 grid grid-cols-3 gap-2">
                 <Button
@@ -4728,6 +4833,8 @@ function Workspace(props: {
     key: 'description' | 'tags',
     value: string | string[],
   ) => void;
+  updateTitle: (locale: string, index: number, value: string) => void;
+  selectTitle: (locale: string, index: number) => void;
   persistLocale: (locale: string) => void;
 }) {
   const steps = [
@@ -4814,6 +4921,8 @@ function Workspace(props: {
             locks={props.locks}
             setLocks={props.setLocks}
             update={props.updateContent}
+            updateTitle={props.updateTitle}
+            selectTitle={props.selectTitle}
             save={props.persistLocale}
           />
         ) : null}
@@ -5132,6 +5241,8 @@ function ContentPanel({
   locks,
   setLocks,
   update,
+  updateTitle,
+  selectTitle,
   save,
 }: {
   product: Created;
@@ -5142,6 +5253,8 @@ function ContentPanel({
     key: 'description' | 'tags',
     value: string | string[],
   ) => void;
+  updateTitle: (locale: string, index: number, value: string) => void;
+  selectTitle: (locale: string, index: number) => void;
   save: (locale: string) => void;
 }) {
   return (
@@ -5157,23 +5270,44 @@ function ContentPanel({
               <div>
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold">Titelvarianten</h3>
-                  <span className="text-xs text-muted-foreground">
-                    Favorit markiert
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLocks((current) => ({
+                        ...current,
+                        [item.locale + '-titles']:
+                          !current[item.locale + '-titles'],
+                      }))
+                    }
+                    className="flex items-center gap-1 text-xs text-muted-foreground"
+                  >
+                    <Lock className="size-3" />
+                    {locks[item.locale + '-titles']
+                      ? 'Titel gesperrt'
+                      : 'Titel sperren'}
+                  </button>
                 </div>
                 <div className="mt-3 space-y-2">
                   {item.titles.map((title, index) => (
                     <label
-                      key={title}
+                      key={index}
                       className="flex gap-3 rounded-xl border bg-white p-3"
                     >
                       <input
                         type="radio"
-                        readOnly
                         checked={index === item.selectedTitle}
+                        onChange={() => selectTitle(item.locale, index)}
                       />
                       <span className="flex-1 text-sm">
-                        {title}
+                        <Textarea
+                          aria-label={`Titel ${index + 1} ${item.locale.toUpperCase()}`}
+                          disabled={locks[item.locale + '-titles']}
+                          value={title}
+                          onChange={(event) =>
+                            updateTitle(item.locale, index, event.target.value)
+                          }
+                          className="min-h-16 resize-none border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+                        />
                         <span className="mt-1 block text-xs text-muted-foreground">
                           {title.length}/140 Zeichen
                         </span>
@@ -5242,13 +5376,6 @@ function ContentPanel({
                   className="mt-3 min-h-[330px] bg-white leading-6"
                 />
                 <div className="mt-3 flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    className="rounded-full"
-                    disabled={locks[item.locale + '-description']}
-                  >
-                    <RefreshCw className="size-4" /> Neu formulieren
-                  </Button>
                   <Button
                     onClick={() => save(item.locale)}
                     className="rounded-full"
@@ -5448,7 +5575,10 @@ function ReviewPanel({
   product: Created;
   uploaded: Array<{ id: string }>;
 }) {
-  const issues = [...product.issues];
+  const issues = [
+    ...product.issues.filter((issue) => !['DE', 'EN'].includes(issue.area)),
+    ...validateListingContent(product.content),
+  ];
   if (!uploaded.length)
     issues.push({
       level: 'error',

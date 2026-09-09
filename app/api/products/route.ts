@@ -4,6 +4,7 @@ import {
   createImagePlan,
   createLocaleContent,
   imageMetadata,
+  validateListingContent,
   validateProduct,
   type ProductInput,
 } from '@/lib/listing-engine';
@@ -12,6 +13,10 @@ import { requireInventoryAdmin } from '@/lib/inventory-bridge';
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 const now = () => new Date().toISOString();
 const makeId = (prefix: string) => prefix + '_' + crypto.randomUUID();
+const textValue = (value: unknown, fallback = '') =>
+  typeof value === 'string' || typeof value === 'number'
+    ? String(value)
+    : fallback;
 
 async function hydrate(productId: string) {
   const product = await env.DB.prepare('SELECT * FROM products WHERE id = ?')
@@ -101,6 +106,14 @@ async function hydrate(productId: string) {
       area: 'Preis',
       text: 'Materialverbrauch oder Druckzeit fehlt.',
     });
+  const parsedContents = (contents as Record<string, unknown>[]).map((row) => ({
+    locale: textValue(row.locale),
+    titles: JSON.parse(textValue(row.titles_json, '[]')) as string[],
+    selectedTitle: Number(row.selected_title || 0),
+    description: textValue(row.description),
+    tags: JSON.parse(textValue(row.tags_json, '[]')) as string[],
+  }));
+  issues.push(...validateListingContent(parsedContents));
   return {
     product,
     variant: legacyVariant || variant,
@@ -129,7 +142,11 @@ export async function GET(request: Request) {
   }
   const rows = (
     await env.DB.prepare(
-      `SELECT p.*, (SELECT COUNT(*) FROM original_assets a WHERE a.product_id = p.id) AS asset_count
+      `SELECT p.*,
+              (SELECT COUNT(*) FROM original_assets a WHERE a.product_id = p.id) AS asset_count,
+              (SELECT COUNT(*) FROM variants v WHERE v.product_id = p.id) AS variant_count,
+              (SELECT id FROM original_assets a WHERE a.product_id = p.id ORDER BY a.created_at LIMIT 1) AS asset_id,
+              json_extract(p.facts_json, '$.imagePath') AS image_path
        FROM products p
        WHERE ${url.searchParams.get('view') === 'trash' ? "p.status = 'trash'" : "p.status != 'trash'"}
        ORDER BY p.updated_at DESC`,
@@ -183,13 +200,14 @@ export async function POST(request: Request) {
         costs: input.costs,
         shop: '3DFormPoesie',
         inventorySourceId: input.inventorySourceId || null,
+        imagePath: input.sourceImagePath || null,
       }),
       instant,
       instant,
     ),
     ...preparedVariants.map(({ input: variant, id }) =>
       env.DB.prepare(
-        'INSERT INTO variants (id, product_id, name, sku, color, material, set_size, weight_grams, print_hours, active_minutes, failure_rate, confirmed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO variants (id, product_id, name, sku, color, material, size_label, set_size, weight_grams, print_hours, active_minutes, failure_rate, confirmed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(
         id,
         productId,
@@ -197,6 +215,7 @@ export async function POST(request: Request) {
         variant.sku || input.sku || null,
         variant.color || null,
         variant.material || input.material || null,
+        variant.size || null,
         variant.setSize || 1,
         variant.weightGrams || null,
         variant.printHours || null,

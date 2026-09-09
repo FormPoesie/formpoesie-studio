@@ -74,6 +74,7 @@ export const products = sqliteTable(
     buyerWorld: text('buyer_world').notNull(),
     description: text('description'),
     material: text('material'),
+    sizeLabel: text('size_label'),
     materialStatus: text('material_status').notNull().default('open'),
     widthMm: real('width_mm'),
     heightMm: real('height_mm'),
