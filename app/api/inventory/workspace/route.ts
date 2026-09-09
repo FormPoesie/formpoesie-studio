@@ -7,6 +7,10 @@ import {
 } from '@/lib/inventory-bridge';
 import { env } from 'cloudflare:workers';
 import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
+import {
+  invoiceCustomerIsComplete,
+  shippingMethodForChannel,
+} from '@/lib/invoice-workflow';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -477,7 +481,8 @@ async function saveExpenseMetadata(
 async function loadInvoices() {
   try {
     const result = await env.DB.prepare(
-      `SELECT id, invoice_number AS invoiceNumber, order_key AS orderKey,
+      `SELECT id, invoice_number AS invoiceNumber, customer_id AS customerId,
+              order_key AS orderKey,
               status, issue_date AS issueDate, customer_name AS customerName,
               customer_email AS customerEmail,
               customer_address AS customerAddress, channel, currency,
@@ -494,6 +499,19 @@ async function loadInvoices() {
       itemsJson: undefined,
       businessSnapshotJson: undefined,
     }));
+  } catch {
+    return [];
+  }
+}
+
+async function loadCustomers() {
+  try {
+    const result = await env.DB.prepare(
+      `SELECT id, name, email, address, note,
+              created_at AS createdAt, updated_at AS updatedAt
+       FROM customers ORDER BY name COLLATE NOCASE ASC LIMIT 500`,
+    ).all<JsonRecord>();
+    return result.results || [];
   } catch {
     return [];
   }
@@ -539,6 +557,28 @@ async function createInvoiceDraft({
   );
   const instant = new Date().toISOString();
   const id = crypto.randomUUID();
+  let customerId = scalarText(order.customerId).trim();
+  if (order.saveCustomer === true) {
+    customerId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO customers
+         (id, name, email, address, note, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        customerId,
+        scalarText(order.customerName || order.shippingRecipient)
+          .trim()
+          .slice(0, 200),
+        scalarText(order.customerEmail).trim().slice(0, 320) || null,
+        scalarText(order.customerAddress).trim().slice(0, 1000),
+        scalarText(order.customerNote).trim().slice(0, 1000) || null,
+        userId,
+        instant,
+        instant,
+      )
+      .run();
+  }
   const businessSnapshot = {
     name: 'FormPoesie',
     street: 'Bendhecker Straße 63',
@@ -547,23 +587,24 @@ async function createInvoiceDraft({
     country: 'Deutschland',
     vatId: 'DE325062674',
     taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
-    paypal: 'formpoesie1@gmail.com',
-    iban: 'DE32 5002 4024 4662 6752 44',
+    paypal: 'atidam@live.de',
+    iban: 'DE11 5002 4024 4662 6752 34',
     bic: 'DEFFDEFFXXX',
     verified: true,
   };
   await env.DB.prepare(
     `INSERT INTO invoices
-       (id, invoice_number, order_key, source_sale_ids_json, status,
+       (id, invoice_number, customer_id, order_key, source_sale_ids_json, status,
         issue_date, customer_name, customer_email, customer_address,
         channel, currency, items_json, subtotal_cents, shipping_cents,
         total_cents, business_snapshot_json, note, created_by,
         created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, 'EUR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, 'EUR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
       invoiceNumber,
+      customerId || null,
       orderKey || null,
       JSON.stringify(saleIds),
       issueDate,
@@ -587,6 +628,7 @@ async function createInvoiceDraft({
   return {
     id,
     invoiceNumber,
+    customerId,
     status: 'issued',
     issueDate,
     customerName: scalarText(
@@ -692,7 +734,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     return { materials, brands, storageLocations };
   }
   if (area === 'cash') {
-    const [products, components, invoices] = await Promise.all([
+    const [products, components, invoices, customers] = await Promise.all([
       query(
         accessToken,
         'products',
@@ -704,11 +746,13 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       ),
       query(accessToken, 'product_components', 'select=*&order=id.asc'),
       loadInvoices(),
+      loadCustomers(),
     ]);
     return {
       products: await decorateProducts(products),
       components,
       invoices,
+      customers,
     };
   }
   if (area === 'markets' || area === 'shelves') {
@@ -952,12 +996,16 @@ export async function POST(request: Request) {
         );
       if (
         body.order?.issueInvoice === true &&
-        !scalarText(
-          body.order?.customerName || body.order?.shippingRecipient,
-        ).trim()
+        !invoiceCustomerIsComplete(
+          scalarText(body.order?.customerName || body.order?.shippingRecipient),
+          scalarText(body.order?.customerAddress),
+        )
       )
         return Response.json(
-          { error: 'Für einen Rechnungsentwurf wird ein Kundenname benötigt.' },
+          {
+            error:
+              'Für eine Rechnung werden Kundenname und Rechnungsanschrift benötigt.',
+          },
           { status: 400 },
         );
 
@@ -1019,7 +1067,7 @@ export async function POST(request: Request) {
                   Math.trunc(Number(body.order?.shippingCostCents) || 0),
                 )
               : 0,
-          shipping_method: channel === 'Abholung' ? 'Abholung' : 'Versand',
+          shipping_method: shippingMethodForChannel(channel),
           shipping_recipient:
             scalarText(body.order?.shippingRecipient).trim() || null,
           is_printed: false,

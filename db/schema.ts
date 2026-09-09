@@ -172,6 +172,23 @@ export const businessDocuments = sqliteTable(
   ],
 );
 
+export const customers = sqliteTable(
+  'customers',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    email: text('email'),
+    address: text('address').notNull(),
+    note: text('note'),
+    createdBy: text('created_by'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_customers_name').on(table.name),
+    index('idx_customers_email').on(table.email),
+  ],
+);
+
 export const invoiceCounters = sqliteTable('invoice_counters', {
   year: integer('year').primaryKey(),
   lastNumber: integer('last_number').notNull().default(0),
@@ -182,6 +199,7 @@ export const invoices = sqliteTable(
   {
     id: text('id').primaryKey(),
     invoiceNumber: text('invoice_number').notNull(),
+    customerId: text('customer_id'),
     orderKey: text('order_key'),
     sourceSaleIdsJson: text('source_sale_ids_json').notNull().default('[]'),
     status: text('status').notNull().default('draft'),

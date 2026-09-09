@@ -2208,7 +2208,7 @@ function printInvoice(invoice: Row) {
     @page{size:A4;margin:18mm}*{box-sizing:border-box}body{font:14px/1.5 Arial,sans-serif;color:#1f2522;margin:0}header{display:flex;justify-content:space-between;gap:30px;border-bottom:2px solid #425b54;padding-bottom:22px}h1{font:36px Georgia,serif;margin:0}.brand{font-size:20px;font-weight:700;color:#425b54}.warning{margin:24px 0;padding:12px;border:2px solid #a86d32;background:#fff8ed;font-weight:700}.meta{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin:28px 0;white-space:pre-line}.meta h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#66716d}table{width:100%;border-collapse:collapse;margin-top:28px}th,td{padding:10px 8px;border-bottom:1px solid #ccd2cf;text-align:left}th:nth-child(n+2),td:nth-child(n+2){text-align:right}small{display:block;color:#66716d}.totals{margin:24px 0 0 auto;width:280px}.totals div{display:flex;justify-content:space-between;padding:5px}.totals .total{border-top:2px solid #425b54;font-size:18px;font-weight:700;margin-top:6px;padding-top:10px}footer{margin-top:70px;border-top:1px solid #ccd2cf;padding-top:14px;color:#66716d;font-size:12px}@media print{button{display:none}}</style></head><body>
     <header><div><div class="brand">${html(business.name || 'FormPoesie')}</div><div>${html(business.street)} · ${html(business.postalCode)} ${html(business.city)}</div><div>USt-IdNr. ${html(business.vatId)}</div></div><div><h1>${documentTitle}</h1><div>${html(invoice.invoiceNumber)}</div></div></header>
     ${verified ? '' : '<div class="warning">ENTWURF – noch nicht als steuerliche Rechnung verwenden. Unternehmens- und Steuerangaben müssen zuerst verifiziert werden.</div>'}
-    <div class="meta"><section><h2>Rechnung an</h2><strong>${html(invoice.customerName)}</strong><br>${html(invoice.customerAddress).replaceAll('\n', '<br>')}<br>${html(invoice.customerEmail)}</section><section><h2>Angaben</h2>Rechnungsdatum: ${html(date(invoice.issueDate))}<br>Verkaufskanal: ${html(invoice.channel)}<br>Bestellung: ${html(invoice.orderKey || '–')}</section></div>
+    <div class="meta"><section><h2>Rechnung an</h2><strong>${html(invoice.customerName)}</strong><br>${html(invoice.customerAddress).replaceAll('\n', '<br>')}<br>${html(invoice.customerEmail)}</section><section><h2>Angaben</h2>Rechnungsdatum: ${html(date(invoice.issueDate))}<br>Leistungsdatum entspricht dem Rechnungsdatum.<br>Verkaufskanal: ${html(invoice.channel)}<br>Bestellung: ${html(invoice.orderKey || '–')}</section></div>
     <table><thead><tr><th>Position</th><th>Menge</th><th>Einzelpreis</th><th>Gesamt</th></tr></thead><tbody>${itemRows}${number(invoice.shippingCents) ? `<tr><td>Versand</td><td>1</td><td>${html(cents(invoice.shippingCents))}</td><td>${html(cents(invoice.shippingCents))}</td></tr>` : ''}</tbody></table>
     <div class="totals"><div><span>Zwischensumme</span><span>${html(cents(invoice.subtotalCents))}</span></div>${number(invoice.shippingCents) ? `<div><span>Versand</span><span>${html(cents(invoice.shippingCents))}</span></div>` : ''}<div class="total"><span>Gesamt</span><span>${html(cents(invoice.totalCents))}</span></div></div>
     <section style="margin-top:35px"><strong>Zahlung</strong><p>PayPal: ${html(business.paypal)}<br>Überweisung: IBAN ${html(business.iban)} · BIC ${html(business.bic)}</p></section>
@@ -2329,6 +2329,7 @@ function GeneralCashRegister({
 }) {
   const products = rows(data.products);
   const components = rows(data.components);
+  const customers = rows(data.customers);
   const [channel, setChannel] =
     useState<(typeof GENERAL_SALES_CHANNELS)[number]>('Abholung');
   const [saleDate, setSaleDate] = useState(() =>
@@ -2339,6 +2340,8 @@ function GeneralCashRegister({
   const [shippingCost, setShippingCost] = useState('');
   const [note, setNote] = useState('');
   const [issueInvoice, setIssueInvoice] = useState(false);
+  const [customerId, setCustomerId] = useState('');
+  const [saveCustomer, setSaveCustomer] = useState(false);
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [selectedInvoice, setSelectedInvoice] = useState<Row | null>(null);
@@ -2405,6 +2408,22 @@ function GeneralCashRegister({
     );
   }
 
+  function selectCustomer(id: string) {
+    setCustomerId(id);
+    setSaveCustomer(false);
+    if (!id) {
+      setRecipient('');
+      setCustomerEmail('');
+      setCustomerAddress('');
+      return;
+    }
+    const customer = customers.find((item) => string(item.id) === id);
+    if (!customer) return;
+    setRecipient(string(customer.name));
+    setCustomerEmail(string(customer.email));
+    setCustomerAddress(string(customer.address));
+  }
+
   async function book() {
     if (!cart.length || saving) return;
     setSaving(true);
@@ -2424,6 +2443,8 @@ function GeneralCashRegister({
           ),
           note,
           issueInvoice,
+          customerId,
+          saveCustomer: saveCustomer && !customerId,
           customerName: recipient,
           customerEmail,
           customerAddress,
@@ -2489,6 +2510,8 @@ function GeneralCashRegister({
     setNote('');
     setCustomerEmail('');
     setCustomerAddress('');
+    setCustomerId('');
+    setSaveCustomer(false);
     setIssueInvoice(false);
     onBooked();
   }
@@ -2533,9 +2556,11 @@ function GeneralCashRegister({
             />
             <Field
               label={
-                channel === 'Abholung'
-                  ? 'Name (optional)'
-                  : 'Empfänger (optional)'
+                issueInvoice
+                  ? 'Kundenname (erforderlich)'
+                  : channel === 'Abholung'
+                    ? 'Name (optional)'
+                    : 'Empfänger (optional)'
               }
               value={recipient}
               onChange={setRecipient}
@@ -2700,6 +2725,25 @@ function GeneralCashRegister({
             </label>
             {issueInvoice ? (
               <div className="mt-3 grid gap-3">
+                <label className="grid gap-1.5 text-xs text-white/65">
+                  Kunde
+                  <select
+                    className="h-10 rounded-lg border border-white/20 bg-white px-3 text-sm text-black"
+                    value={customerId}
+                    onChange={(event) => selectCustomer(event.target.value)}
+                  >
+                    <option value="">Neuen Kunden eingeben</option>
+                    {customers.map((customer) => (
+                      <option
+                        key={string(customer.id)}
+                        value={string(customer.id)}
+                      >
+                        {string(customer.name)}
+                        {customer.email ? ` · ${string(customer.email)}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <Input
                   className="bg-white text-black"
                   type="email"
@@ -2711,11 +2755,34 @@ function GeneralCashRegister({
                   className="bg-white text-black"
                   value={customerAddress}
                   onChange={(event) => setCustomerAddress(event.target.value)}
-                  placeholder="Rechnungsanschrift (optional)"
+                  placeholder="Rechnungsanschrift (erforderlich)"
                 />
+                {!customerId ? (
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/15 p-3 text-sm">
+                    <input
+                      type="checkbox"
+                      className="size-4"
+                      checked={saveCustomer}
+                      onChange={(event) =>
+                        setSaveCustomer(event.target.checked)
+                      }
+                    />
+                    Als neuen Kunden speichern
+                  </label>
+                ) : (
+                  <p className="text-xs text-white/65">
+                    Die ausgewählten Kundendaten werden in diese Rechnung
+                    übernommen.
+                  </p>
+                )}
                 {!recipient.trim() ? (
                   <p className="text-xs text-amber-200">
                     Bitte oben einen Kunden- oder Empfängernamen eintragen.
+                  </p>
+                ) : null}
+                {!customerAddress.trim() ? (
+                  <p className="text-xs text-amber-200">
+                    Bitte die vollständige Rechnungsanschrift eintragen.
                   </p>
                 ) : null}
               </div>
@@ -2724,7 +2791,9 @@ function GeneralCashRegister({
               className="mt-4 w-full bg-[var(--fp-paper)] text-[var(--fp-ink)] hover:bg-white"
               onClick={() => void book()}
               disabled={
-                !cart.length || saving || (issueInvoice && !recipient.trim())
+                !cart.length ||
+                saving ||
+                (issueInvoice && (!recipient.trim() || !customerAddress.trim()))
               }
             >
               {saving ? (
