@@ -26,6 +26,7 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 - Druck-/Versandstatus wieder speicherbar gemacht; die Erledigung des Versands nutzt wie die ursprüngliche Inventarseite `versand_buchen`/`versand_zuruecknehmen` und setzt den Status bei einem Bestandsfehler zurück.
 - Artikelstatus `Entwurf`/`Final`, Bestätigungsdatum und der davon unabhängige Etsy-Status als persistente Studiometadaten ergänzt. Bestehende gepflegte Inventarartikel bleiben beim Übergang final sichtbar; neue Artikel starten als Entwurf.
 - Markt- und Regalflächenmasken laden das zentrale Produktportfolio wieder direkt. Final überarbeitete Artikel und Entwürfe sind bei der Bestandszuordnung getrennt; beide bleiben buchbar.
+- Zentrale Artikel-Assetbibliothek ergänzt: mehrere JPEG-/PNG-/WebP-Bilder, ein frei definierbares Hauptbild und mehrere geschützte STL-/3MF-/OBJ-/ZIP-Druckdateien. Das Hauptbild wird in Inventar und allen darauf basierenden Artikelansichten wiederverwendet; Druckdateien werden nur nach FormPoesie-Anmeldung als Download ausgeliefert.
 
 ## Vorhanden, aber noch weiter abzusichern
 
@@ -36,8 +37,6 @@ Stand: 09.09.2026. Dieses Dokument trennt vorhandene Funktion, Reparatur und neu
 
 ## Noch offen – neue Backend-/Migrationsarbeit
 
-- Mehrere Bilder mit definierbarem Hauptbild.
-- Mehrere interne STL-/Druckdateien pro Artikel mit geschütztem Download.
 - Vollständige Bulk-Aktionen über Kategorie hinaus, inklusive Vorschau.
 - Rechnungsdaten, eindeutige Rechnungsnummer, A4-PDF, Wiederaufruf und E-Mail-Versand. Unternehmens-/Steuerdaten dürfen erst nach verifizierter Übernahme der Canva-Referenz gespeichert werden.
 - Bestandsfehler Place to Be anhand einer kontrollierten Testbuchung und Datenbankfunktion verifizieren.

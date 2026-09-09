@@ -274,36 +274,65 @@ async function classifyMarkets(value: unknown) {
 async function decorateProducts(value: unknown) {
   const products = Array.isArray(value) ? (value as JsonRecord[]) : [];
   let metadataRows: JsonRecord[] = [];
+  let assetRows: JsonRecord[] = [];
   try {
-    const result = await env.DB.prepare(
+    const metadataResult = await env.DB.prepare(
       `SELECT product_id AS productId, review_status AS studioStatus,
               finalized_at AS finalizedAt, etsy_listed AS etsyListed,
               updated_by AS studioUpdatedBy, updated_at AS studioUpdatedAt
        FROM inventory_product_metadata`,
     ).all<JsonRecord>();
-    metadataRows = result.results || [];
+    metadataRows = metadataResult.results || [];
   } catch {
     // Existing inventory data remains usable while a new metadata migration
     // is being applied. Only newly created products default to draft.
   }
+  try {
+    const assetResult = await env.DB.prepare(
+      `SELECT id, product_id AS productId, asset_kind AS assetKind,
+              filename, content_type AS contentType, size_bytes AS sizeBytes,
+              is_primary AS isPrimary, created_at AS createdAt
+       FROM inventory_product_assets
+       ORDER BY created_at ASC`,
+    ).all<JsonRecord>();
+    assetRows = assetResult.results || [];
+  } catch {
+    // Legacy Supabase images remain the fallback until this migration exists.
+  }
   const metadata = new Map(
     metadataRows.map((row) => [scalarText(row.productId), row]),
   );
-  return products.map((product) => ({
-    ...product,
-    studioStatus: scalarText(
-      metadata.get(scalarText(product.id))?.studioStatus,
-      'final',
-    ),
-    finalizedAt: metadata.get(scalarText(product.id))?.finalizedAt || null,
-    etsyListed: [1, true].includes(
-      metadata.get(scalarText(product.id))?.etsyListed as boolean | number,
-    ),
-    studioUpdatedBy:
-      metadata.get(scalarText(product.id))?.studioUpdatedBy || null,
-    studioUpdatedAt:
-      metadata.get(scalarText(product.id))?.studioUpdatedAt || null,
-  }));
+  return products.map((product) => {
+    const productAssets: JsonRecord[] = assetRows
+      .filter((asset) => scalarText(asset.productId) === scalarText(product.id))
+      .map((asset) => ({
+        ...asset,
+        isPrimary: [1, true].includes(asset.isPrimary as boolean | number),
+        url:
+          '/api/inventory/product-assets?id=' +
+          encodeURIComponent(scalarText(asset.id)),
+      }));
+    const primaryImage = productAssets.find(
+      (asset) => asset.assetKind === 'image' && asset.isPrimary === true,
+    );
+    return {
+      ...product,
+      studioStatus: scalarText(
+        metadata.get(scalarText(product.id))?.studioStatus,
+        'final',
+      ),
+      finalizedAt: metadata.get(scalarText(product.id))?.finalizedAt || null,
+      etsyListed: [1, true].includes(
+        metadata.get(scalarText(product.id))?.etsyListed as boolean | number,
+      ),
+      studioUpdatedBy:
+        metadata.get(scalarText(product.id))?.studioUpdatedBy || null,
+      studioUpdatedAt:
+        metadata.get(scalarText(product.id))?.studioUpdatedAt || null,
+      studioAssets: productAssets,
+      studioPrimaryImageUrl: primaryImage?.url || null,
+    };
+  });
 }
 
 async function saveProductMetadata(

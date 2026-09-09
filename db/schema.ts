@@ -108,6 +108,34 @@ export const inventoryProductMetadata = sqliteTable(
   ],
 );
 
+export const inventoryProductAssets = sqliteTable(
+  'inventory_product_assets',
+  {
+    id: text('id').primaryKey(),
+    productId: text('product_id').notNull(),
+    assetKind: text('asset_kind').notNull(),
+    objectKey: text('object_key').notNull(),
+    filename: text('filename').notNull(),
+    contentType: text('content_type').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    isPrimary: integer('is_primary', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    createdBy: text('created_by'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_inventory_product_assets_product').on(
+      table.productId,
+      table.assetKind,
+    ),
+    index('idx_inventory_product_assets_primary').on(
+      table.productId,
+      table.isPrimary,
+    ),
+  ],
+);
+
 export const variants = sqliteTable(
   'variants',
   {

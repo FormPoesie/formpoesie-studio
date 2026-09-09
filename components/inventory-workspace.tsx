@@ -9,8 +9,10 @@ import {
   Check,
   CircleDollarSign,
   ClipboardList,
+  Download,
   ExternalLink,
   Factory,
+  FileArchive,
   ImagePlus,
   Loader2,
   MapPin,
@@ -22,6 +24,7 @@ import {
   Search,
   ShoppingBag,
   Sparkles,
+  Star,
   Trash2,
   Truck,
   UserRound,
@@ -134,7 +137,8 @@ function monthKey(value: unknown) {
 function productImagePath(product: Row) {
   const variants = rows(product.variants);
   return string(
-    variants.find((item) => string(item.imageUrl))?.imageUrl ||
+    product.studioPrimaryImageUrl ||
+      variants.find((item) => string(item.imageUrl))?.imageUrl ||
       product.imageUri,
   );
 }
@@ -145,7 +149,11 @@ function InventoryImage({ product, alt }: { product: Row; alt: string }) {
     <div className="relative aspect-square overflow-hidden rounded-2xl bg-[#ebe5db]">
       {path ? (
         <Image
-          src={'/api/inventory/image?path=' + encodeURIComponent(path)}
+          src={
+            path.startsWith('/api/')
+              ? path
+              : '/api/inventory/image?path=' + encodeURIComponent(path)
+          }
           alt={alt}
           fill
           unoptimized
@@ -3164,9 +3172,9 @@ function EntityEditor({
                 />
               </label>
               {editor.row.id ? (
-                <ImageUpload
-                  productId={string(editor.row.id)}
-                  onUploaded={onClose}
+                <ProductAssetManager
+                  product={form}
+                  onChanged={() => onProductChanged(editor.row.id)}
                 />
               ) : null}
               {editor.row.id ? (
@@ -4060,6 +4068,248 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
         </div>
       </section>
     </div>
+  );
+}
+
+function formatBytes(value: unknown) {
+  const bytes = number(value);
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+function ProductAssetManager({
+  product,
+  onChanged,
+}: {
+  product: Row;
+  onChanged: () => void;
+}) {
+  const [uploading, setUploading] = useState<'image' | 'print' | ''>('');
+  const [message, setMessage] = useState('');
+  const assets = rows(product.studioAssets);
+  const images = assets.filter((asset) => string(asset.assetKind) === 'image');
+  const printFiles = assets.filter(
+    (asset) => string(asset.assetKind) === 'print',
+  );
+
+  async function upload(file: File, kind: 'image' | 'print') {
+    setUploading(kind);
+    setMessage('');
+    const body = new FormData();
+    body.set('file', file);
+    body.set('productId', string(product.id));
+    body.set('kind', kind);
+    const response = await fetch('/api/inventory/product-assets', {
+      method: 'POST',
+      body,
+    });
+    const result = (await response.json()) as { error?: string };
+    setUploading('');
+    if (!response.ok) {
+      setMessage(result.error || 'Upload fehlgeschlagen.');
+      return;
+    }
+    setMessage(
+      kind === 'image' ? 'Bild gespeichert.' : 'Druckdatei gespeichert.',
+    );
+    onChanged();
+  }
+
+  async function setPrimary(id: string) {
+    const response = await fetch('/api/inventory/product-assets', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, isPrimary: true }),
+    });
+    const result = (await response.json()) as { error?: string };
+    if (!response.ok)
+      setMessage(result.error || 'Hauptbild nicht gespeichert.');
+    else {
+      setMessage('Hauptbild aktualisiert.');
+      onChanged();
+    }
+  }
+
+  async function remove(asset: Row) {
+    if (!window.confirm(`„${string(asset.filename)}“ wirklich löschen?`))
+      return;
+    const response = await fetch('/api/inventory/product-assets', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: asset.id }),
+    });
+    const result = (await response.json()) as { error?: string };
+    if (!response.ok) setMessage(result.error || 'Datei nicht gelöscht.');
+    else {
+      setMessage('Datei gelöscht.');
+      onChanged();
+    }
+  }
+
+  return (
+    <section className="space-y-4 rounded-2xl border bg-white/55 p-4 sm:col-span-2">
+      <div>
+        <h3 className="font-medium">Bilder & interne Druckdateien</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Bilder werden zentral wiederverwendet. STL-, 3MF-, OBJ- und
+          ZIP-Dateien bleiben geschützt und erscheinen nie automatisch in Etsy
+          oder Katalogen.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
+          {uploading === 'image' ? (
+            <Loader2 className="size-5 animate-spin" />
+          ) : (
+            <ImagePlus className="size-5" />
+          )}
+          <span className="text-sm">
+            <span className="block font-medium">Weitere Bilder</span>
+            <span className="text-xs text-muted-foreground">
+              JPEG, PNG, WebP · max. 20 MB
+            </span>
+          </span>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            disabled={Boolean(uploading)}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void upload(file, 'image');
+              event.target.value = '';
+            }}
+          />
+        </label>
+        <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
+          {uploading === 'print' ? (
+            <Loader2 className="size-5 animate-spin" />
+          ) : (
+            <FileArchive className="size-5" />
+          )}
+          <span className="text-sm">
+            <span className="block font-medium">Druckdatei hinzufügen</span>
+            <span className="text-xs text-muted-foreground">
+              STL, 3MF, OBJ, ZIP · max. 100 MB
+            </span>
+          </span>
+          <input
+            type="file"
+            accept=".stl,.3mf,.obj,.zip"
+            className="sr-only"
+            disabled={Boolean(uploading)}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void upload(file, 'print');
+              event.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+      {images.length ? (
+        <div>
+          <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+            Artikelbilder
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {images.map((asset) => (
+              <article
+                key={string(asset.id)}
+                className="overflow-hidden rounded-xl border bg-white"
+              >
+                <div className="relative aspect-square bg-[#ebe5db]">
+                  <Image
+                    src={string(asset.url)}
+                    alt={string(asset.filename, 'Artikelbild')}
+                    fill
+                    unoptimized
+                    sizes="160px"
+                    className="object-cover"
+                  />
+                  {boolean(asset.isPrimary) ? (
+                    <Badge className="absolute top-2 left-2">Hauptbild</Badge>
+                  ) : null}
+                </div>
+                <div className="p-2">
+                  <p
+                    className="truncate text-xs"
+                    title={string(asset.filename)}
+                  >
+                    {string(asset.filename)}
+                  </p>
+                  <div className="mt-2 flex gap-1">
+                    {!boolean(asset.isPrimary) ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 flex-1 px-2 text-xs"
+                        onClick={() => void setPrimary(string(asset.id))}
+                      >
+                        <Star className="size-3" /> Hauptbild
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-8 text-red-700"
+                      aria-label={string(asset.filename) + ' löschen'}
+                      onClick={() => void remove(asset)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {printFiles.length ? (
+        <div>
+          <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+            Interne Druckdateien
+          </p>
+          <div className="space-y-2">
+            {printFiles.map((asset) => (
+              <article
+                key={string(asset.id)}
+                className="flex items-center gap-3 rounded-xl border bg-white p-3"
+              >
+                <FileArchive className="size-5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {string(asset.filename)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatBytes(asset.sizeBytes)} · geschützt
+                  </p>
+                </div>
+                <a
+                  href={string(asset.url)}
+                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-white hover:bg-muted"
+                  aria-label={string(asset.filename) + ' herunterladen'}
+                >
+                  <Download className="size-4" />
+                </a>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="text-red-700"
+                  aria-label={string(asset.filename) + ' löschen'}
+                  onClick={() => void remove(asset)}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {message ? (
+        <p className="text-xs text-muted-foreground">{message}</p>
+      ) : null}
+    </section>
   );
 }
 
