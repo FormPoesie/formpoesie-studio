@@ -74,6 +74,7 @@ import {
   type InventoryArea,
 } from '@/components/inventory-workspace';
 import { MindMapWorkspace } from '@/components/mind-map-workspace';
+import { EtsyWorkflow } from '@/components/etsy-workflow';
 
 type ProductRow = {
   id: string;
@@ -302,7 +303,7 @@ function StatusDot({ ok }: { ok: boolean }) {
 }
 
 export default function Home() {
-  const [products, setProducts] = useState<ProductRow[]>([]);
+  const [_products, setProducts] = useState<ProductRow[]>([]);
   const [trashedProducts, setTrashedProducts] = useState<ProductRow[]>([]);
   const [activeProduct, setActiveProduct] = useState<Created | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -311,6 +312,7 @@ export default function Home() {
   const [inventoryArea, setInventoryArea] = useState<InventoryArea>('overview');
   const [inventoryProductId, setInventoryProductId] = useState('');
   const [draftModule, setDraftModule] = useState<'workflow' | null>(null);
+  const [etsyStartProductId, setEtsyStartProductId] = useState('');
   const [mindMapOpen, setMindMapOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [catalogsOpen, setCatalogsOpen] = useState(false);
@@ -411,6 +413,7 @@ export default function Home() {
     else if (label === 'Etsy Workflow') {
       setActiveProduct(null);
       closeModules();
+      setEtsyStartProductId('');
       setDraftModule('workflow');
     } else if (label === 'News-Kalender') {
       openCalendar();
@@ -516,7 +519,7 @@ export default function Home() {
     }
   }
 
-  function beginCreate(source: 'inventory' | 'new' = 'inventory') {
+  function _beginCreate(source: 'inventory' | 'new' = 'inventory') {
     closeModules();
     setKeywords('');
     setResearchSaved(false);
@@ -800,7 +803,7 @@ export default function Home() {
     }
   }
 
-  async function openProduct(row: ProductRow, targetStep = 'fakten') {
+  async function _openProduct(row: ProductRow, targetStep = 'fakten') {
     closeModules();
     const response = await fetch(
       '/api/products?id=' + encodeURIComponent(row.id),
@@ -902,7 +905,7 @@ export default function Home() {
     setActiveStep(targetStep);
   }
 
-  async function moveToTrash(row: ProductRow) {
+  async function _moveToTrash(row: ProductRow) {
     const response = await fetch(
       '/api/products?id=' + encodeURIComponent(row.id),
       { method: 'DELETE' },
@@ -933,37 +936,10 @@ export default function Home() {
   }
 
   function createFromInventory(item: InventoryItem) {
-    const primaryVariant = item.variants[0];
+    setActiveProduct(null);
     closeModules();
-    setKeywords('');
-    setResearchSaved(false);
-    setUploaded([]);
-    setLocks({});
-    setCreateSource('inventory');
-    setSelectedInventory(item);
-    setForm({
-      ...initialForm,
-      inventorySourceId: String(item.id),
-      modelName: item.modelName,
-      productType: item.productType,
-      buyerWorld: item.buyerWorld,
-      sku: item.sku,
-      material: item.material,
-      designOrigin: item.designOrigin,
-      kind: item.buyerWorld === 'Functional Art' ? 'functional' : 'sculpture',
-      variantName: primaryVariant?.name || item.size || 'Standard',
-      color: primaryVariant?.color || '',
-      setSize: String(primaryVariant?.setSize || 1),
-      widthMm: item.widthMm == null ? '' : String(item.widthMm),
-      heightMm: item.heightMm == null ? '' : String(item.heightMm),
-      depthMm: item.depthMm == null ? '' : String(item.depthMm),
-      weightGrams:
-        item.weightGrams == null ? '' : String(Math.round(item.weightGrams)),
-      printHours: item.printHours == null ? '' : String(item.printHours),
-      recordedProductionCost:
-        item.productionCost == null ? '' : String(item.productionCost),
-    });
-    setCreateOpen(true);
+    setEtsyStartProductId(String(item.id));
+    setDraftModule('workflow');
   }
 
   async function saveFacts(facts: Created['facts']) {
@@ -1522,11 +1498,9 @@ export default function Home() {
             onCreateListing={createFromInventory}
           />
         ) : draftModule ? (
-          <EtsyWorkflowHub
-            products={products}
-            onOpen={(row, step) => void openProduct(row, step)}
-            onStart={() => beginCreate('inventory')}
-            onDelete={moveToTrash}
+          <EtsyWorkflow
+            inventoryItems={inventoryItems}
+            initialProductId={etsyStartProductId}
           />
         ) : mindMapOpen ? (
           <MindMapWorkspace />
@@ -4047,7 +4021,7 @@ function DashboardFulfillment() {
   );
 }
 
-function EtsyWorkflowHub({
+function _EtsyWorkflowHub({
   products,
   onOpen,
   onStart,

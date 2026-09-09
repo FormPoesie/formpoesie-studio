@@ -611,3 +611,47 @@ export const monthlyProductHighlights = sqliteTable(
   },
   (table) => [index('idx_monthly_product_month').on(table.month)],
 );
+
+export const etsyWorkflows = sqliteTable('etsy_workflows', {
+  id: text('id').primaryKey(), inventoryProductId: text('inventory_product_id').notNull(),
+  productSnapshotJson: text('product_snapshot_json').notNull(), currentState: text('current_state').notNull().default('IMAGE_UPLOAD'),
+  status: text('status').notNull().default('IN_PROGRESS'), revision: integer('revision').notNull().default(1),
+  completedAt: text('completed_at'), createdBy: text('created_by'), ...timestamps,
+}, (table) => [index('idx_etsy_workflows_product').on(table.inventoryProductId, table.completedAt)]);
+
+export const etsyWorkflowSteps = sqliteTable('etsy_workflow_steps', {
+  id: text('id').primaryKey(), workflowId: text('workflow_id').notNull().references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+  state: text('state').notNull(), status: text('status').notNull().default('NOT_STARTED'), activeVersion: integer('active_version'),
+  resultJson: text('result_json').notNull().default('{}'), userEditsJson: text('user_edits_json').notNull().default('{}'),
+  approvedAt: text('approved_at'), ...timestamps,
+}, (table) => [uniqueIndex('idx_etsy_steps_workflow_state').on(table.workflowId, table.state)]);
+
+export const etsyWorkflowVersions = sqliteTable('etsy_workflow_versions', {
+  id: text('id').primaryKey(), workflowId: text('workflow_id').notNull().references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+  state: text('state').notNull(), version: integer('version').notNull(), resultJson: text('result_json').notNull(),
+  sourceRevision: integer('source_revision').notNull(), approved: integer('approved', { mode: 'boolean' }).notNull().default(false),
+  createdBy: text('created_by'), createdAt: text('created_at').notNull(),
+}, (table) => [uniqueIndex('idx_etsy_versions_state_version').on(table.workflowId, table.state, table.version)]);
+
+export const etsyWorkflowImages = sqliteTable('etsy_workflow_images', {
+  id: text('id').primaryKey(), workflowId: text('workflow_id').notNull().references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+  originalObjectKey: text('original_object_key').notNull(), originalFilename: text('original_filename').notNull(),
+  originalContentType: text('original_content_type').notNull(), status: text('status').notNull().default('UPLOADED'),
+  position: integer('position').notNull(), activeVersionId: text('active_version_id'), ...timestamps,
+}, (table) => [index('idx_etsy_images_workflow_position').on(table.workflowId, table.position)]);
+
+export const etsyWorkflowImageVersions = sqliteTable('etsy_workflow_image_versions', {
+  id: text('id').primaryKey(), imageId: text('image_id').notNull().references(() => etsyWorkflowImages.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(), objectKey: text('object_key'), generationPrompt: text('generation_prompt').notNull(),
+  userInstruction: text('user_instruction'), status: text('status').notNull().default('GENERATING'), errorCode: text('error_code'),
+  approved: integer('approved', { mode: 'boolean' }).notNull().default(false), createdAt: text('created_at').notNull(),
+}, (table) => [uniqueIndex('idx_etsy_image_versions').on(table.imageId, table.version)]);
+
+export const etsyWorkflowVariantPrices = sqliteTable('etsy_workflow_variant_prices', {
+  workflowId: text('workflow_id').notNull().references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+  inventoryVariantId: text('inventory_variant_id').notNull(), etsyPriceCents: integer('etsy_price_cents'), updatedAt: text('updated_at').notNull(),
+}, (table) => [uniqueIndex('idx_etsy_variant_prices').on(table.workflowId, table.inventoryVariantId)]);
+
+export const etsyWorkflowConfig = sqliteTable('etsy_workflow_config', {
+  key: text('key').primaryKey(), valueJson: text('value_json').notNull(), updatedAt: text('updated_at').notNull(),
+});
