@@ -5,9 +5,9 @@ import {
   shippingMethodForChannel,
 } from '../lib/invoice-workflow';
 
-void test('maps sales channels to the lowercase shipping values accepted by online_sales', () => {
+void test('keeps pickup explicit and leaves an unknown carrier unset', () => {
   assert.equal(shippingMethodForChannel('Abholung'), 'abholung');
-  assert.equal(shippingMethodForChannel('Etsy'), 'versand');
+  assert.equal(shippingMethodForChannel('Etsy'), null);
 });
 
 void test('requires name and billing address for an invoice', () => {
