@@ -54,6 +54,7 @@ import {
   expenseOccursInMonth,
   type ExpenseRecurrence,
 } from '@/lib/recurring-expenses';
+import { centsToEuroInput, euroInputToCents } from '@/lib/euro-input';
 
 type Row = Record<string, unknown>;
 export type InventoryArea =
@@ -386,7 +387,11 @@ export function InventoryWorkspace({
 
   const openEditor = (entity: string, row: Row = {}) => {
     setEditor({ entity, row });
-    setForm({ ...row });
+    setForm(
+      entity === 'other_expenses'
+        ? { ...row, priceEuro: centsToEuroInput(row.priceCents) }
+        : { ...row },
+    );
     setEditorMessage('');
   };
 
@@ -406,13 +411,22 @@ export function InventoryWorkspace({
 
   async function saveEntity() {
     if (!editor) return;
+    let values = form;
+    if (editor.entity === 'other_expenses') {
+      const priceCents = euroInputToCents(form.priceEuro);
+      if (priceCents == null) {
+        setError('Bitte gib den Betrag in Euro ein, zum Beispiel 12,50.');
+        return;
+      }
+      values = { ...form, priceCents };
+    }
     setSaving(true);
     setError('');
     const id = editor.row.id;
     const response = await fetch('/api/inventory/workspace', {
       method: id == null ? 'POST' : 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entity: editor.entity, id, values: form }),
+      body: JSON.stringify({ entity: editor.entity, id, values }),
     });
     const result = (await response.json()) as {
       error?: string;
@@ -4021,6 +4035,31 @@ function EntityEditor({
   const isMarket = editor.entity === 'markets';
   const isOnline = editor.entity === 'online_sales';
   const isExpense = editor.entity === 'other_expenses';
+  const suggestedExpenseCategories = [
+    'Material',
+    'Werkzeug & Maschine',
+    'Verpackung & Versand',
+    'Markt & Regalfläche',
+    'Software & Abo',
+    'Marketing',
+    'Büro',
+    'Sonstiges',
+  ];
+  const savedExpenseCategories = rows(data.expenses?.expenses)
+    .map((expense) => string(expense.category).trim())
+    .filter(Boolean);
+  const expenseCategories = [...new Set([
+    ...suggestedExpenseCategories,
+    ...savedExpenseCategories,
+  ])].sort((left, right) => left.localeCompare(right, 'de'));
+  const enteredExpenseCategory = string(form.category).trim();
+  const isNewExpenseCategory =
+    Boolean(enteredExpenseCategory) &&
+    !expenseCategories.some(
+      (category) =>
+        category.toLocaleLowerCase('de') ===
+        enteredExpenseCategory.toLocaleLowerCase('de'),
+    );
   return (
     <Dialog
       open
@@ -4299,7 +4338,25 @@ function EntityEditor({
               {input('articleName', 'Beschreibung')}
               {input('vendor', 'Lieferant')}
               {input('invoiceDate', 'Datum', 'date')}
-              {input('priceCents', 'Betrag in Cent', 'number')}
+              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                Betrag in Euro
+                <div className="relative">
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    value={string(form.priceEuro)}
+                    onChange={(event) =>
+                      setValue('priceEuro', event.target.value)
+                    }
+                    className="bg-white pr-10 text-foreground"
+                    placeholder="0,00"
+                    aria-label="Betrag in Euro"
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted-foreground">
+                    €
+                  </span>
+                </div>
+              </label>
               {input('quantity', 'Menge', 'number')}
               <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
                 Kategorie
@@ -4308,21 +4365,18 @@ function EntityEditor({
                   value={string(form.category)}
                   onChange={(event) => setValue('category', event.target.value)}
                   className="bg-white text-foreground"
+                  placeholder="Vorhandene wählen oder neue Kategorie eingeben"
                 />
                 <datalist id="expense-categories">
-                  {[
-                    'Material',
-                    'Werkzeug & Maschine',
-                    'Verpackung & Versand',
-                    'Markt & Regalfläche',
-                    'Software & Abo',
-                    'Marketing',
-                    'Büro',
-                    'Sonstiges',
-                  ].map((category) => (
+                  {expenseCategories.map((category) => (
                     <option key={category} value={category} />
                   ))}
                 </datalist>
+                <span className="font-normal text-muted-foreground">
+                  {isNewExpenseCategory
+                    ? `Neue Kategorie „${enteredExpenseCategory}“ wird beim Speichern angelegt.`
+                    : 'Freie Eingabe möglich.'}
+                </span>
               </label>
               <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
                 Wiederholung
