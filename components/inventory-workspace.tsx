@@ -54,6 +54,12 @@ import {
   expenseOccursInMonth,
   type ExpenseRecurrence,
 } from '@/lib/recurring-expenses';
+import {
+  expenseAmountCents,
+  filterSalesHistory,
+  marketVenue,
+  onlineVenue,
+} from '@/lib/sales-history';
 
 type Row = Record<string, unknown>;
 export type InventoryArea =
@@ -456,6 +462,19 @@ export function InventoryWorkspace({
     }
   }
 
+  async function openProduct(productId: string) {
+    const productSource = data.products || (await fetchArea('products'));
+    const product = rows(productSource.products).find(
+      (item) => string(item.id) === productId,
+    );
+    if (product) {
+      setActive('products');
+      openEditor('products', product);
+    } else {
+      setError('Der zugehörige Artikel wurde nicht gefunden.');
+    }
+  }
+
   async function moveToTrash(entity: string, id: unknown, restore = false) {
     const response = await fetch('/api/inventory/workspace', {
       method: 'DELETE',
@@ -714,22 +733,11 @@ export function InventoryWorkspace({
           onChanged={() => void fetchArea('expenses')}
         />
       ) : null}
-      {active === 'sales' ? <Sales data={data.sales || {}} /> : null}
+      {active === 'sales' ? (
+        <Sales data={data.sales || {}} onOpenProduct={openProduct} />
+      ) : null}
       {active === 'months' ? (
-        <Months
-          data={data.months || {}}
-          onOpenProduct={async (productId) => {
-            const productSource =
-              data.products || (await fetchArea('products'));
-            const product = rows(productSource.products).find(
-              (item) => string(item.id) === productId,
-            );
-            if (product) {
-              setActive('products');
-              openEditor('products', product);
-            }
-          }}
-        />
+        <Months data={data.months || {}} onOpenProduct={openProduct} />
       ) : null}
       {active === 'account' ? <Account data={data.account || {}} /> : null}
       {active === 'trash' ? (
@@ -3197,10 +3205,17 @@ function CashRegister({
   );
 }
 
-function Sales({ data }: { data: AreaData }) {
+function Sales({
+  data,
+  onOpenProduct,
+}: {
+  data: AreaData;
+  onOpenProduct: (productId: string) => void | Promise<void>;
+}) {
   const items = rows(data.sales).filter((sale) => !boolean(sale.isCancelled));
   const online = rows(data.onlineSales);
   const articles = rows(data.articles);
+  const markets = rows(data.markets);
   const keys = [
     ...new Set(
       [...items, ...online].map((sale) => monthKey(sale.date)).filter(Boolean),
@@ -3210,12 +3225,15 @@ function Sales({ data }: { data: AreaData }) {
     .reverse();
   const [selectedMonth, setSelectedMonth] = useState('');
   const activeMonth = selectedMonth || keys[0] || '';
-  const monthSales = items.filter(
-    (sale) => monthKey(sale.date) === activeMonth,
-  );
-  const monthOnline = online.filter(
-    (sale) => monthKey(sale.date) === activeMonth,
-  );
+  const [selectedVenue, setSelectedVenue] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
+  const filtered = filterSalesHistory(items, online, markets, {
+    month: activeMonth,
+    date: selectedDate,
+    venue: selectedVenue,
+  });
+  const monthSales = filtered.marketSales;
+  const monthOnline = filtered.onlineSales;
   const articleName = (saleItem: Row) => {
     const nested = string(object(object(saleItem.articleVariant).article).name);
     if (nested) return nested;
@@ -3229,6 +3247,16 @@ function Sales({ data }: { data: AreaData }) {
     }
     return 'Artikel';
   };
+  const productId = (saleItem: Row) => {
+    const nested = object(object(saleItem.articleVariant).article);
+    if (nested.productId) return string(nested.productId);
+    const article = articles.find((candidate) =>
+      rows(candidate.variants).some(
+        (variant) => string(variant.id) === string(saleItem.articleVariantId),
+      ),
+    );
+    return string(article?.productId);
+  };
   const soldPieces =
     monthSales.reduce(
       (sum, sale) =>
@@ -3239,16 +3267,45 @@ function Sales({ data }: { data: AreaData }) {
         ),
       0,
     ) + monthOnline.reduce((sum, sale) => sum + number(sale.quantity, 1), 0);
-  const allSoldPieces =
-    items.reduce(
-      (sum, sale) =>
-        sum +
-        rows(sale.items).reduce(
-          (part, item) => part + number(item.quantity),
-          0,
-        ),
-      0,
-    ) + online.reduce((sum, sale) => sum + number(sale.quantity, 1), 0);
+  const productionCosts = monthSales.reduce(
+    (sum, sale) =>
+      sum +
+      rows(sale.items).reduce(
+        (part, item) =>
+          part + number(item.unitCostPriceCents) * number(item.quantity),
+        0,
+      ),
+    0,
+  );
+  const onlineCosts = monthOnline.reduce(
+    (sum, sale) => sum + onlineSaleCost(sale),
+    0,
+  );
+  const revenue =
+    monthSales.reduce((sum, sale) => sum + saleTotal(sale), 0) +
+    monthOnline.reduce((sum, sale) => sum + onlineSaleRevenue(sale), 0);
+  const visibleMarketCosts = rows(data.marketExpenses).filter((expense) => {
+    const expenseDate = string(expense.date).slice(0, 10);
+    const dateMatches = selectedDate
+      ? expenseDate === selectedDate
+      : !activeMonth || expenseDate.slice(0, 7) === activeMonth;
+    const venueMatches =
+      !selectedVenue ||
+      (selectedVenue.startsWith('market:') &&
+        `market:${string(expense.marketId)}` === selectedVenue);
+    return dateMatches && venueMatches;
+  });
+  const visibleMarketCostTotal = visibleMarketCosts.reduce(
+    (sum, expense) => sum + expenseAmountCents(expense),
+    0,
+  );
+  const venues = [
+    ...items.map((sale) => marketVenue(sale, markets)),
+    ...online.map(onlineVenue),
+  ].filter(
+    (venue, index, all) =>
+      all.findIndex((item) => item.key === venue.key) === index,
+  );
   const onlineSignatures = monthOnline.map((sale) =>
     [
       sale.date,
@@ -3264,52 +3321,81 @@ function Sales({ data }: { data: AreaData }) {
     onlineSignatures.length - new Set(onlineSignatures).size;
   return (
     <section className="mt-6">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+      <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
         <div>
           <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
             Nach Monaten
           </p>
           <h2 className="mt-1 font-heading text-3xl">Verkaufshistorie</h2>
         </div>
-        <label className="grid gap-1 text-xs text-muted-foreground">
-          Monat
-          <select
-            className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-            value={activeMonth}
-            onChange={(event) => setSelectedMonth(event.target.value)}
-          >
-            {keys.map((key) => (
-              <option key={key} value={key}>
-                {new Intl.DateTimeFormat('de-DE', {
-                  month: 'long',
-                  year: 'numeric',
-                }).format(new Date(key + '-01T12:00:00Z'))}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[660px]">
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Monat
+            <select
+              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={activeMonth}
+              onChange={(event) => {
+                setSelectedMonth(event.target.value);
+                setSelectedDate('');
+              }}
+            >
+              {keys.map((key) => (
+                <option key={key} value={key}>
+                  {new Intl.DateTimeFormat('de-DE', {
+                    month: 'long',
+                    year: 'numeric',
+                  }).format(new Date(key + '-01T12:00:00Z'))}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Verkaufsort
+            <select
+              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={selectedVenue}
+              onChange={(event) => setSelectedVenue(event.target.value)}
+            >
+              <option value="">Alle Verkaufsorte</option>
+              {venues.map((venue) => (
+                <option key={venue.key} value={venue.key}>
+                  {venue.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Datum
+            <Input
+              type="date"
+              className="bg-white"
+              value={selectedDate}
+              onChange={(event) => {
+                setSelectedDate(event.target.value);
+                if (event.target.value)
+                  setSelectedMonth(event.target.value.slice(0, 7));
+              }}
+            />
+          </label>
+        </div>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat value={items.length + online.length} label="Buchungen gesamt" />
-        <Stat value={allSoldPieces} label="verkaufte Artikel gesamt" />
-        <Stat value={items.length} label="Markt-Buchungen" />
-        <Stat value={online.length} label="Online-Buchungen" />
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <Stat value={soldPieces} label="verkaufte Artikel" />
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <Stat value={soldPieces} label="sichtbare verkaufte Artikel" />
         <Stat
           value={monthSales.length + monthOnline.length}
-          label="Verkaufsvorgänge"
+          label="sichtbare Verkaufsvorgänge"
         />
+        <Stat value={cents(revenue)} label="Umsatz" />
+        <Stat
+          value={cents(productionCosts + onlineCosts)}
+          label="Artikel- und Versandkosten"
+        />
+        <Stat value={cents(visibleMarketCostTotal)} label="Marktkosten" />
         <Stat
           value={cents(
-            monthSales.reduce((sum, sale) => sum + saleTotal(sale), 0) +
-              monthOnline.reduce(
-                (sum, sale) => sum + onlineSaleRevenue(sale),
-                0,
-              ),
+            revenue - productionCosts - onlineCosts - visibleMarketCostTotal,
           )}
-          label="Umsatz"
+          label="Ergebnis nach erfassten Kosten"
         />
       </div>
       {possibleDuplicateCount ? (
@@ -3329,7 +3415,7 @@ function Sales({ data }: { data: AreaData }) {
               <div>
                 <h2 className="font-medium">Verkauf #{string(sale.id)}</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {date(sale.date)} ·{' '}
+                  {date(sale.date)} · {marketVenue(sale, markets).label} ·{' '}
                   {string(sale.paymentMethod, 'Zahlungsart nicht erfasst')}
                 </p>
               </div>
@@ -3337,13 +3423,41 @@ function Sales({ data }: { data: AreaData }) {
                 {cents(saleTotal(sale))}
               </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {rows(sale.items).map((item) => (
-                <Badge key={string(item.id)} variant="outline">
-                  {number(item.quantity)} ×{' '}
-                  {string(articleName(item), 'Artikel')}
-                </Badge>
-              ))}
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {rows(sale.items).map((item) => {
+                const quantity = number(item.quantity);
+                const salePrice = number(item.unitSalePriceCents) * quantity;
+                const cost = number(item.unitCostPriceCents) * quantity;
+                const linkedProductId = productId(item);
+                const hasCost = number(item.unitCostPriceCents) > 0;
+                return (
+                  <button
+                    key={string(item.id)}
+                    type="button"
+                    disabled={!linkedProductId}
+                    onClick={() => void onOpenProduct(linkedProductId)}
+                    className="rounded-xl border bg-white p-3 text-left transition hover:border-[var(--fp-primary)] disabled:cursor-default disabled:opacity-70"
+                  >
+                    <span className="block font-medium">
+                      {quantity} × {string(articleName(item), 'Artikel')}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      Verkauf {cents(salePrice)} · Herstellung {cents(cost)} ·
+                      Deckungsbeitrag {cents(salePrice - cost)}
+                    </span>
+                    {!hasCost ? (
+                      <span className="mt-2 block text-xs font-semibold text-amber-700">
+                        Herstellungskosten fehlen oder sind 0,00 €
+                      </span>
+                    ) : null}
+                    <span className="mt-2 block text-xs font-medium text-[var(--fp-primary)]">
+                      {linkedProductId
+                        ? 'Artikeldaten und Kalkulation öffnen'
+                        : 'Kein verknüpfter Artikel vorhanden'}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
             {sale.note ? (
               <p className="mt-3 text-sm text-muted-foreground">
@@ -3363,7 +3477,7 @@ function Sales({ data }: { data: AreaData }) {
                   {string(sale.articleName, 'Online-Verkauf')}
                 </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {date(sale.date)} · {string(sale.channel, 'Online')} ·{' '}
+                  {date(sale.date)} · {onlineVenue(sale).label} ·{' '}
                   {string(sale.shippingRecipient, 'kein Empfänger')}
                 </p>
               </div>
@@ -3382,6 +3496,15 @@ function Sales({ data }: { data: AreaData }) {
               <Badge variant="outline">
                 Ergebnis {cents(onlineSaleRevenue(sale) - onlineSaleCost(sale))}
               </Badge>
+              {sale.productId ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void onOpenProduct(string(sale.productId))}
+                >
+                  Artikeldaten und Kalkulation öffnen
+                </Button>
+              ) : null}
             </div>
           </article>
         ))}
@@ -3396,7 +3519,7 @@ function Sales({ data }: { data: AreaData }) {
 }
 
 function expenseTotal(expense: Row) {
-  return number(expense.priceCents) * Math.max(1, number(expense.quantity, 1));
+  return expenseAmountCents(expense);
 }
 
 function ReceiptUpload({
@@ -3473,13 +3596,36 @@ function Expenses({
     'all',
   );
   const expenses = rows(data.expenses);
-  const visible = expenses.filter((expense) => {
+  const markets = rows(data.markets);
+  const marketExpenses = rows(data.marketExpenses).map((expense) => ({
+    ...expense,
+    expenseSource: 'market',
+    marketName: (() => {
+      const market = markets.find(
+        (item) => string(item.id) === string(expense.marketId),
+      );
+      return (
+        [string(market?.name), string(market?.location)]
+          .filter(Boolean)
+          .join(' · ') || 'Markt'
+      );
+    })(),
+  }));
+  const allExpenses = [...marketExpenses, ...expenses];
+  const visible = allExpenses.filter((expense) => {
     if (
       recurrence !== 'all' &&
       string(expense.recurrence, 'none') !== recurrence
     )
       return false;
-    return [expense.articleName, expense.vendor, expense.category, expense.note]
+    return [
+      expense.articleName,
+      expense.label,
+      expense.vendor,
+      expense.marketName,
+      expense.category,
+      expense.note,
+    ]
       .join(' ')
       .toLocaleLowerCase('de')
       .includes(search.trim().toLocaleLowerCase('de'));
@@ -3488,16 +3634,20 @@ function Expenses({
     year: 'numeric',
     month: '2-digit',
   }).format(new Date());
-  const thisMonthTotal = expenses
-    .filter((expense) =>
-      expenseOccursInMonth(
-        string(expense.invoiceDate),
-        string(expense.endDate),
-        string(expense.recurrence, 'none') as ExpenseRecurrence,
-        thisMonth,
-      ),
-    )
-    .reduce((sum, expense) => sum + expenseTotal(expense), 0);
+  const thisMonthTotal =
+    expenses
+      .filter((expense) =>
+        expenseOccursInMonth(
+          string(expense.invoiceDate),
+          string(expense.endDate),
+          string(expense.recurrence, 'none') as ExpenseRecurrence,
+          thisMonth,
+        ),
+      )
+      .reduce((sum, expense) => sum + expenseTotal(expense), 0) +
+    marketExpenses
+      .filter((expense) => monthKey(expense.date) === thisMonth)
+      .reduce((sum, expense) => sum + expenseTotal(expense), 0);
   return (
     <section className="mt-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -3527,29 +3677,33 @@ function Expenses({
         </Button>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <Stat value={expenses.length} label="gespeicherte Ausgaben" />
+        <Stat value={allExpenses.length} label="Ausgaben gesamt" />
         <Stat value={cents(thisMonthTotal)} label="für diesen Monat" />
         <Stat
-          value={expenses.filter((item) => rows(item.documents).length).length}
-          label="mit Beleg"
+          value={cents(
+            marketExpenses
+              .filter((expense) => monthKey(expense.date) === thisMonth)
+              .reduce((sum, expense) => sum + expenseTotal(expense), 0),
+          )}
+          label="davon Marktkosten"
         />
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {visible.map((expense) => (
           <article
-            key={string(expense.id)}
+            key={`${string(expense.expenseSource, 'other')}-${string(expense.id)}`}
             className="rounded-2xl border bg-white/65 p-4"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="font-medium">
-                  {string(expense.articleName, 'Ausgabe')}
+                  {string(expense.articleName || expense.label, 'Ausgabe')}
                 </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {[
-                    string(expense.vendor),
+                    string(expense.vendor || expense.marketName),
                     string(expense.category),
-                    date(expense.invoiceDate),
+                    date(expense.invoiceDate || expense.date),
                   ]
                     .filter(Boolean)
                     .join(' · ')}
@@ -3560,11 +3714,13 @@ function Expenses({
                   {cents(expenseTotal(expense))}
                 </div>
                 <Badge variant="outline" className="mt-1">
-                  {string(expense.recurrence, 'none') === 'monthly'
-                    ? 'monatlich'
-                    : string(expense.recurrence, 'none') === 'yearly'
-                      ? 'jährlich'
-                      : 'einmalig'}
+                  {string(expense.expenseSource) === 'market'
+                    ? 'automatisch aus Markt'
+                    : string(expense.recurrence, 'none') === 'monthly'
+                      ? 'monatlich'
+                      : string(expense.recurrence, 'none') === 'yearly'
+                        ? 'jährlich'
+                        : 'einmalig'}
                 </Badge>
               </div>
             </div>
@@ -3573,40 +3729,50 @@ function Expenses({
                 {string(expense.note)}
               </p>
             ) : null}
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onEdit(expense)}
-              >
-                <Pencil className="size-3.5" /> Bearbeiten
-              </Button>
-              <ReceiptUpload
-                expenseId={string(expense.id)}
-                onChanged={onChanged}
-              />
-              {rows(expense.documents).map((document) => (
-                <a
-                  key={string(document.id)}
-                  href={string(document.url)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+            {string(expense.expenseSource) === 'market' ? (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Diese Ausgabe wird automatisch aus den Kosten des Verkaufsorts
+                übernommen.
+              </p>
+            ) : null}
+            {string(expense.expenseSource) !== 'market' ? (
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onEdit(expense)}
                 >
-                  <Download className="size-3.5" />
-                  <span className="max-w-32 truncate">
-                    {string(document.filename)}
-                  </span>
-                </a>
-              ))}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="ml-auto text-red-700"
-                aria-label={string(expense.articleName, 'Ausgabe') + ' löschen'}
-                onClick={() => onTrash(expense)}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
-            </div>
+                  <Pencil className="size-3.5" /> Bearbeiten
+                </Button>
+                <ReceiptUpload
+                  expenseId={string(expense.id)}
+                  onChanged={onChanged}
+                />
+                {rows(expense.documents).map((document) => (
+                  <a
+                    key={string(document.id)}
+                    href={string(document.url)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+                  >
+                    <Download className="size-3.5" />
+                    <span className="max-w-32 truncate">
+                      {string(document.filename)}
+                    </span>
+                  </a>
+                ))}
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="ml-auto text-red-700"
+                  aria-label={
+                    string(expense.articleName, 'Ausgabe') + ' löschen'
+                  }
+                  onClick={() => onTrash(expense)}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            ) : null}
           </article>
         ))}
       </div>

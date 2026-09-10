@@ -827,15 +827,27 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     return { onlineSales, fulfillmentTasks: fulfillmentTasks.results || [] };
   }
   if (area === 'expenses') {
-    const expenses = await query(
-      accessToken,
-      'other_expenses',
-      'select=*&deleted_at=is.null&order=invoice_date.desc',
-    );
-    return { expenses: await decorateExpenses(expenses) };
+    const [expenses, marketExpenses, markets] = await Promise.all([
+      query(
+        accessToken,
+        'other_expenses',
+        'select=*&deleted_at=is.null&order=invoice_date.desc',
+      ),
+      query(
+        accessToken,
+        'expenses',
+        'select=*&deleted_at=is.null&order=date.desc',
+      ),
+      query(accessToken, 'markets', 'select=id,name,location,date,end_date'),
+    ]);
+    return {
+      expenses: await decorateExpenses(expenses),
+      marketExpenses,
+      markets,
+    };
   }
   if (area === 'sales') {
-    const [sales, markets, onlineSales] = await Promise.all([
+    const [sales, markets, onlineSales, marketExpenses] = await Promise.all([
       query(
         accessToken,
         'sales',
@@ -851,11 +863,16 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'online_sales',
         'select=*&deleted_at=is.null&order=date.desc',
       ),
+      query(
+        accessToken,
+        'expenses',
+        'select=*&deleted_at=is.null&order=date.desc',
+      ),
     ]);
     const highlights = await rebuildMonthlyProductHighlights(accessToken).catch(
       () => [],
     );
-    return { sales, markets, onlineSales, highlights };
+    return { sales, markets, onlineSales, marketExpenses, highlights };
   }
   if (area === 'months') {
     const [sales, expenses, onlineSales, otherExpenses, markets] =
