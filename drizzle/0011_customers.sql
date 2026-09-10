@@ -1,4 +1,4 @@
-CREATE TABLE `customers` (
+CREATE TABLE IF NOT EXISTS `customers` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
 	`email` text,
@@ -9,8 +9,8 @@ CREATE TABLE `customers` (
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE INDEX `idx_customers_name` ON `customers` (`name`);
+CREATE INDEX IF NOT EXISTS `idx_customers_name` ON `customers` (`name`);
 --> statement-breakpoint
-CREATE INDEX `idx_customers_email` ON `customers` (`email`);
+CREATE INDEX IF NOT EXISTS `idx_customers_email` ON `customers` (`email`);
 --> statement-breakpoint
-ALTER TABLE `invoices` ADD `customer_id` text;
+SELECT 1;
