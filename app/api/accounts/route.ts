@@ -20,6 +20,7 @@ export type AccountItem = {
   lastCheckedAt?: string;
   lastStatus?: string;
   lastHeadline?: string;
+  lastError?: string;
 };
 
 const defaults: AccountItem[] = [

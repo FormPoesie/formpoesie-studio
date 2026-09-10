@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { requireInventoryManager } from '@/lib/inventory-bridge';
+import { fetchPageSignal } from '@/lib/designer-monitor';
 import type { AccountItem } from '@/app/api/accounts/route';
 
 type Snapshot = {
@@ -21,45 +22,6 @@ function allowedProfile(value: string) {
   } catch {
     return false;
   }
-}
-
-function normalizeText(value: string) {
-  return value
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function pageSignal(html: string, platform: string) {
-  const linkPattern =
-    platform === 'Patreon'
-      ? /href=["']([^"']*\/(?:posts|join)\/[^"'#?]+)["'][^>]*>([\s\S]*?)<\/a>/gi
-      : /href=["']([^"']*\/(?:models|model)\/[^"'#?]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  const matches: Array<{ href: string; title: string }> = [];
-  for (const match of html.matchAll(linkPattern)) {
-    const href = match[1];
-    const title = normalizeText(match[2]);
-    if (!matches.some((item) => item.href === href))
-      matches.push({ href, title });
-    if (matches.length >= 50) break;
-  }
-  if (matches.length) {
-    return {
-      signal: matches
-        .map((item) => item.href)
-        .sort()
-        .join('\n'),
-      headline: matches.find((item) => item.title)?.title || matches[0].href,
-    };
-  }
-  const title = normalizeText(
-    html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '',
-  );
-  return { signal: title, headline: title };
 }
 
 async function hash(value: string) {
@@ -97,17 +59,10 @@ async function runMonitor() {
 
   for (const target of targets) {
     try {
-      const response = await fetch(target.profileUrl || '', {
-        headers: {
-          Accept: 'text/html',
-          'User-Agent': 'FormPoesie-Masterbrain-Monitor/1.0',
-        },
-        redirect: 'manual',
-      });
-      if (!response.ok)
-        throw new Error('Profil antwortet mit Status ' + response.status + '.');
-      const html = await response.text();
-      const page = pageSignal(html, target.note || 'MakerWorld');
+      const page = await fetchPageSignal(
+        target.profileUrl || '',
+        target.note || 'MakerWorld',
+      );
       if (!page.signal)
         throw new Error('Keine Modellliste auf dem Profil erkannt.');
       const fingerprint = await hash(page.signal);
@@ -157,6 +112,7 @@ async function runMonitor() {
       target.lastCheckedAt = instant;
       target.lastStatus = 'success';
       target.lastHeadline = page.headline || '';
+      target.lastError = undefined;
       results.push({
         id: target.id,
         status: 'success',
@@ -166,6 +122,8 @@ async function runMonitor() {
     } catch (error) {
       target.lastCheckedAt = instant;
       target.lastStatus = 'failed';
+      target.lastError =
+        error instanceof Error ? error.message : 'Prüfung fehlgeschlagen.';
       results.push({
         id: target.id,
         status: 'failed',

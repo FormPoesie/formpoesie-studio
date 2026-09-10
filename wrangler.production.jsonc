@@ -1,0 +1,25 @@
+{
+  "name": "formpoesie-masterbrain",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "dist/client"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "site-creator-d1",
+      "database_id": "683d114f-2961-4bd7-94d7-77aea5f1cca8"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "formpoesie-masterbrain-files"
+    }
+  ],
+  "triggers": {
+    "crons": ["5 * * * *"]
+  }
+}

@@ -184,6 +184,7 @@ type AccountItem = {
   lastCheckedAt?: string;
   lastStatus?: string;
   lastHeadline?: string;
+  lastError?: string;
 };
 
 type EncryptedSecret = {
@@ -1804,11 +1805,11 @@ function MasterbrainInfo({
             ],
             [
               'Tagesnews',
-              'Im Feed erscheinen nur Kalendereinträge, die heute erfasst wurden, sowie heutige Designer-Meldungen. Ältere Monatsauswertungen werden dort nicht erneut eingeblendet.',
+              'Im Feed erscheinen nur Kalendereinträge, die heute erfasst wurden, sowie heutige Meldungen zu neuen Modellen der gespeicherten Lizenz-Designer. Ältere Monatsauswertungen werden dort nicht erneut eingeblendet.',
             ],
             [
               'News-Synchronisierung',
-              'Der Masterbrain gleicht die Kalenderquelle täglich ab 20:00 Uhr ab. „Heutige News“ zählt die Einträge mit dem heutigen Erfassungsdatum – nicht alle jemals importierten Datensätze. Manuelle Änderungen im Masterbrain bleiben erhalten.',
+              'Der Masterbrain gleicht die Kalenderquelle und die gespeicherten Designer-Profile täglich ab 20:00 Uhr ab. „Heutige News“ zählt die Einträge mit dem heutigen Erfassungsdatum – nicht alle jemals importierten Datensätze. Manuelle Änderungen im Masterbrain bleiben erhalten.',
             ],
             [
               'Modell des Monats',
@@ -3193,7 +3194,7 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
     const response = await fetch('/api/designer-monitor', { method: 'POST' });
     const result = (await response.json()) as {
       checked?: number;
-      results?: Array<{ changed?: boolean }>;
+      results?: Array<{ changed?: boolean; status?: string; error?: string }>;
       error?: string;
     };
     if (!response.ok) {
@@ -3205,8 +3206,13 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
       const changed = (result.results || []).filter(
         (item) => item.changed,
       ).length;
+      const failed = (result.results || []).filter(
+        (item) => item.status === 'failed',
+      ).length;
       setMonitorMessage(
-        `${result.checked || 0} Profile geprüft · ${changed} neue Änderungen`,
+        failed
+          ? `${result.checked || 0} Profile geprüft · ${failed} fehlgeschlagen`
+          : `${result.checked || 0} Profile geprüft · ${changed} neue Änderungen`,
       );
     }
     setMonitoring(false);
@@ -3636,6 +3642,9 @@ function AccountsHub({ onInventory }: { onInventory: () => void }) {
                 </span>
                 {item.lastHeadline ? (
                   <span>· Zuletzt erkannt: {item.lastHeadline}</span>
+                ) : null}
+                {item.lastStatus === 'failed' && item.lastError ? (
+                  <span className="text-red-700">· {item.lastError}</span>
                 ) : null}
               </div>
             </div>
