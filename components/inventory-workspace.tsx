@@ -446,6 +446,23 @@ export function InventoryWorkspace({
       }
       return;
     }
+    if (editor.entity === 'materials') {
+      const materialResult = await fetchArea('materials');
+      const savedId = id ?? rows(result.result)[0]?.id;
+      const saved = rows(materialResult.materials).find(
+        (item) => string(item.id) === string(savedId),
+      );
+      if (saved) {
+        setEditor({ entity: 'materials', row: saved });
+        setForm({ ...saved });
+        setEditorMessage(
+          id == null
+            ? 'Material gespeichert. Du kannst jetzt Bilder hinzufügen.'
+            : 'Materialänderungen gespeichert.',
+        );
+      }
+      return;
+    }
     setEditor(null);
     await refresh();
   }
@@ -459,6 +476,18 @@ export function InventoryWorkspace({
       setEditor({ entity: 'products', row: saved });
       setForm({ ...saved });
       setEditorMessage('Herstellungsdaten gespeichert.');
+    }
+  }
+
+  async function refreshMaterialEditor(materialId: unknown) {
+    const materialResult = await fetchArea('materials');
+    const saved = rows(materialResult.materials).find(
+      (item) => string(item.id) === string(materialId),
+    );
+    if (saved) {
+      setEditor({ entity: 'materials', row: saved });
+      setForm({ ...saved });
+      setEditorMessage('Materialbilder aktualisiert.');
     }
   }
 
@@ -754,6 +783,9 @@ export function InventoryWorkspace({
         onSave={() => void saveEntity()}
         onClose={() => setEditor(null)}
         onProductChanged={(productId) => void refreshProductEditor(productId)}
+        onMaterialChanged={(materialId) =>
+          void refreshMaterialEditor(materialId)
+        }
       />
       <MarketDetail
         market={selectedMarket}
@@ -1766,78 +1798,98 @@ function Materials({
         </Button>
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {items.map((item) => (
-          <article
-            key={string(item.id)}
-            className="rounded-2xl border bg-white/65 p-4"
-          >
-            <div className="flex justify-between gap-3">
-              <div>
-                <h2 className="font-medium">{string(item.name)}</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {[
-                    string(object(item.brand).name),
-                    string(item.materialType),
-                    string(item.variant),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </p>
-              </div>
-              <Badge variant="outline">
-                {string(item.status, 'offen').replace('_', ' ')}
-              </Badge>
-            </div>
-            <dl className="mt-4 grid grid-cols-3 gap-2 text-xs">
-              <div>
-                <dt className="text-muted-foreground">Menge</dt>
-                <dd className="mt-1 font-medium">
-                  {number(item.quantity)} {string(item.unit)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Rollenpreis</dt>
-                <dd className="mt-1 font-medium">
-                  {cents(item.pricePerRollCents)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Lagerorte</dt>
-                <dd className="mt-1 font-medium">
-                  {rows(item.locations).length ||
-                    (item.storageLocationId ? 1 : 0)}
-                </dd>
-              </div>
-            </dl>
-            {rows(item.locations).length ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {rows(item.locations).map((location) => (
-                  <Badge key={string(location.id)} variant="outline">
-                    {string(object(location.storageLocation).name, 'Lagerort')}:{' '}
-                    {number(location.quantity)} {string(item.unit)}
+        {items.map((item) => {
+          const image = rows(item.studioImages)[0];
+          return (
+            <article
+              key={string(item.id)}
+              className="overflow-hidden rounded-2xl border bg-white/65"
+            >
+              {image ? (
+                <div className="relative aspect-[16/7] bg-[#ebe5db]">
+                  <Image
+                    src={string(image.url)}
+                    alt={string(item.name, 'Materialbild')}
+                    fill
+                    unoptimized
+                    sizes="(max-width: 768px) 100vw, 420px"
+                    className="object-cover"
+                  />
+                </div>
+              ) : null}
+              <div className="p-4">
+                <div className="flex justify-between gap-3">
+                  <div>
+                    <h2 className="font-medium">{string(item.name)}</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {[
+                        string(object(item.brand).name),
+                        string(item.materialType),
+                        string(item.variant),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  </div>
+                  <Badge variant="outline">
+                    {string(item.status, 'offen').replace('_', ' ')}
                   </Badge>
-                ))}
+                </div>
+                <dl className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <dt className="text-muted-foreground">Menge</dt>
+                    <dd className="mt-1 font-medium">
+                      {number(item.quantity)} {string(item.unit)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Rollenpreis</dt>
+                    <dd className="mt-1 font-medium">
+                      {cents(item.pricePerRollCents)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Lagerorte</dt>
+                    <dd className="mt-1 font-medium">
+                      {rows(item.locations).length ||
+                        (item.storageLocationId ? 1 : 0)}
+                    </dd>
+                  </div>
+                </dl>
+                {rows(item.locations).length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {rows(item.locations).map((location) => (
+                      <Badge key={string(location.id)} variant="outline">
+                        {string(
+                          object(location.storageLocation).name,
+                          'Lagerort',
+                        )}
+                        : {number(location.quantity)} {string(item.unit)}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => onEdit(item)}
+                  >
+                    <Pencil className="size-4" /> Bearbeiten
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-red-700"
+                    onClick={() => onTrash(item)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
               </div>
-            ) : null}
-            <div className="mt-4 flex gap-2">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => onEdit(item)}
-              >
-                <Pencil className="size-4" /> Bearbeiten
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-red-700"
-                onClick={() => onTrash(item)}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -4197,6 +4249,7 @@ function EntityEditor({
   onSave,
   onClose,
   onProductChanged,
+  onMaterialChanged,
 }: {
   editor: { entity: string; row: Row } | null;
   form: Row;
@@ -4207,6 +4260,7 @@ function EntityEditor({
   onSave: () => void;
   onClose: () => void;
   onProductChanged: (productId: unknown) => void;
+  onMaterialChanged: (materialId: unknown) => void;
 }) {
   if (!editor) return null;
   const input = (key: string, label: string, type = 'text') => (
@@ -4462,6 +4516,17 @@ function EntityEditor({
                   className="bg-white text-foreground"
                 />
               </label>
+              {editor.row.id ? (
+                <MaterialImageManager
+                  material={form}
+                  onChanged={() => onMaterialChanged(editor.row.id)}
+                />
+              ) : (
+                <p className="rounded-xl border border-dashed bg-white/55 p-4 text-sm text-muted-foreground sm:col-span-2">
+                  Speichere zuerst das Material. Danach kannst du Bilder
+                  hinzufügen.
+                </p>
+              )}
             </>
           ) : null}
           {isMarket ? (
@@ -5327,6 +5392,136 @@ function formatBytes(value: unknown) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${bytes} B`;
+}
+
+function MaterialImageManager({
+  material,
+  onChanged,
+}: {
+  material: Row;
+  onChanged: () => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [message, setMessage] = useState('');
+  const images = rows(material.studioImages);
+
+  async function upload(file: File) {
+    setUploading(true);
+    setMessage('');
+    const body = new FormData();
+    body.set('file', file);
+    body.set('materialId', string(material.id));
+    const response = await fetch('/api/inventory/material-images', {
+      method: 'POST',
+      body,
+    });
+    const result = (await response.json()) as { error?: string };
+    setUploading(false);
+    if (!response.ok) {
+      setMessage(result.error || 'Bild konnte nicht gespeichert werden.');
+      return;
+    }
+    setMessage('Materialbild gespeichert.');
+    onChanged();
+  }
+
+  async function remove(image: Row) {
+    if (!window.confirm(`„${string(image.filename)}“ wirklich löschen?`))
+      return;
+    const response = await fetch('/api/inventory/material-images', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: image.id }),
+    });
+    const result = (await response.json()) as { error?: string };
+    if (!response.ok)
+      setMessage(result.error || 'Bild konnte nicht gelöscht werden.');
+    else {
+      setMessage('Materialbild gelöscht.');
+      onChanged();
+    }
+  }
+
+  return (
+    <section className="space-y-4 rounded-2xl border bg-white/55 p-4 sm:col-span-2">
+      <div>
+        <h3 className="font-medium">Materialbilder</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Das zuerst hinzugefügte Bild wird in der Materialübersicht angezeigt.
+        </p>
+      </div>
+      <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
+        {uploading ? (
+          <Loader2 className="size-5 animate-spin" />
+        ) : (
+          <ImagePlus className="size-5" />
+        )}
+        <span className="text-sm">
+          <span className="block font-medium">Bild hinzufügen</span>
+          <span className="text-xs text-muted-foreground">
+            JPEG, PNG oder WebP · maximal 20 MB
+          </span>
+        </span>
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="sr-only"
+          disabled={uploading}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void upload(file);
+            event.target.value = '';
+          }}
+        />
+      </label>
+      {images.length ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {images.map((image, index) => (
+            <article
+              key={string(image.id)}
+              className="overflow-hidden rounded-xl border bg-white"
+            >
+              <div className="relative aspect-square bg-[#ebe5db]">
+                <Image
+                  src={string(image.url)}
+                  alt={string(image.filename, 'Materialbild')}
+                  fill
+                  unoptimized
+                  sizes="160px"
+                  className="object-cover"
+                />
+                {index === 0 ? (
+                  <Badge className="absolute top-2 left-2">Vorschaubild</Badge>
+                ) : null}
+              </div>
+              <div className="p-2">
+                <p className="truncate text-xs" title={string(image.filename)}>
+                  {string(image.filename)}
+                </p>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-muted-foreground">
+                    {formatBytes(image.sizeBytes)}
+                  </span>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 text-red-700"
+                    aria-label={string(image.filename) + ' löschen'}
+                    onClick={() => void remove(image)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {message ? (
+        <p className="text-xs text-muted-foreground">{message}</p>
+      ) : null}
+    </section>
+  );
 }
 
 function ProductAssetManager({

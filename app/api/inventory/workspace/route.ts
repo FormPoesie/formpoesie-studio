@@ -445,6 +445,37 @@ async function decorateExpenses(value: unknown) {
   });
 }
 
+async function decorateMaterials(value: unknown) {
+  const materials = Array.isArray(value) ? (value as JsonRecord[]) : [];
+  let imageRows: JsonRecord[] = [];
+  try {
+    const result = await env.DB.prepare(
+      `SELECT id, relation_id AS relationId, filename,
+              content_type AS contentType, size_bytes AS sizeBytes,
+              created_at AS createdAt
+       FROM business_documents
+       WHERE relation_type = 'material' AND document_kind = 'image'
+       ORDER BY created_at ASC`,
+    ).all<JsonRecord>();
+    imageRows = result.results || [];
+  } catch {
+    // Materials remain usable if the optional image storage is unavailable.
+  }
+  return materials.map((material) => ({
+    ...material,
+    studioImages: imageRows
+      .filter(
+        (image) => scalarText(image.relationId) === scalarText(material.id),
+      )
+      .map((image) => ({
+        ...image,
+        url:
+          '/api/inventory/material-images?id=' +
+          encodeURIComponent(scalarText(image.id)),
+      })),
+  }));
+}
+
 async function saveExpenseMetadata(
   expenseId: string,
   values: JsonRecord,
@@ -731,7 +762,11 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'select=*&deleted_at=is.null&order=name.asc',
       ),
     ]);
-    return { materials, brands, storageLocations };
+    return {
+      materials: await decorateMaterials(materials),
+      brands,
+      storageLocations,
+    };
   }
   if (area === 'cash') {
     const [products, components, invoices, customers] = await Promise.all([
