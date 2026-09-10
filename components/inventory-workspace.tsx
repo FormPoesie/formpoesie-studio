@@ -6,6 +6,7 @@ import {
   Archive,
   Boxes,
   CalendarDays,
+  Calculator,
   Check,
   CircleDollarSign,
   ClipboardList,
@@ -47,6 +48,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   buyerWorldFromCategory,
+  inventoryReviewStatus,
   type InventoryItem,
 } from '@/lib/inventory-bridge';
 import { PRINTERS, variantCostBreakdown } from '@/lib/inventory-production';
@@ -60,11 +62,13 @@ import {
   marketVenue,
   onlineVenue,
 } from '@/lib/sales-history';
+import { PricingWorkspace } from '@/components/pricing-workspace';
 
 type Row = Record<string, unknown>;
 export type InventoryArea =
   | 'overview'
   | 'products'
+  | 'pricing'
   | 'materials'
   | 'markets'
   | 'shelves'
@@ -85,6 +89,7 @@ const sections: Array<{
 }> = [
   { id: 'overview', label: 'Übersicht', icon: Boxes },
   { id: 'products', label: 'Artikel', icon: Package },
+  { id: 'pricing', label: 'Preise & Portfolio', icon: Calculator },
   { id: 'materials', label: 'Material', icon: Warehouse },
   { id: 'markets', label: 'Märkte', icon: MapPin },
   { id: 'shelves', label: 'Regalflächen', icon: Warehouse },
@@ -634,7 +639,7 @@ export function InventoryWorkspace({
           .filter(
             (section) =>
               canManage ||
-              !['sales', 'months', 'expenses', 'account', 'trash'].includes(
+              !['pricing', 'sales', 'months', 'expenses', 'account', 'trash'].includes(
                 section.id,
               ),
           )
@@ -696,6 +701,9 @@ export function InventoryWorkspace({
           onListing={(row) => onCreateListing(inventoryItem(row))}
           onBulkEdit={bulkPatchProducts}
         />
+      ) : null}
+      {active === 'pricing' ? (
+        <PricingWorkspace data={data.pricing || {}} />
       ) : null}
       {active === 'materials' ? (
         <Materials
@@ -999,7 +1007,7 @@ function Products({
   const [familyId, setFamilyId] = useState('');
   const [designerId, setDesignerId] = useState('');
   const [reviewFilter, setReviewFilter] = useState<'final' | 'draft' | 'all'>(
-    'final',
+    'all',
   );
   const [sort, setSort] = useState<
     'name' | 'margin' | 'cost' | 'printTime' | 'updated'
@@ -1080,7 +1088,7 @@ function Products({
     if (designerId && string(product.designerId) !== designerId) return false;
     if (
       reviewFilter !== 'all' &&
-      string(product.studioStatus, 'final') !== reviewFilter
+      inventoryReviewStatus(product.studioStatus) !== reviewFilter
     )
       return false;
     if (mainFilter === 'missing' && !productMissing(product)) return false;
@@ -1289,7 +1297,7 @@ function Products({
               source.filter((item) =>
                 value === 'all'
                   ? true
-                  : string(item.studioStatus, 'final') === value,
+                  : inventoryReviewStatus(item.studioStatus) === value,
               ).length
             }
           </Button>
@@ -1693,12 +1701,12 @@ function Products({
                     <div className="flex flex-wrap justify-end gap-1">
                       <Badge
                         variant={
-                          string(product.studioStatus, 'final') === 'final'
+                          inventoryReviewStatus(product.studioStatus) === 'final'
                             ? 'default'
                             : 'outline'
                         }
                       >
-                        {string(product.studioStatus, 'final') === 'final'
+                        {inventoryReviewStatus(product.studioStatus) === 'final'
                           ? 'Final'
                           : 'Entwurf'}
                       </Badge>
@@ -3660,7 +3668,7 @@ function Expenses({
   >('all');
   const expenses = rows(data.expenses);
   const markets = rows(data.markets);
-  const marketExpenses = rows(data.marketExpenses).map((expense) => ({
+  const marketExpenses: Row[] = rows(data.marketExpenses).map((expense) => ({
     ...expense,
     expenseSource: 'market',
     marketName: (() => {
@@ -3674,7 +3682,7 @@ function Expenses({
       );
     })(),
   }));
-  const allExpenses = [...marketExpenses, ...expenses];
+  const allExpenses: Row[] = [...marketExpenses, ...expenses];
   const visible = allExpenses.filter((expense) => {
     const source =
       string(expense.expenseSource) === 'market' ? 'market' : 'other';
@@ -4377,10 +4385,7 @@ function EntityEditor({
                 <input
                   type="checkbox"
                   checked={
-                    string(
-                      form.studioStatus,
-                      editor.row.id ? 'final' : 'draft',
-                    ) === 'final'
+                    inventoryReviewStatus(form.studioStatus) === 'final'
                   }
                   onChange={(event) =>
                     setValue(
@@ -4401,8 +4406,7 @@ function EntityEditor({
                 />{' '}
                 Auf Etsy inseriert
               </label>
-              {string(form.studioStatus, editor.row.id ? 'final' : 'draft') ===
-              'final' ? (
+              {inventoryReviewStatus(form.studioStatus) === 'final' ? (
                 <Field
                   label="Datum der finalen Bestätigung"
                   type="date"
@@ -6014,7 +6018,7 @@ function MarketDetail({
                     .filter(
                       (item) =>
                         !item.archivedAt &&
-                        string(item.studioStatus, 'final') === 'final',
+                        inventoryReviewStatus(item.studioStatus) === 'final',
                     )
                     .map((item) => (
                       <option key={string(item.id)} value={string(item.id)}>
@@ -6027,7 +6031,7 @@ function MarketDetail({
                     .filter(
                       (item) =>
                         !item.archivedAt &&
-                        string(item.studioStatus, 'final') === 'draft',
+                        inventoryReviewStatus(item.studioStatus) === 'draft',
                     )
                     .map((item) => (
                       <option key={string(item.id)} value={string(item.id)}>

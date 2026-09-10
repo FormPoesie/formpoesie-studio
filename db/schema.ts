@@ -389,6 +389,131 @@ export const pricingScenarios = sqliteTable('pricing_scenarios', {
   ...timestamps,
 });
 
+export const pricingAssets = sqliteTable(
+  'pricing_assets',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    category: text('category'),
+    era: text('era'),
+    topicCluster: text('topic_cluster'),
+    awareness: text('awareness'),
+    demand: text('demand'),
+    competition: text('competition'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_pricing_assets_name').on(table.name),
+    index('idx_pricing_assets_topic').on(table.topicCluster),
+  ],
+);
+
+export const pricingProductProfiles = sqliteTable(
+  'pricing_product_profiles',
+  {
+    inventoryProductId: text('inventory_product_id').primaryKey(),
+    assetId: text('asset_id').references(() => pricingAssets.id, {
+      onDelete: 'set null',
+    }),
+    productKind: text('product_kind').notNull().default('physical'),
+    marketCategory: text('market_category'),
+    tier: text('tier').notNull().default('standard'),
+    shapeType: text('shape_type'),
+    season: text('season'),
+    demand: text('demand'),
+    competition: text('competition'),
+    lengthCm: real('length_cm'),
+    widthCm: real('width_cm'),
+    heightCm: real('height_cm'),
+    valueJson: text('value_json').notNull().default('{}'),
+    licenseJson: text('license_json').notNull().default('{}'),
+    updatedBy: text('updated_by'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_pricing_profiles_asset').on(table.assetId),
+    index('idx_pricing_profiles_category').on(table.marketCategory),
+  ],
+);
+
+export const pricingRecommendations = sqliteTable(
+  'pricing_recommendations',
+  {
+    id: text('id').primaryKey(),
+    inventoryProductId: text('inventory_product_id').notNull(),
+    inventoryVariantId: text('inventory_variant_id'),
+    channel: text('channel').notNull(),
+    recommendationKind: text('recommendation_kind')
+      .notNull()
+      .default('physical'),
+    configVersion: text('config_version').notNull(),
+    cogsCents: integer('cogs_cents'),
+    activePriceSnapshotCents: integer('active_price_snapshot_cents'),
+    recommendedPriceCents: integer('recommended_price_cents'),
+    inputJson: text('input_json').notNull(),
+    resultJson: text('result_json').notNull(),
+    createdBy: text('created_by'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_pricing_recommendations_product').on(
+      table.inventoryProductId,
+      table.inventoryVariantId,
+      table.createdAt,
+    ),
+    index('idx_pricing_recommendations_channel').on(
+      table.channel,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const bWareEvaluations = sqliteTable(
+  'b_ware_evaluations',
+  {
+    id: text('id').primaryKey(),
+    inventoryProductId: text('inventory_product_id').notNull(),
+    inventoryVariantId: text('inventory_variant_id'),
+    channel: text('channel').notNull(),
+    affectedArea: text('affected_area'),
+    inputJson: text('input_json').notNull(),
+    resultJson: text('result_json').notNull(),
+    createdBy: text('created_by'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_b_ware_product').on(
+      table.inventoryProductId,
+      table.inventoryVariantId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const marketPricingOutcomes = sqliteTable(
+  'market_pricing_outcomes',
+  {
+    id: text('id').primaryKey(),
+    marketId: text('market_id').notNull(),
+    expectedSales: integer('expected_sales').notNull(),
+    actualSales: integer('actual_sales'),
+    actualRevenueCents: integer('actual_revenue_cents'),
+    standFeeCents: integer('stand_fee_cents').notNull().default(0),
+    travelCostCents: integer('travel_cost_cents').notNull().default(0),
+    additionalCostCents: integer('additional_cost_cents').notNull().default(0),
+    createdBy: text('created_by'),
+    ...timestamps,
+  },
+  (table) => [index('idx_market_pricing_outcomes_market').on(table.marketId)],
+);
+
+export const pricingConfigValues = sqliteTable('pricing_config_values', {
+  key: text('key').primaryKey(),
+  valueJson: text('value_json').notNull(),
+  updatedBy: text('updated_by'),
+  updatedAt: text('updated_at').notNull(),
+});
+
 export const generationJobs = sqliteTable('generation_jobs', {
   id: text('id').primaryKey(),
   productId: text('product_id').references(() => products.id, {

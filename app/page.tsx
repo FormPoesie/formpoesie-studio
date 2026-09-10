@@ -9,6 +9,7 @@ import {
   BookOpen,
   Boxes,
   CalendarDays,
+  Calculator,
   Camera,
   Check,
   CheckCircle2,
@@ -230,6 +231,7 @@ const initialForm = {
 const navPrimary = [
   ['Übersicht', Boxes],
   ['Produkte', Leaf],
+  ['Preise & Portfolio', Calculator],
   ['Kasse', CircleDollarSign],
   ['Etsy Workflow', Sparkles],
 ] as const;
@@ -388,7 +390,7 @@ export default function Home() {
 
   function openInventory(area: InventoryArea = 'overview', productId = '') {
     if (
-      ['sales', 'months', 'expenses', 'trash'].includes(area) &&
+      ['pricing', 'sales', 'months', 'expenses', 'trash'].includes(area) &&
       !inventoryCanManage
     )
       return;
@@ -405,6 +407,7 @@ export default function Home() {
       setActiveProduct(null);
       closeModules();
     } else if (label === 'Produkte') openInventory('products');
+    else if (label === 'Preise & Portfolio') openInventory('pricing');
     else if (label === 'Kasse') openInventory('cash');
     else if (label === 'Märkte') openInventory('markets');
     else if (label === 'Regalflächen') openInventory('shelves');
@@ -457,6 +460,7 @@ export default function Home() {
       );
     const inventoryTarget: Record<string, InventoryArea> = {
       Produkte: 'products',
+      'Preise & Portfolio': 'pricing',
       Kasse: 'cash',
       Märkte: 'markets',
       Regalflächen: 'shelves',
@@ -1396,7 +1400,9 @@ export default function Home() {
                   : inventoryOpen
                     ? inventoryArea === 'markets'
                       ? 'Märkte'
-                      : inventoryArea === 'shelves'
+                      : inventoryArea === 'pricing'
+                        ? 'Preise & Portfolio'
+                        : inventoryArea === 'shelves'
                         ? 'Regalflächen'
                         : inventoryArea === 'cash'
                           ? 'Kasse'

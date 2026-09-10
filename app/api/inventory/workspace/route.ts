@@ -1,6 +1,7 @@
 import {
   INVENTORY_SUPABASE_URL,
   getInventoryUser,
+  inventoryReviewStatus,
   inventoryHeaders,
   readCookie,
   requireInventoryManager,
@@ -321,9 +322,8 @@ async function decorateProducts(value: unknown) {
     );
     return {
       ...product,
-      studioStatus: scalarText(
+      studioStatus: inventoryReviewStatus(
         metadata.get(scalarText(product.id))?.studioStatus,
-        'final',
       ),
       finalizedAt: metadata.get(scalarText(product.id))?.finalizedAt || null,
       etsyListed: [1, true].includes(
@@ -680,7 +680,7 @@ async function createInvoiceDraft({
 }
 
 async function loadArea(accessToken: string, area: string, request: Request) {
-  if (area === 'products') {
+  if (area === 'products' || area === 'pricing') {
     const [
       products,
       families,
@@ -730,7 +730,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
           '&deleted_at=is.null',
       ),
     ]);
-    return {
+    const productData = {
       products: await decorateProducts(products),
       families,
       designers,
@@ -739,6 +739,25 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       materials,
       marketArticles,
     };
+    if (area === 'products') return productData;
+    const [sales, onlineSales, markets] = await Promise.all([
+      query(
+        accessToken,
+        'sales',
+        'select=' +
+          encodeURIComponent(
+            '*,items:sale_items(*,articleVariant:article_variants!sale_items_article_variant_id_fkey(*,article:articles(*)))',
+          ) +
+          '&deleted_at=is.null&order=date.desc',
+      ),
+      query(
+        accessToken,
+        'online_sales',
+        'select=*&deleted_at=is.null&order=date.desc',
+      ),
+      query(accessToken, 'markets', 'select=id,name,location,date,end_date'),
+    ]);
+    return { ...productData, sales, onlineSales, markets };
   }
   if (area === 'materials') {
     const [materials, brands, storageLocations] = await Promise.all([

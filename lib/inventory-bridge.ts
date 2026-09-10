@@ -58,6 +58,12 @@ function stringValue(value: unknown, fallback = '') {
     : fallback;
 }
 
+export function inventoryReviewStatus(value: unknown): 'draft' | 'final' {
+  return stringValue(value).trim().toLocaleLowerCase('de') === 'final'
+    ? 'final'
+    : 'draft';
+}
+
 function rows(value: unknown) {
   return Array.isArray(value) ? (value as UnknownRow[]) : [];
 }
