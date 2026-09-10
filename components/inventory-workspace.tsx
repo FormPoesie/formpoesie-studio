@@ -3595,6 +3595,9 @@ function Expenses({
   const [recurrence, setRecurrence] = useState<'all' | ExpenseRecurrence>(
     'all',
   );
+  const [expenseSource, setExpenseSource] = useState<
+    'all' | 'market' | 'other'
+  >('all');
   const expenses = rows(data.expenses);
   const markets = rows(data.markets);
   const marketExpenses = rows(data.marketExpenses).map((expense) => ({
@@ -3613,6 +3616,9 @@ function Expenses({
   }));
   const allExpenses = [...marketExpenses, ...expenses];
   const visible = allExpenses.filter((expense) => {
+    const source =
+      string(expense.expenseSource) === 'market' ? 'market' : 'other';
+    if (expenseSource !== 'all' && source !== expenseSource) return false;
     if (
       recurrence !== 'all' &&
       string(expense.recurrence, 'none') !== recurrence
@@ -3650,6 +3656,16 @@ function Expenses({
       .reduce((sum, expense) => sum + expenseTotal(expense), 0);
   return (
     <section className="mt-6">
+      <div className="mb-4">
+        <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
+          Verwaltung
+        </p>
+        <h2 className="mt-1 font-heading text-3xl">Ausgabenübersicht</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Manuelle Ausgaben und automatisch übernommene Marktkosten in einer
+          Übersicht.
+        </p>
+      </div>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div className="relative flex-1">
           <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
@@ -3660,6 +3676,18 @@ function Expenses({
             placeholder="Beschreibung, Lieferant oder Kategorie suchen"
           />
         </div>
+        <select
+          value={expenseSource}
+          onChange={(event) =>
+            setExpenseSource(event.target.value as typeof expenseSource)
+          }
+          className="h-9 rounded-lg border bg-white px-3 text-sm"
+          aria-label="Kostenart"
+        >
+          <option value="all">Alle Kostenarten</option>
+          <option value="market">Nur Marktkosten</option>
+          <option value="other">Nur sonstige Ausgaben</option>
+        </select>
         <select
           value={recurrence}
           onChange={(event) =>
@@ -3681,11 +3709,12 @@ function Expenses({
         <Stat value={cents(thisMonthTotal)} label="für diesen Monat" />
         <Stat
           value={cents(
-            marketExpenses
-              .filter((expense) => monthKey(expense.date) === thisMonth)
-              .reduce((sum, expense) => sum + expenseTotal(expense), 0),
+            marketExpenses.reduce(
+              (sum, expense) => sum + expenseTotal(expense),
+              0,
+            ),
           )}
-          label="davon Marktkosten"
+          label="Marktkosten gesamt"
         />
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
