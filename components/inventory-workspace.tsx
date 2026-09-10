@@ -89,7 +89,7 @@ const sections: Array<{
 }> = [
   { id: 'overview', label: 'Übersicht', icon: Boxes },
   { id: 'products', label: 'Artikel', icon: Package },
-  { id: 'pricing', label: 'Preise & Portfolio', icon: Calculator },
+  { id: 'pricing', label: 'Preiskalkulator', icon: Calculator },
   { id: 'materials', label: 'Material', icon: Warehouse },
   { id: 'markets', label: 'Märkte', icon: MapPin },
   { id: 'shelves', label: 'Regalflächen', icon: Warehouse },

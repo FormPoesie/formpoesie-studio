@@ -230,10 +230,10 @@ const initialForm = {
 
 const navPrimary = [
   ['Übersicht', Boxes],
-  ['Produkte', Leaf],
-  ['Preise & Portfolio', Calculator],
   ['Kasse', CircleDollarSign],
+  ['Produkte', Leaf],
   ['Etsy Workflow', Sparkles],
+  ['Preiskalkulator', Calculator],
 ] as const;
 
 const navGroups = [
@@ -245,17 +245,17 @@ const navGroups = [
     ],
   },
   {
+    label: 'Kataloge & Bestellungen',
+    items: [
+      ['Kataloge', BookOpen],
+      ['Bestellformular', ShoppingCart],
+    ],
+  },
+  {
     label: 'Social Media',
     items: [
       ['News-Kalender', CalendarDays],
       ['Mindmap', Network],
-    ],
-  },
-  {
-    label: 'Katalog & Bestellungen',
-    items: [
-      ['Kataloge', BookOpen],
-      ['Bestellformular', ShoppingCart],
     ],
   },
   {
@@ -407,7 +407,7 @@ export default function Home() {
       setActiveProduct(null);
       closeModules();
     } else if (label === 'Produkte') openInventory('products');
-    else if (label === 'Preise & Portfolio') openInventory('pricing');
+    else if (label === 'Preiskalkulator') openInventory('pricing');
     else if (label === 'Kasse') openInventory('cash');
     else if (label === 'Märkte') openInventory('markets');
     else if (label === 'Regalflächen') openInventory('shelves');
@@ -460,7 +460,7 @@ export default function Home() {
       );
     const inventoryTarget: Record<string, InventoryArea> = {
       Produkte: 'products',
-      'Preise & Portfolio': 'pricing',
+      Preiskalkulator: 'pricing',
       Kasse: 'cash',
       Märkte: 'markets',
       Regalflächen: 'shelves',
@@ -1401,7 +1401,7 @@ export default function Home() {
                     ? inventoryArea === 'markets'
                       ? 'Märkte'
                       : inventoryArea === 'pricing'
-                        ? 'Preise & Portfolio'
+                        ? 'Preiskalkulator'
                         : inventoryArea === 'shelves'
                         ? 'Regalflächen'
                         : inventoryArea === 'cash'
