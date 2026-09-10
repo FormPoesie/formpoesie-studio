@@ -1245,7 +1245,11 @@ function Products({
             key={value}
             size="sm"
             variant={reviewFilter === value ? 'default' : 'outline'}
-            onClick={() => setReviewFilter(value)}
+            onClick={() =>
+              setReviewFilter((current) =>
+                value !== 'all' && current === value ? 'all' : value,
+              )
+            }
           >
             {label}
             {' · '}
@@ -1268,7 +1272,11 @@ function Products({
             key={value}
             size="sm"
             variant={mainFilter === value ? 'default' : 'outline'}
-            onClick={() => setMainFilter(value)}
+            onClick={() =>
+              setMainFilter((current) =>
+                value !== 'all' && current === value ? 'all' : value,
+              )
+            }
           >
             {label}
           </Button>
