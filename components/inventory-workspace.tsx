@@ -18,6 +18,7 @@ import {
   Check,
   CircleDollarSign,
   ClipboardList,
+  Copy,
   Download,
   ExternalLink,
   Factory,
@@ -618,6 +619,7 @@ export function InventoryWorkspace({
   );
   const [form, setForm] = useState<Row>({});
   const [saving, setSaving] = useState(false);
+  const [duplicatingProductId, setDuplicatingProductId] = useState('');
   const [editorMessage, setEditorMessage] = useState('');
   const [selectedMarket, setSelectedMarket] = useState<Row | null>(null);
   const openedInitialProduct = useRef('');
@@ -874,6 +876,48 @@ export function InventoryWorkspace({
     else await refresh();
   }
 
+  async function duplicateProduct(row: Row) {
+    const sourceId = string(row.id);
+    if (!sourceId || duplicatingProductId) return;
+    setDuplicatingProductId(sourceId);
+    setError('');
+    try {
+      const response = await fetch('/api/inventory/workspace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'duplicateProduct', id: sourceId }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        productId?: string | number;
+      };
+      if (!response.ok || result.productId == null)
+        throw new Error(
+          result.error || 'Artikel konnte nicht dupliziert werden.',
+        );
+      const productResult = await fetchArea('products');
+      const duplicate = rows(productResult.products).find(
+        (item) => string(item.id) === string(result.productId),
+      );
+      if (!duplicate)
+        throw new Error('Die neue Artikelkopie konnte nicht geladen werden.');
+      setSearch('');
+      setProductFilter('active');
+      openEditor('products', duplicate);
+      setEditorMessage(
+        'Vollständige Arbeitskopie angelegt. Bestände, Etsy-Status und Final-Markierung wurden bewusst zurückgesetzt.',
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Artikel konnte nicht dupliziert werden.',
+      );
+    } finally {
+      setDuplicatingProductId('');
+    }
+  }
+
   const productData = data.products || {};
   const products = rows(productData.products);
   const materials = rows(data.materials?.materials);
@@ -992,6 +1036,8 @@ export function InventoryWorkspace({
             });
           }}
           onListing={(row) => onCreateListing(inventoryItem(row))}
+          onDuplicate={(row) => void duplicateProduct(row)}
+          duplicatingProductId={duplicatingProductId}
           onBulkEdit={bulkPatchProducts}
         />
       ) : null}
@@ -1282,6 +1328,8 @@ function Products({
   onTrash,
   onArchive,
   onListing,
+  onDuplicate,
+  duplicatingProductId,
   onBulkEdit,
 }: {
   data: AreaData;
@@ -1294,6 +1342,8 @@ function Products({
   onTrash: (row: Row) => void;
   onArchive: (row: Row) => void;
   onListing: (row: Row) => void;
+  onDuplicate: (row: Row) => void;
+  duplicatingProductId: string;
   onBulkEdit: (ids: string[], values: Row) => Promise<boolean>;
 }) {
   const [category, setCategory] = useState('');
@@ -2031,6 +2081,17 @@ function Products({
                     <DropdownMenuContent align="end" className="w-44">
                       <DropdownMenuItem onClick={() => onListing(product)}>
                         <Sparkles /> Für Etsy öffnen
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={Boolean(duplicatingProductId)}
+                        onClick={() => onDuplicate(product)}
+                      >
+                        {duplicatingProductId === string(product.id) ? (
+                          <Loader2 className="animate-spin" />
+                        ) : (
+                          <Copy />
+                        )}
+                        Artikel duplizieren
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => onArchive(product)}>
                         <Archive />

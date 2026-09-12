@@ -12,6 +12,7 @@ import {
   invoiceCustomerIsComplete,
   shippingMethodForChannel,
 } from '@/lib/invoice-workflow';
+import { safeAssetFilename } from '@/lib/product-assets';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -1137,6 +1138,272 @@ export async function GET(request: Request) {
   }
 }
 
+async function duplicateProduct(
+  accessToken: string,
+  sourceProductId: string,
+  userId: string | null,
+) {
+  const [
+    sourceProducts,
+    sourceVariants,
+    sourceFilaments,
+    sourceComponents,
+    sourceAccessories,
+  ] = await Promise.all([
+    query(
+      accessToken,
+      'products',
+      `select=*&id=eq.${encodeURIComponent(sourceProductId)}&deleted_at=is.null&limit=1`,
+    ),
+    query(
+      accessToken,
+      'product_variants',
+      `select=*&product_id=eq.${encodeURIComponent(sourceProductId)}&order=position.asc,id.asc`,
+    ),
+    query(
+      accessToken,
+      'product_filaments',
+      `select=*&product_id=eq.${encodeURIComponent(sourceProductId)}&order=position.asc,id.asc`,
+    ),
+    query(
+      accessToken,
+      'product_components',
+      `select=*&parent_product_id=eq.${encodeURIComponent(sourceProductId)}&order=id.asc`,
+    ),
+    query(
+      accessToken,
+      'product_accessories',
+      `select=*&product_id=eq.${encodeURIComponent(sourceProductId)}&order=id.asc`,
+    ).catch(() => []),
+  ]);
+  const source = Array.isArray(sourceProducts)
+    ? (sourceProducts[0] as JsonRecord | undefined)
+    : undefined;
+  if (!source)
+    throw new Error('Der zu duplizierende Artikel wurde nicht gefunden.');
+
+  const variantRows = Array.isArray(sourceVariants)
+    ? (sourceVariants as JsonRecord[])
+    : [];
+  const filamentRows = Array.isArray(sourceFilaments)
+    ? (sourceFilaments as JsonRecord[])
+    : [];
+  const preciseResult = await env.DB.prepare(
+    `SELECT entity_kind AS entityKind, row_id AS rowId, grams, waste_grams AS wasteGrams
+     FROM inventory_measurement_precision
+     WHERE (entity_kind = 'product_variants' OR entity_kind = 'product_filaments')`,
+  ).all<JsonRecord>();
+  const preciseMeasurements = new Map(
+    (preciseResult.results || []).map((row) => [
+      `${scalarText(row.entityKind)}:${scalarText(row.rowId)}`,
+      row,
+    ]),
+  );
+  const withPrecision = (entity: string, row: JsonRecord) => {
+    const precise = preciseMeasurements.get(`${entity}:${scalarText(row.id)}`);
+    return {
+      ...row,
+      ...(precise?.grams == null ? {} : { grams: precise.grams }),
+      ...(precise?.wasteGrams == null
+        ? {}
+        : { wasteGrams: precise.wasteGrams }),
+    };
+  };
+
+  const productValues = safeValues('products', {
+    ...source,
+    name: `${scalarText(source.name, 'Artikel')} – Kopie`,
+    sku: null,
+    stockQuantity: 0,
+    baseStockQuantity: 0,
+    archivedAt: null,
+  });
+  if (!productValues)
+    throw new Error('Die Artikelkopie konnte nicht vorbereitet werden.');
+
+  let newProductId = '';
+  const copiedAssetKeys: string[] = [];
+  try {
+    const createdProducts = await inventoryFetch(accessToken, 'products', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...productValues,
+        created_by: userId,
+        updated_by: userId,
+      }),
+    });
+    const createdProduct = Array.isArray(createdProducts)
+      ? (createdProducts[0] as JsonRecord | undefined)
+      : undefined;
+    newProductId = scalarText(createdProduct?.id);
+    if (!newProductId) throw new Error('Die neue Artikel-ID fehlt.');
+
+    const variantIdMap = new Map<string, string>();
+    for (const sourceVariant of variantRows) {
+      const values = safeValues('product_variants', {
+        ...withPrecision('product_variants', sourceVariant),
+        productId: Number(newProductId),
+        quantity: 0,
+        discountPercent: 0,
+        defectNote: null,
+      });
+      const created = await inventoryFetch(accessToken, 'product_variants', {
+        method: 'POST',
+        body: JSON.stringify(values),
+      });
+      const row = Array.isArray(created)
+        ? (created[0] as JsonRecord | undefined)
+        : undefined;
+      const newVariantId = scalarText(row?.id);
+      if (!newVariantId)
+        throw new Error('Eine Variante konnte nicht kopiert werden.');
+      variantIdMap.set(scalarText(sourceVariant.id), newVariantId);
+      await saveMeasurementPrecision(
+        'product_variants',
+        newVariantId,
+        withPrecision('product_variants', sourceVariant),
+      );
+    }
+
+    for (const sourceFilament of filamentRows) {
+      const sourceVariantId = scalarText(sourceFilament.productVariantId);
+      const values = safeValues('product_filaments', {
+        ...withPrecision('product_filaments', sourceFilament),
+        productId: Number(newProductId),
+        productVariantId: sourceVariantId
+          ? Number(variantIdMap.get(sourceVariantId))
+          : null,
+        stockQuantity: 0,
+      });
+      const created = await inventoryFetch(accessToken, 'product_filaments', {
+        method: 'POST',
+        body: JSON.stringify(values),
+      });
+      const row = Array.isArray(created)
+        ? (created[0] as JsonRecord | undefined)
+        : undefined;
+      const newFilamentId = scalarText(row?.id);
+      if (!newFilamentId)
+        throw new Error('Ein Druckteil konnte nicht kopiert werden.');
+      await saveMeasurementPrecision(
+        'product_filaments',
+        newFilamentId,
+        withPrecision('product_filaments', sourceFilament),
+      );
+    }
+
+    for (const sourceComponent of Array.isArray(sourceComponents)
+      ? (sourceComponents as JsonRecord[])
+      : []) {
+      const parentVariantId = scalarText(sourceComponent.parentVariantId);
+      const values = safeValues('product_components', {
+        ...sourceComponent,
+        parentProductId: Number(newProductId),
+        parentVariantId: parentVariantId
+          ? Number(variantIdMap.get(parentVariantId))
+          : null,
+      });
+      await inventoryFetch(accessToken, 'product_components', {
+        method: 'POST',
+        body: JSON.stringify({ ...values, created_by: userId }),
+      });
+    }
+
+    for (const sourceAccessory of Array.isArray(sourceAccessories)
+      ? (sourceAccessories as JsonRecord[])
+      : []) {
+      const productVariantId = scalarText(sourceAccessory.productVariantId);
+      const values = safeValues('product_accessories', {
+        ...sourceAccessory,
+        productId: Number(newProductId),
+        productVariantId: productVariantId
+          ? Number(variantIdMap.get(productVariantId))
+          : null,
+      });
+      await inventoryFetch(accessToken, 'product_accessories', {
+        method: 'POST',
+        body: JSON.stringify({ ...values, created_by: userId }),
+      });
+    }
+
+    await saveProductMetadata(
+      newProductId,
+      { studioStatus: 'draft', finalizedAt: null, etsyListed: false },
+      userId,
+    );
+
+    const assetResult = await env.DB.prepare(
+      `SELECT id, asset_kind AS assetKind, object_key AS objectKey, filename,
+              content_type AS contentType, size_bytes AS sizeBytes,
+              is_primary AS isPrimary
+       FROM inventory_product_assets WHERE product_id = ? ORDER BY created_at ASC`,
+    )
+      .bind(sourceProductId)
+      .all<JsonRecord>();
+    for (const sourceAsset of assetResult.results || []) {
+      const stored = await env.FILES.get(scalarText(sourceAsset.objectKey));
+      if (!stored) continue;
+      const assetId = `ipa_${crypto.randomUUID()}`;
+      const assetKind = scalarText(sourceAsset.assetKind, 'image');
+      const filename = safeAssetFilename(
+        scalarText(sourceAsset.filename, 'Datei'),
+      );
+      const objectKey = `inventory-products/${newProductId}/${assetKind}/${assetId}/${filename}`;
+      await env.FILES.put(objectKey, stored.body, {
+        httpMetadata: {
+          contentType: scalarText(
+            sourceAsset.contentType,
+            'application/octet-stream',
+          ),
+        },
+      });
+      copiedAssetKeys.push(objectKey);
+      const instant = new Date().toISOString();
+      await env.DB.prepare(
+        `INSERT INTO inventory_product_assets
+           (id, product_id, asset_kind, object_key, filename, content_type,
+            size_bytes, is_primary, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          assetId,
+          newProductId,
+          assetKind,
+          objectKey,
+          filename,
+          scalarText(sourceAsset.contentType, 'application/octet-stream'),
+          Number(sourceAsset.sizeBytes) || 0,
+          [1, true].includes(sourceAsset.isPrimary as boolean | number) ? 1 : 0,
+          userId,
+          instant,
+          instant,
+        )
+        .run();
+    }
+    return newProductId;
+  } catch (error) {
+    for (const objectKey of copiedAssetKeys) await env.FILES.delete(objectKey);
+    if (newProductId) {
+      await env.DB.prepare(
+        'DELETE FROM inventory_product_assets WHERE product_id = ?',
+      )
+        .bind(newProductId)
+        .run();
+      await env.DB.prepare(
+        'DELETE FROM inventory_product_metadata WHERE product_id = ?',
+      )
+        .bind(newProductId)
+        .run();
+      await inventoryFetch(
+        accessToken,
+        `products?id=eq.${encodeURIComponent(newProductId)}`,
+        { method: 'DELETE' },
+      ).catch(() => null);
+    }
+    throw error;
+  }
+}
+
 export async function POST(request: Request) {
   const accessToken = readCookie(request, 'fp_inventory_access');
   const user = await getInventoryUser(request);
@@ -1144,6 +1411,7 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
   const body = (await request.json()) as {
     action?: string;
+    id?: string | number;
     entity?: string;
     values?: JsonRecord;
     rpc?: string;
@@ -1157,6 +1425,17 @@ export async function POST(request: Request) {
     if (denied) return denied;
   }
   try {
+    if (body.action === 'duplicateProduct') {
+      const sourceProductId = scalarText(body.id).trim();
+      if (!sourceProductId)
+        return Response.json({ error: 'Artikel-ID fehlt.' }, { status: 400 });
+      const productId = await duplicateProduct(
+        accessToken,
+        sourceProductId,
+        user.id || null,
+      );
+      return Response.json({ saved: true, productId }, { status: 201 });
+    }
     if (body.action === 'create_online_order') {
       const allowedChannels = new Set([
         'Abholung',
