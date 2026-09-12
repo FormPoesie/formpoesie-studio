@@ -230,6 +230,12 @@ function designerName(product: Row, data: AreaData) {
   return string(designer?.name);
 }
 
+function materialChoiceLabel(material: Row) {
+  const brand = string(object(material.brand).name);
+  const color = string(material.variant);
+  return [brand, color].filter(Boolean).join(' · ') || string(material.name);
+}
+
 function productionDataMissing(
   product: Row,
   _products: Row[],
@@ -5169,10 +5175,10 @@ const ManufacturingEditor = forwardRef<
   const hasSharedProduction = filaments.some(
     (item) => !string(item.productVariantId),
   );
-  const variantGroups = Array.from(
-    variants.reduce((groups, variant) => {
-      const label = string(variant.name, 'Standard').trim() || 'Standard';
-      groups.set(label, [...(groups.get(label) || []), variant]);
+  const filamentGroups = Array.from(
+    filaments.reduce((groups, filament) => {
+      const label = string(filament.part, 'Druckteil').trim() || 'Druckteil';
+      groups.set(label, [...(groups.get(label) || []), filament]);
       return groups;
     }, new Map<string, Row[]>()),
   );
@@ -5261,6 +5267,22 @@ const ManufacturingEditor = forwardRef<
       document
         .getElementById('manufacturing-editor-' + string(product.id))
         ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
+  }
+
+  function addMaterialToPart(row: Row) {
+    open('product_filaments', {
+      productId: number(product.id),
+      productVariantId: row.productVariantId || null,
+      part: string(row.part, 'Druckteil'),
+      grams: 0,
+      wasteGrams: 0,
+      printer: row.printer || null,
+      printMinutes: 0,
+      position: filaments.length,
+    });
+    setMessage(
+      `Weitere Farbe für „${string(row.part, 'Druckteil')}“: Material, Teilgewicht und gegebenenfalls Druckzeit ergänzen.`,
     );
   }
 
@@ -5625,13 +5647,7 @@ const ManufacturingEditor = forwardRef<
                         <option value="">Filament wählen</option>
                         {materials.map((item) => (
                           <option key={string(item.id)} value={string(item.id)}>
-                            {[
-                              string(object(item.brand).name),
-                              string(item.name),
-                              string(item.variant),
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
+                            {materialChoiceLabel(item)}
                           </option>
                         ))}
                       </select>
@@ -5829,25 +5845,60 @@ const ManufacturingEditor = forwardRef<
           <span className="text-sm transition group-open:rotate-180">⌄</span>
         </summary>
         <div className="border-t p-3">
-          <div className="flex flex-wrap gap-2">
-            {filaments.map((item) => (
-              <button
-                type="button"
-                key={string(item.id)}
-                onClick={() => open('product_filaments', item)}
-                className="rounded-full border bg-white px-3 py-1 text-xs hover:border-[var(--fp-primary)]"
-              >
-                {string(item.part, 'Filament')}: {number(item.grams)} g
-                {number(item.printMinutes) > 0
-                  ? ` · ${duration(number(item.printMinutes))}`
-                  : ''}{' '}
-                {[
-                  string(object(item.material).name),
-                  string(object(item.material).variant),
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </button>
+          <div className="space-y-3">
+            {filamentGroups.map(([part, partFilaments]) => (
+              <div key={part} className="rounded-xl border bg-white/70 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <strong className="text-sm">{part}</strong>
+                    <p className="text-xs text-muted-foreground">
+                      {partFilaments.length}{' '}
+                      {partFilaments.length === 1
+                        ? 'Farbe / Material'
+                        : 'Farben / Materialien'}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => addMaterialToPart(partFilaments[0])}
+                  >
+                    <Plus className="size-3.5" /> Farbe / Material
+                  </Button>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {partFilaments.map((item) => {
+                    const assignedVariant = variants.find(
+                      (variant) =>
+                        string(variant.id) === string(item.productVariantId),
+                    );
+                    return (
+                      <button
+                        type="button"
+                        key={string(item.id)}
+                        onClick={() => open('product_filaments', item)}
+                        className="rounded-xl border bg-white px-3 py-2 text-left text-xs hover:border-[var(--fp-primary)]"
+                      >
+                        <span className="block font-medium">
+                          {materialChoiceLabel(object(item.material)) ||
+                            'Material offen'}
+                        </span>
+                        <span className="mt-1 block text-muted-foreground">
+                          {number(item.grams)} g
+                          {number(item.printMinutes) > 0
+                            ? ` · ${duration(number(item.printMinutes))}`
+                            : ''}
+                          {' · '}
+                          {assignedVariant
+                            ? string(assignedVariant.name, 'Variante')
+                            : 'alle Varianten'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             ))}
           </div>
           {!filaments.length ? (
@@ -5862,7 +5913,7 @@ const ManufacturingEditor = forwardRef<
             className="mt-3"
             onClick={() => open('product_filaments')}
           >
-            <Plus className="size-3.5" /> Druckteil hinzufügen
+            <Plus className="size-3.5" /> Neues Bauteil
           </Button>
         </div>
       </details>
@@ -5962,13 +6013,7 @@ const ManufacturingEditor = forwardRef<
                     <option value="">Material wählen</option>
                     {materials.map((item) => (
                       <option key={string(item.id)} value={string(item.id)}>
-                        {[
-                          string(object(item.brand).name),
-                          string(item.name),
-                          string(item.variant),
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
+                        {materialChoiceLabel(item)}
                       </option>
                     ))}
                   </select>
@@ -6150,7 +6195,32 @@ const ManufacturingEditor = forwardRef<
             ) : (
               <>
                 <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                  Material
+                  Verwendung
+                  <select
+                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                    value={string(values.productVariantId)}
+                    onChange={(event) =>
+                      setValues((current) => ({
+                        ...current,
+                        productVariantId: event.target.value
+                          ? Number(event.target.value)
+                          : null,
+                      }))
+                    }
+                  >
+                    <option value="">Für alle Varianten</option>
+                    {variants.map((variant, index) => (
+                      <option
+                        key={string(variant.id)}
+                        value={string(variant.id)}
+                      >
+                        Nur {string(variant.name, `Variante ${index + 1}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  Farbe / Material
                   <select
                     className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
                     value={string(values.materialId)}
@@ -6166,13 +6236,13 @@ const ManufacturingEditor = forwardRef<
                     <option value="">Material wählen</option>
                     {materials.map((item) => (
                       <option key={string(item.id)} value={string(item.id)}>
-                        {string(item.name)} · {string(item.variant)}
+                        {materialChoiceLabel(item)}
                       </option>
                     ))}
                   </select>
                 </label>
                 <Field
-                  label="Bauteil / Bereich"
+                  label="Bauteil"
                   value={string(values.part)}
                   onChange={(value) =>
                     setValues((current) => ({ ...current, part: value }))
