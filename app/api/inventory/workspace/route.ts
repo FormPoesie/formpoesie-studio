@@ -5,195 +5,195 @@ import {
   inventoryHeaders,
   readCookie,
   requireInventoryManager,
-} from "@/lib/inventory-bridge";
-import { env } from "cloudflare:workers";
-import { rebuildMonthlyProductHighlights } from "@/lib/monthly-product";
+} from '@/lib/inventory-bridge';
+import { env } from 'cloudflare:workers';
+import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
 import {
   invoiceCustomerIsComplete,
   shippingMethodForChannel,
-} from "@/lib/invoice-workflow";
+} from '@/lib/invoice-workflow';
 
 type JsonRecord = Record<string, unknown>;
 
 const entityFields: Record<string, Set<string>> = {
   products: new Set([
-    "name",
-    "sku",
-    "family_id",
-    "designer_id",
-    "size",
-    "category",
-    "image_uri",
-    "model_url",
-    "commercial_license",
-    "print_files",
-    "printer",
-    "print_minutes",
-    "production_cost_cents",
-    "filament_grams",
-    "stock_quantity",
-    "base_stock_quantity",
-    "default_price_cents",
-    "extra_cost_cents",
-    "default_accessories",
-    "note",
-    "archived_at",
+    'name',
+    'sku',
+    'family_id',
+    'designer_id',
+    'size',
+    'category',
+    'image_uri',
+    'model_url',
+    'commercial_license',
+    'print_files',
+    'printer',
+    'print_minutes',
+    'production_cost_cents',
+    'filament_grams',
+    'stock_quantity',
+    'base_stock_quantity',
+    'default_price_cents',
+    'extra_cost_cents',
+    'default_accessories',
+    'note',
+    'archived_at',
   ]),
   product_variants: new Set([
-    "product_id",
-    "weight_class_group",
-    "name",
-    "material_id",
-    "grams",
-    "waste_grams",
-    "size",
-    "appearance",
-    "quantity",
-    "discount_percent",
-    "defect_note",
-    "production_cost_cents",
-    "accessories",
-    "extra_cost_cents",
-    "image_url",
-    "price_cents",
-    "printer",
-    "print_minutes",
-    "position",
+    'product_id',
+    'weight_class_group',
+    'name',
+    'material_id',
+    'grams',
+    'waste_grams',
+    'size',
+    'appearance',
+    'quantity',
+    'discount_percent',
+    'defect_note',
+    'production_cost_cents',
+    'accessories',
+    'extra_cost_cents',
+    'image_url',
+    'price_cents',
+    'printer',
+    'print_minutes',
+    'position',
   ]),
   product_filaments: new Set([
-    "product_id",
-    "product_variant_id",
-    "material_id",
-    "grams",
-    "waste_grams",
-    "part",
-    "printer",
-    "print_minutes",
-    "stock_quantity",
-    "printed_together",
-    "position",
+    'product_id',
+    'product_variant_id',
+    'material_id',
+    'grams',
+    'waste_grams',
+    'part',
+    'printer',
+    'print_minutes',
+    'stock_quantity',
+    'printed_together',
+    'position',
   ]),
   product_components: new Set([
-    "parent_product_id",
-    "parent_variant_id",
-    "component_product_id",
-    "component_variant_id",
-    "quantity",
-    "inventory_tracking_mode",
-    "color_requirement",
-    "slot",
-    "consumed_at",
+    'parent_product_id',
+    'parent_variant_id',
+    'component_product_id',
+    'component_variant_id',
+    'quantity',
+    'inventory_tracking_mode',
+    'color_requirement',
+    'slot',
+    'consumed_at',
   ]),
   product_accessories: new Set([
-    "product_id",
-    "product_variant_id",
-    "accessory_product_id",
-    "accessory_variant_id",
+    'product_id',
+    'product_variant_id',
+    'accessory_product_id',
+    'accessory_variant_id',
   ]),
   market_demands: new Set([
-    "market_id",
-    "product_id",
-    "product_variant_id",
-    "quantity",
-    "note",
+    'market_id',
+    'product_id',
+    'product_variant_id',
+    'quantity',
+    'note',
   ]),
   materials: new Set([
-    "name",
-    "brand_id",
-    "with_spool",
-    "price_per_roll_cents",
-    "spool_weight_grams",
-    "variant",
-    "material_type",
-    "storage_location_id",
-    "quantity",
-    "unit",
-    "status",
-    "note",
+    'name',
+    'brand_id',
+    'with_spool',
+    'price_per_roll_cents',
+    'spool_weight_grams',
+    'variant',
+    'material_type',
+    'storage_location_id',
+    'quantity',
+    'unit',
+    'status',
+    'note',
   ]),
-  markets: new Set(["name", "location", "date", "end_date", "status"]),
+  markets: new Set(['name', 'location', 'date', 'end_date', 'status']),
   online_sales: new Set([
-    "product_id",
-    "article_name",
-    "size",
-    "quantity",
-    "date",
-    "channel",
-    "order_key",
-    "printer",
-    "print_minutes",
-    "print_deadline",
-    "filament_material_id",
-    "filament_grams",
-    "filament_cost_cents",
-    "electricity_cost_cents",
-    "machine_cost_cents",
-    "accessory_cost_cents",
-    "license_cost_cents",
-    "depreciation_cost_cents",
-    "sale_price_cents",
-    "shipping_method",
-    "shipping_cost_cents",
-    "shipping_deadline",
-    "shipping_recipient",
-    "shipping_label_uri",
-    "is_printed",
-    "is_shipped",
-    "note",
+    'product_id',
+    'article_name',
+    'size',
+    'quantity',
+    'date',
+    'channel',
+    'order_key',
+    'printer',
+    'print_minutes',
+    'print_deadline',
+    'filament_material_id',
+    'filament_grams',
+    'filament_cost_cents',
+    'electricity_cost_cents',
+    'machine_cost_cents',
+    'accessory_cost_cents',
+    'license_cost_cents',
+    'depreciation_cost_cents',
+    'sale_price_cents',
+    'shipping_method',
+    'shipping_cost_cents',
+    'shipping_deadline',
+    'shipping_recipient',
+    'shipping_label_uri',
+    'is_printed',
+    'is_shipped',
+    'note',
   ]),
   other_expenses: new Set([
-    "article_name",
-    "vendor",
-    "invoice_date",
-    "quantity",
-    "price_cents",
-    "is_monthly",
-    "end_date",
-    "note",
+    'article_name',
+    'vendor',
+    'invoice_date',
+    'quantity',
+    'price_cents',
+    'is_monthly',
+    'end_date',
+    'note',
   ]),
 };
 
 const rpcNames = new Set([
-  "bestand_buchen",
-  "bestand_zurueck_buchen",
-  "bestand_auf_markt_buchen",
-  "markt_buchen",
-  "markt_zurueck_buchen",
-  "marktpreis_setzen",
-  "verkauf_buchen",
-  "versand_buchen",
-  "versand_zuruecknehmen",
-  "zusammenbauen",
-  "verkaufs_bauteile_buchen",
+  'bestand_buchen',
+  'bestand_zurueck_buchen',
+  'bestand_auf_markt_buchen',
+  'markt_buchen',
+  'markt_zurueck_buchen',
+  'marktpreis_setzen',
+  'verkauf_buchen',
+  'versand_buchen',
+  'versand_zuruecknehmen',
+  'zusammenbauen',
+  'verkaufs_bauteile_buchen',
 ]);
 
 const entitiesWithUpdatedBy = new Set([
-  "products",
-  "materials",
-  "online_sales",
-  "other_expenses",
+  'products',
+  'materials',
+  'online_sales',
+  'other_expenses',
 ]);
 
 const entitiesWithCreatedBy = new Set([
-  "products",
-  "materials",
-  "online_sales",
-  "other_expenses",
-  "product_components",
-  "product_accessories",
-  "market_demands",
+  'products',
+  'materials',
+  'online_sales',
+  'other_expenses',
+  'product_components',
+  'product_accessories',
+  'market_demands',
 ]);
 
 const trashableEntities = new Set([
-  "products",
-  "materials",
-  "markets",
-  "other_expenses",
+  'products',
+  'materials',
+  'markets',
+  'other_expenses',
 ]);
 
 function toCamel(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(toCamel);
-  if (!value || typeof value !== "object") return value;
+  if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(
     Object.entries(value as JsonRecord).map(([key, item]) => [
       key.replace(/_([a-z0-9])/g, (_, character: string) =>
@@ -208,8 +208,8 @@ function toSnake(name: string) {
   return name.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`);
 }
 
-function scalarText(value: unknown, fallback = "") {
-  return typeof value === "string" || typeof value === "number"
+function scalarText(value: unknown, fallback = '') {
+  return typeof value === 'string' || typeof value === 'number'
     ? String(value)
     : fallback;
 }
@@ -217,11 +217,60 @@ function scalarText(value: unknown, fallback = "") {
 function safeValues(entity: string, values: JsonRecord) {
   const allowed = entityFields[entity];
   if (!allowed) return null;
+  const integerWeightTable = ['product_variants', 'product_filaments'].includes(
+    entity,
+  );
   return Object.fromEntries(
     Object.entries(values)
-      .map(([key, value]) => [toSnake(key), value] as const)
+      .map(([key, value]) => {
+        const snakeKey = toSnake(key);
+        const compatibleValue =
+          integerWeightTable && ['grams', 'waste_grams'].includes(snakeKey)
+            ? Math.max(0, Math.round(Number(value) || 0))
+            : value;
+        return [snakeKey, compatibleValue] as const;
+      })
       .filter(([key, value]) => allowed.has(key) && value !== undefined),
   );
+}
+
+async function saveMeasurementPrecision(
+  entity: string,
+  rowId: string,
+  values: JsonRecord,
+) {
+  if (!['product_variants', 'product_filaments'].includes(entity)) return;
+  const hasGrams = 'grams' in values;
+  const hasWasteGrams = 'wasteGrams' in values;
+  if (!hasGrams && !hasWasteGrams) return;
+  const current = await env.DB.prepare(
+    `SELECT grams, waste_grams AS wasteGrams
+     FROM inventory_measurement_precision
+     WHERE entity_kind = ? AND row_id = ?`,
+  )
+    .bind(entity, rowId)
+    .first<JsonRecord>();
+  const grams = hasGrams
+    ? Math.max(0, Number(values.grams) || 0)
+    : current?.grams == null
+      ? null
+      : Number(current.grams);
+  const wasteGrams = hasWasteGrams
+    ? Math.max(0, Number(values.wasteGrams) || 0)
+    : current?.wasteGrams == null
+      ? null
+      : Number(current.wasteGrams);
+  await env.DB.prepare(
+    `INSERT INTO inventory_measurement_precision
+       (entity_kind, row_id, grams, waste_grams, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(entity_kind, row_id) DO UPDATE SET
+       grams = excluded.grams,
+       waste_grams = excluded.waste_grams,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(entity, rowId, grams, wasteGrams, new Date().toISOString())
+    .run();
 }
 
 async function inventoryFetch(
@@ -229,19 +278,19 @@ async function inventoryFetch(
   path: string,
   init?: RequestInit,
 ) {
-  const method = (init?.method || "GET").toUpperCase();
+  const method = (init?.method || 'GET').toUpperCase();
   const serviceKey = env.INVENTORY_SUPABASE_SERVICE_ROLE_KEY;
-  const usePrivilegedWrite = method !== "GET" && Boolean(serviceKey);
+  const usePrivilegedWrite = method !== 'GET' && Boolean(serviceKey);
   const headers = new Headers(
     inventoryHeaders(usePrivilegedWrite ? serviceKey : accessToken),
   );
-  if (usePrivilegedWrite && serviceKey) headers.set("apikey", serviceKey);
-  headers.set("Prefer", "return=representation");
+  if (usePrivilegedWrite && serviceKey) headers.set('apikey', serviceKey);
+  headers.set('Prefer', 'return=representation');
   if (init?.headers) {
     for (const [key, value] of new Headers(init.headers))
       headers.set(key, value);
   }
-  const response = await fetch(INVENTORY_SUPABASE_URL + "/rest/v1/" + path, {
+  const response = await fetch(INVENTORY_SUPABASE_URL + '/rest/v1/' + path, {
     ...init,
     headers,
   });
@@ -251,7 +300,7 @@ async function inventoryFetch(
     throw new Error(
       error?.message ||
         error?.details ||
-        "Inventardaten konnten nicht gelesen werden.",
+        'Inventardaten konnten nicht gelesen werden.',
     );
   }
   return toCamel(result);
@@ -264,7 +313,7 @@ async function query(accessToken: string, table: string, params: string) {
 async function classifyMarkets(value: unknown) {
   const markets = Array.isArray(value) ? (value as JsonRecord[]) : [];
   const result = await env.DB.prepare(
-    "SELECT market_id, kind FROM inventory_venue_classifications",
+    'SELECT market_id, kind FROM inventory_venue_classifications',
   ).all<{ market_id: string; kind: string }>();
   const saved = new Map(
     (result.results || []).map((row) => [String(row.market_id), row.kind]),
@@ -274,12 +323,12 @@ async function classifyMarkets(value: unknown) {
     venueKind:
       saved.get(String(market.id)) ||
       (/place\s*to\s*be|mietregal|regal/i.test(
-        `${typeof market.name === "string" ? market.name : ""} ${
-          typeof market.location === "string" ? market.location : ""
+        `${typeof market.name === 'string' ? market.name : ''} ${
+          typeof market.location === 'string' ? market.location : ''
         }`,
       )
-        ? "shelf"
-        : "market"),
+        ? 'shelf'
+        : 'market'),
   }));
 }
 
@@ -287,6 +336,7 @@ async function decorateProducts(value: unknown) {
   const products = Array.isArray(value) ? (value as JsonRecord[]) : [];
   let metadataRows: JsonRecord[] = [];
   let assetRows: JsonRecord[] = [];
+  let measurementRows: JsonRecord[] = [];
   try {
     const metadataResult = await env.DB.prepare(
       `SELECT product_id AS productId, review_status AS studioStatus,
@@ -311,9 +361,37 @@ async function decorateProducts(value: unknown) {
   } catch {
     // Legacy Supabase images remain the fallback until this migration exists.
   }
+  try {
+    const measurementResult = await env.DB.prepare(
+      `SELECT entity_kind AS entityKind, row_id AS rowId, grams,
+              waste_grams AS wasteGrams
+       FROM inventory_measurement_precision`,
+    ).all<JsonRecord>();
+    measurementRows = measurementResult.results || [];
+  } catch {
+    // Whole-gram inventory values remain available before the precision table exists.
+  }
   const metadata = new Map(
     metadataRows.map((row) => [scalarText(row.productId), row]),
   );
+  const measurements = new Map(
+    measurementRows.map((row) => [
+      `${scalarText(row.entityKind)}:${scalarText(row.rowId)}`,
+      row,
+    ]),
+  );
+  const withPreciseMeasurements = (entity: string, items: unknown) =>
+    (Array.isArray(items) ? (items as JsonRecord[]) : []).map((item) => {
+      const precise = measurements.get(`${entity}:${scalarText(item.id)}`);
+      if (!precise) return item;
+      return {
+        ...item,
+        ...(precise.grams == null ? {} : { grams: precise.grams }),
+        ...(precise.wasteGrams == null
+          ? {}
+          : { wasteGrams: precise.wasteGrams }),
+      };
+    });
   return products.map((product) => {
     const productAssets: JsonRecord[] = assetRows
       .filter((asset) => scalarText(asset.productId) === scalarText(product.id))
@@ -321,14 +399,19 @@ async function decorateProducts(value: unknown) {
         ...asset,
         isPrimary: [1, true].includes(asset.isPrimary as boolean | number),
         url:
-          "/api/inventory/product-assets?id=" +
+          '/api/inventory/product-assets?id=' +
           encodeURIComponent(scalarText(asset.id)),
       }));
     const primaryImage = productAssets.find(
-      (asset) => asset.assetKind === "image" && asset.isPrimary === true,
+      (asset) => asset.assetKind === 'image' && asset.isPrimary === true,
     );
     return {
       ...product,
+      variants: withPreciseMeasurements('product_variants', product.variants),
+      filaments: withPreciseMeasurements(
+        'product_filaments',
+        product.filaments,
+      ),
       studioStatus: inventoryReviewStatus(
         metadata.get(scalarText(product.id))?.studioStatus,
       ),
@@ -360,20 +443,20 @@ async function saveProductMetadata(
     .first<JsonRecord>();
   const instant = new Date().toISOString();
   const reviewStatus =
-    values.studioStatus === "final" ||
-    (values.finalReviewed === true && values.studioStatus !== "draft")
-      ? "final"
-      : values.studioStatus === "draft" || values.finalReviewed === false
-        ? "draft"
-        : scalarText(current?.reviewStatus, "draft");
+    values.studioStatus === 'final' ||
+    (values.finalReviewed === true && values.studioStatus !== 'draft')
+      ? 'final'
+      : values.studioStatus === 'draft' || values.finalReviewed === false
+        ? 'draft'
+        : scalarText(current?.reviewStatus, 'draft');
   const finalizedAt =
-    reviewStatus === "final"
+    reviewStatus === 'final'
       ? scalarText(values.finalizedAt).trim() ||
         scalarText(current?.finalizedAt).trim() ||
         instant
       : null;
   const etsyListed =
-    typeof values.etsyListed === "boolean"
+    typeof values.etsyListed === 'boolean'
       ? values.etsyListed
       : [1, true].includes(current?.etsyListed as boolean | number);
   await env.DB.prepare(
@@ -437,7 +520,7 @@ async function decorateExpenses(value: unknown) {
       category: scalarText(saved?.category),
       recurrence: scalarText(
         saved?.recurrence,
-        expense.isMonthly === true ? "monthly" : "none",
+        expense.isMonthly === true ? 'monthly' : 'none',
       ),
       studioUpdatedAt: saved?.studioUpdatedAt || null,
       documents: documentRows
@@ -445,7 +528,7 @@ async function decorateExpenses(value: unknown) {
         .map((document) => ({
           ...document,
           url:
-            "/api/inventory/expense-documents?id=" +
+            '/api/inventory/expense-documents?id=' +
             encodeURIComponent(scalarText(document.id)),
         })),
     };
@@ -477,7 +560,7 @@ async function decorateMaterials(value: unknown) {
       .map((image) => ({
         ...image,
         url:
-          "/api/inventory/material-images?id=" +
+          '/api/inventory/material-images?id=' +
           encodeURIComponent(scalarText(image.id)),
       })),
   }));
@@ -488,13 +571,13 @@ async function saveExpenseMetadata(
   values: JsonRecord,
   userId: string | null,
 ) {
-  const recurrence = ["monthly", "yearly"].includes(
+  const recurrence = ['monthly', 'yearly'].includes(
     scalarText(values.recurrence),
   )
     ? scalarText(values.recurrence)
     : values.isMonthly === true
-      ? "monthly"
-      : "none";
+      ? 'monthly'
+      : 'none';
   const now = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO inventory_expense_metadata
@@ -532,8 +615,8 @@ async function loadInvoices() {
     ).all<JsonRecord>();
     return (result.results || []).map((row) => ({
       ...row,
-      items: JSON.parse(scalarText(row.itemsJson, "[]")),
-      business: JSON.parse(scalarText(row.businessSnapshotJson, "{}")),
+      items: JSON.parse(scalarText(row.itemsJson, '[]')),
+      business: JSON.parse(scalarText(row.businessSnapshotJson, '{}')),
       itemsJson: undefined,
       businessSnapshotJson: undefined,
     }));
@@ -577,14 +660,14 @@ async function createInvoiceDraft({
   )
     .bind(year)
     .first<{ lastNumber: number }>();
-  if (!counter?.lastNumber) throw new Error("Rechnungsnummer fehlt.");
-  const invoiceNumber = `FP-${year}-${String(counter.lastNumber).padStart(4, "0")}`;
+  if (!counter?.lastNumber) throw new Error('Rechnungsnummer fehlt.');
+  const invoiceNumber = `FP-${year}-${String(counter.lastNumber).padStart(4, '0')}`;
   const shippingCents = Math.max(
     0,
     Math.trunc(Number(order.shippingCostCents) || 0),
   );
   const invoiceItems = items.map((item) => ({
-    description: scalarText(item.articleName, "Artikel").slice(0, 240),
+    description: scalarText(item.articleName, 'Artikel').slice(0, 240),
     variant: scalarText(item.size).slice(0, 160),
     quantity: Math.max(1, Math.trunc(Number(item.quantity) || 1)),
     unitPriceCents: Math.max(0, Math.trunc(Number(item.salePriceCents) || 0)),
@@ -618,16 +701,16 @@ async function createInvoiceDraft({
       .run();
   }
   const businessSnapshot = {
-    name: "FormPoesie",
-    street: "Bendhecker Straße 63",
-    postalCode: "41236",
-    city: "Mönchengladbach",
-    country: "Deutschland",
-    vatId: "DE325062674",
-    taxNote: "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.",
-    paypal: "atidam@live.de",
-    iban: "DE11 5002 4024 4662 6752 34",
-    bic: "DEFFDEFFXXX",
+    name: 'FormPoesie',
+    street: 'Bendhecker Straße 63',
+    postalCode: '41236',
+    city: 'Mönchengladbach',
+    country: 'Deutschland',
+    vatId: 'DE325062674',
+    taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
+    paypal: 'atidam@live.de',
+    iban: 'DE11 5002 4024 4662 6752 34',
+    bic: 'DEFFDEFFXXX',
     verified: true,
   };
   await env.DB.prepare(
@@ -646,7 +729,7 @@ async function createInvoiceDraft({
       orderKey || null,
       JSON.stringify(saleIds),
       issueDate,
-      scalarText(order.customerName || order.shippingRecipient, "Kundin/Kunde")
+      scalarText(order.customerName || order.shippingRecipient, 'Kundin/Kunde')
         .trim()
         .slice(0, 200),
       scalarText(order.customerEmail).trim().slice(0, 320) || null,
@@ -667,16 +750,16 @@ async function createInvoiceDraft({
     id,
     invoiceNumber,
     customerId,
-    status: "issued",
+    status: 'issued',
     issueDate,
     customerName: scalarText(
       order.customerName || order.shippingRecipient,
-      "Kundin/Kunde",
+      'Kundin/Kunde',
     ),
     customerEmail: scalarText(order.customerEmail),
     customerAddress: scalarText(order.customerAddress),
     channel: scalarText(order.channel),
-    currency: "EUR",
+    currency: 'EUR',
     items: invoiceItems,
     subtotalCents,
     shippingCents,
@@ -687,7 +770,7 @@ async function createInvoiceDraft({
 }
 
 async function loadArea(accessToken: string, area: string, request: Request) {
-  if (area === "products" || area === "pricing") {
+  if (area === 'products' || area === 'pricing') {
     const [
       products,
       families,
@@ -699,42 +782,42 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     ] = await Promise.all([
       query(
         accessToken,
-        "products",
-        "select=" +
+        'products',
+        'select=' +
           encodeURIComponent(
-            "*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))",
+            '*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))',
           ) +
-          "&deleted_at=is.null&order=name.asc",
+          '&deleted_at=is.null&order=name.asc',
       ),
       query(
         accessToken,
-        "product_families",
-        "select=*&deleted_at=is.null&order=name.asc",
+        'product_families',
+        'select=*&deleted_at=is.null&order=name.asc',
       ),
       query(
         accessToken,
-        "designers",
-        "select=*&deleted_at=is.null&order=name.asc",
+        'designers',
+        'select=*&deleted_at=is.null&order=name.asc',
       ),
-      query(accessToken, "product_components", "select=*&order=id.asc"),
-      query(accessToken, "product_accessories", "select=*&order=id.asc").catch(
+      query(accessToken, 'product_components', 'select=*&order=id.asc'),
+      query(accessToken, 'product_accessories', 'select=*&order=id.asc').catch(
         () => [],
       ),
       query(
         accessToken,
-        "materials",
-        "select=" +
-          encodeURIComponent("*,brand:brands(*)") +
-          "&deleted_at=is.null&order=name.asc",
+        'materials',
+        'select=' +
+          encodeURIComponent('*,brand:brands(*)') +
+          '&deleted_at=is.null&order=name.asc',
       ),
       query(
         accessToken,
-        "articles",
-        "select=" +
+        'articles',
+        'select=' +
           encodeURIComponent(
-            "product_id,variants:article_variants(quantity_in_stock)",
+            'product_id,variants:article_variants(quantity_in_stock)',
           ) +
-          "&deleted_at=is.null",
+          '&deleted_at=is.null',
       ),
     ]);
     const productData = {
@@ -746,46 +829,46 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       materials,
       marketArticles,
     };
-    if (area === "products") return productData;
+    if (area === 'products') return productData;
     const [sales, onlineSales, markets] = await Promise.all([
       query(
         accessToken,
-        "sales",
-        "select=" +
+        'sales',
+        'select=' +
           encodeURIComponent(
-            "*,items:sale_items(*,articleVariant:article_variants!sale_items_article_variant_id_fkey(*,article:articles(*)))",
+            '*,items:sale_items(*,articleVariant:article_variants!sale_items_article_variant_id_fkey(*,article:articles(*)))',
           ) +
-          "&deleted_at=is.null&order=date.desc",
+          '&deleted_at=is.null&order=date.desc',
       ),
       query(
         accessToken,
-        "online_sales",
-        "select=*&deleted_at=is.null&order=date.desc",
+        'online_sales',
+        'select=*&deleted_at=is.null&order=date.desc',
       ),
-      query(accessToken, "markets", "select=id,name,location,date,end_date"),
+      query(accessToken, 'markets', 'select=id,name,location,date,end_date'),
     ]);
     return { ...productData, sales, onlineSales, markets };
   }
-  if (area === "materials") {
+  if (area === 'materials') {
     const [materials, brands, storageLocations] = await Promise.all([
       query(
         accessToken,
-        "materials",
-        "select=" +
+        'materials',
+        'select=' +
           encodeURIComponent(
-            "*,brand:brands(*),storageLocation:storage_locations(*),locations:material_locations(*,storageLocation:storage_locations(*))",
+            '*,brand:brands(*),storageLocation:storage_locations(*),locations:material_locations(*,storageLocation:storage_locations(*))',
           ) +
-          "&deleted_at=is.null&order=name.asc",
+          '&deleted_at=is.null&order=name.asc',
       ),
       query(
         accessToken,
-        "brands",
-        "select=*&deleted_at=is.null&order=name.asc",
+        'brands',
+        'select=*&deleted_at=is.null&order=name.asc',
       ),
       query(
         accessToken,
-        "storage_locations",
-        "select=*&deleted_at=is.null&order=name.asc",
+        'storage_locations',
+        'select=*&deleted_at=is.null&order=name.asc',
       ),
     ]);
     return {
@@ -794,18 +877,18 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       storageLocations,
     };
   }
-  if (area === "cash") {
+  if (area === 'cash') {
     const [products, components, invoices, customers] = await Promise.all([
       query(
         accessToken,
-        "products",
-        "select=" +
+        'products',
+        'select=' +
           encodeURIComponent(
-            "*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))",
+            '*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))',
           ) +
-          "&deleted_at=is.null&archived_at=is.null&order=name.asc",
+          '&deleted_at=is.null&archived_at=is.null&order=name.asc',
       ),
-      query(accessToken, "product_components", "select=*&order=id.asc"),
+      query(accessToken, 'product_components', 'select=*&order=id.asc'),
       loadInvoices(),
       loadCustomers(),
     ]);
@@ -816,40 +899,40 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       customers,
     };
   }
-  if (area === "markets" || area === "shelves") {
+  if (area === 'markets' || area === 'shelves') {
     const [markets, demands, articles, sales, expenses, products] =
       await Promise.all([
         query(
           accessToken,
-          "markets",
-          "select=*&deleted_at=is.null&order=date.desc",
+          'markets',
+          'select=*&deleted_at=is.null&order=date.desc',
         ),
-        query(accessToken, "market_demands", "select=*&order=id.desc"),
+        query(accessToken, 'market_demands', 'select=*&order=id.desc'),
         query(
           accessToken,
-          "articles",
-          "select=" +
-            encodeURIComponent("*,variants:article_variants(*)") +
-            "&deleted_at=is.null&order=id.desc",
-        ),
-        query(
-          accessToken,
-          "sales",
-          "select=" +
-            encodeURIComponent("*,items:sale_items(*)") +
-            "&deleted_at=is.null&order=date.desc",
+          'articles',
+          'select=' +
+            encodeURIComponent('*,variants:article_variants(*)') +
+            '&deleted_at=is.null&order=id.desc',
         ),
         query(
           accessToken,
-          "expenses",
-          "select=*&deleted_at=is.null&order=created_at.desc",
+          'sales',
+          'select=' +
+            encodeURIComponent('*,items:sale_items(*)') +
+            '&deleted_at=is.null&order=date.desc',
         ),
         query(
           accessToken,
-          "products",
-          "select=" +
-            encodeURIComponent("*,variants:product_variants(*)") +
-            "&deleted_at=is.null&order=name.asc",
+          'expenses',
+          'select=*&deleted_at=is.null&order=created_at.desc',
+        ),
+        query(
+          accessToken,
+          'products',
+          'select=' +
+            encodeURIComponent('*,variants:product_variants(*)') +
+            '&deleted_at=is.null&order=name.asc',
         ),
       ]);
     return {
@@ -861,16 +944,16 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       products: await decorateProducts(products),
     };
   }
-  if (area === "online") {
+  if (area === 'online') {
     const [onlineSales, fulfillmentTasks] = await Promise.all([
       query(
         accessToken,
-        "online_sales",
-        "select=" +
+        'online_sales',
+        'select=' +
           encodeURIComponent(
-            "*,filaments:online_sale_filaments(*),product:products(category)",
+            '*,filaments:online_sale_filaments(*),product:products(category)',
           ) +
-          "&deleted_at=is.null&order=date.desc",
+          '&deleted_at=is.null&order=date.desc',
       ),
       env.DB.prepare(
         `SELECT id, source_type AS sourceType, source_id AS sourceId,
@@ -887,19 +970,19 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     ]);
     return { onlineSales, fulfillmentTasks: fulfillmentTasks.results || [] };
   }
-  if (area === "expenses") {
+  if (area === 'expenses') {
     const [expenses, marketExpenses, markets] = await Promise.all([
       query(
         accessToken,
-        "other_expenses",
-        "select=*&deleted_at=is.null&order=invoice_date.desc",
+        'other_expenses',
+        'select=*&deleted_at=is.null&order=invoice_date.desc',
       ),
       query(
         accessToken,
-        "expenses",
-        "select=*&deleted_at=is.null&order=date.desc",
+        'expenses',
+        'select=*&deleted_at=is.null&order=date.desc',
       ),
-      query(accessToken, "markets", "select=id,name,location,date,end_date"),
+      query(accessToken, 'markets', 'select=id,name,location,date,end_date'),
     ]);
     return {
       expenses: await decorateExpenses(expenses),
@@ -907,27 +990,27 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       markets,
     };
   }
-  if (area === "sales") {
+  if (area === 'sales') {
     const [sales, markets, onlineSales, marketExpenses] = await Promise.all([
       query(
         accessToken,
-        "sales",
-        "select=" +
+        'sales',
+        'select=' +
           encodeURIComponent(
-            "*,items:sale_items(*,articleVariant:article_variants!sale_items_article_variant_id_fkey(*,article:articles(*)))",
+            '*,items:sale_items(*,articleVariant:article_variants!sale_items_article_variant_id_fkey(*,article:articles(*)))',
           ) +
-          "&deleted_at=is.null&order=date.desc",
+          '&deleted_at=is.null&order=date.desc',
       ),
-      query(accessToken, "markets", "select=id,name,location,date,end_date"),
+      query(accessToken, 'markets', 'select=id,name,location,date,end_date'),
       query(
         accessToken,
-        "online_sales",
-        "select=*&deleted_at=is.null&order=date.desc",
+        'online_sales',
+        'select=*&deleted_at=is.null&order=date.desc',
       ),
       query(
         accessToken,
-        "expenses",
-        "select=*&deleted_at=is.null&order=date.desc",
+        'expenses',
+        'select=*&deleted_at=is.null&order=date.desc',
       ),
     ]);
     const highlights = await rebuildMonthlyProductHighlights(accessToken).catch(
@@ -935,32 +1018,32 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     );
     return { sales, markets, onlineSales, marketExpenses, highlights };
   }
-  if (area === "months") {
+  if (area === 'months') {
     const [sales, expenses, onlineSales, otherExpenses, markets] =
       await Promise.all([
         query(
           accessToken,
-          "sales",
-          "select=" +
-            encodeURIComponent("*,items:sale_items(*)") +
-            "&deleted_at=is.null&order=date.desc",
+          'sales',
+          'select=' +
+            encodeURIComponent('*,items:sale_items(*)') +
+            '&deleted_at=is.null&order=date.desc',
         ),
         query(
           accessToken,
-          "expenses",
-          "select=*&deleted_at=is.null&order=date.desc",
+          'expenses',
+          'select=*&deleted_at=is.null&order=date.desc',
         ),
         query(
           accessToken,
-          "online_sales",
-          "select=*&deleted_at=is.null&order=date.desc",
+          'online_sales',
+          'select=*&deleted_at=is.null&order=date.desc',
         ),
         query(
           accessToken,
-          "other_expenses",
-          "select=*&deleted_at=is.null&order=invoice_date.desc",
+          'other_expenses',
+          'select=*&deleted_at=is.null&order=invoice_date.desc',
         ),
-        query(accessToken, "markets", "select=id,name,date,end_date"),
+        query(accessToken, 'markets', 'select=id,name,date,end_date'),
       ]);
     const highlights = await rebuildMonthlyProductHighlights(accessToken).catch(
       () => [],
@@ -974,38 +1057,38 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       highlights,
     };
   }
-  if (area === "trash") {
+  if (area === 'trash') {
     const [products, materials, markets, otherExpenses] = await Promise.all([
-      query(accessToken, "products", "select=*&deleted_at=not.is.null"),
-      query(accessToken, "materials", "select=*&deleted_at=not.is.null"),
-      query(accessToken, "markets", "select=*&deleted_at=not.is.null"),
-      query(accessToken, "other_expenses", "select=*&deleted_at=not.is.null"),
+      query(accessToken, 'products', 'select=*&deleted_at=not.is.null'),
+      query(accessToken, 'materials', 'select=*&deleted_at=not.is.null'),
+      query(accessToken, 'markets', 'select=*&deleted_at=not.is.null'),
+      query(accessToken, 'other_expenses', 'select=*&deleted_at=not.is.null'),
     ]);
     return { products, materials, markets, otherExpenses };
   }
-  if (area === "account") {
+  if (area === 'account') {
     const user = await getInventoryUser(request);
     const profiles = user?.id
       ? await query(
           accessToken,
-          "profiles",
+          'profiles',
           `select=id,name,role&id=eq.${encodeURIComponent(user.id)}`,
         )
       : [];
     return { user, profile: Array.isArray(profiles) ? profiles[0] : null };
   }
-  throw new Error("Unbekannter Inventarbereich.");
+  throw new Error('Unbekannter Inventarbereich.');
 }
 
 export async function GET(request: Request) {
-  const accessToken = readCookie(request, "fp_inventory_access");
+  const accessToken = readCookie(request, 'fp_inventory_access');
   if (!accessToken)
     return Response.json(
-      { error: "FormPoesie-Anmeldung erforderlich." },
+      { error: 'FormPoesie-Anmeldung erforderlich.' },
       { status: 401 },
     );
-  const area = new URL(request.url).searchParams.get("area") || "products";
-  if (["sales", "months", "expenses", "trash"].includes(area)) {
+  const area = new URL(request.url).searchParams.get('area') || 'products';
+  if (['sales', 'months', 'expenses', 'trash'].includes(area)) {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
@@ -1017,7 +1100,7 @@ export async function GET(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Inventardaten konnten nicht gelesen werden.",
+            : 'Inventardaten konnten nicht gelesen werden.',
       },
       { status: 502 },
     );
@@ -1025,10 +1108,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const accessToken = readCookie(request, "fp_inventory_access");
+  const accessToken = readCookie(request, 'fp_inventory_access');
   const user = await getInventoryUser(request);
   if (!accessToken || !user)
-    return Response.json({ error: "Anmeldung erforderlich." }, { status: 401 });
+    return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
   const body = (await request.json()) as {
     action?: string;
     entity?: string;
@@ -1039,19 +1122,19 @@ export async function POST(request: Request) {
     order?: JsonRecord;
     items?: JsonRecord[];
   };
-  if (body.entity === "other_expenses") {
+  if (body.entity === 'other_expenses') {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
   try {
-    if (body.action === "create_online_order") {
+    if (body.action === 'create_online_order') {
       const allowedChannels = new Set([
-        "Abholung",
-        "eBay",
-        "eBay Kleinanzeigen",
-        "Vinted",
-        "Etsy",
-        "Bestellformular",
+        'Abholung',
+        'eBay',
+        'eBay Kleinanzeigen',
+        'Vinted',
+        'Etsy',
+        'Bestellformular',
       ]);
       const channel = scalarText(body.order?.channel).trim();
       const saleDate = scalarText(body.order?.date).trim();
@@ -1060,7 +1143,7 @@ export async function POST(request: Request) {
         return Response.json(
           {
             error:
-              "Dieser Verkaufsort ist in der allgemeinen Kasse nicht freigegeben.",
+              'Dieser Verkaufsort ist in der allgemeinen Kasse nicht freigegeben.',
           },
           { status: 400 },
         );
@@ -1068,7 +1151,7 @@ export async function POST(request: Request) {
         return Response.json(
           {
             error:
-              "Verkaufsdatum und mindestens ein Artikel sind erforderlich.",
+              'Verkaufsdatum und mindestens ein Artikel sind erforderlich.',
           },
           { status: 400 },
         );
@@ -1082,12 +1165,12 @@ export async function POST(request: Request) {
         return Response.json(
           {
             error:
-              "Für eine Rechnung werden Kundenname und Rechnungsanschrift benötigt.",
+              'Für eine Rechnung werden Kundenname und Rechnungsanschrift benötigt.',
           },
           { status: 400 },
         );
 
-      let orderKey = "";
+      let orderKey = '';
       const createdIds: string[] = [];
       for (const [index, item] of submitted.entries()) {
         const productId = Number(item.productId);
@@ -1096,7 +1179,7 @@ export async function POST(request: Request) {
           throw new Error(`Artikel ${index + 1} enthält ungültige Daten.`);
         const values = {
           product_id: productId,
-          article_name: scalarText(item.articleName, "Artikel").trim(),
+          article_name: scalarText(item.articleName, 'Artikel').trim(),
           size: scalarText(item.size).trim() || null,
           quantity,
           date: saleDate,
@@ -1154,21 +1237,21 @@ export async function POST(request: Request) {
           created_by: user.id || null,
           updated_by: user.id || null,
         };
-        const result = await inventoryFetch(accessToken, "online_sales", {
-          method: "POST",
+        const result = await inventoryFetch(accessToken, 'online_sales', {
+          method: 'POST',
           body: JSON.stringify(values),
         });
         const created = Array.isArray(result)
           ? (result[0] as JsonRecord | undefined)
           : undefined;
         if (!created?.id)
-          throw new Error("Verkaufsposition wurde nicht bestätigt.");
+          throw new Error('Verkaufsposition wurde nicht bestätigt.');
         createdIds.push(scalarText(created.id));
         orderKey = scalarText(created.orderKey || created.order_key, orderKey);
       }
       await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
       let invoice: JsonRecord | null = null;
-      let invoiceError = "";
+      let invoiceError = '';
       if (body.order?.issueInvoice === true) {
         try {
           invoice = await createInvoiceDraft({
@@ -1182,7 +1265,7 @@ export async function POST(request: Request) {
           invoiceError =
             error instanceof Error
               ? error.message
-              : "Rechnungsentwurf konnte nicht erstellt werden.";
+              : 'Rechnungsentwurf konnte nicht erstellt werden.';
         }
       }
       return Response.json(
@@ -1193,20 +1276,20 @@ export async function POST(request: Request) {
     if (body.rpc) {
       if (!rpcNames.has(body.rpc))
         return Response.json(
-          { error: "Aktion ist nicht freigegeben." },
+          { error: 'Aktion ist nicht freigegeben.' },
           { status: 400 },
         );
       const args = {
         ...body.args,
-        ...(body.rpc === "verkauf_buchen"
+        ...(body.rpc === 'verkauf_buchen'
           ? { p_created_by: user.id || null }
           : {}),
       };
       const result = await inventoryFetch(accessToken, `rpc/${body.rpc}`, {
-        method: "POST",
+        method: 'POST',
         body: JSON.stringify(args),
       });
-      if (body.rpc === "verkauf_buchen") {
+      if (body.rpc === 'verkauf_buchen') {
         const rpcRows = Array.isArray(result) ? (result as JsonRecord[]) : [];
         const saleId = rpcRows[0]?.saleId;
         const already = rpcRows[0]?.bereits === true;
@@ -1216,24 +1299,24 @@ export async function POST(request: Request) {
             : [];
           const ids = submitted
             .map((item) => item.article_variant_id)
-            .filter((id) => typeof id === "string" || typeof id === "number");
+            .filter((id) => typeof id === 'string' || typeof id === 'number');
           const variants = ids.length
             ? ((await query(
                 accessToken,
-                "article_variants",
-                "select=" +
-                  encodeURIComponent("*,article:articles(*)") +
-                  `&id=in.(${ids.map((id) => encodeURIComponent(String(id))).join(",")})`,
+                'article_variants',
+                'select=' +
+                  encodeURIComponent('*,article:articles(*)') +
+                  `&id=in.(${ids.map((id) => encodeURIComponent(String(id))).join(',')})`,
               )) as JsonRecord[])
             : [];
           const marketRows = await query(
             accessToken,
-            "markets",
+            'markets',
             `select=id,name&id=eq.${encodeURIComponent(scalarText(body.args?.p_market_id))}`,
           );
           const venueName = Array.isArray(marketRows)
             ? scalarText((marketRows[0] as JsonRecord | undefined)?.name)
-            : "";
+            : '';
           const instant = new Date().toISOString();
           const saleIdText = scalarText(saleId);
           const statements = submitted.flatMap((item, index) => {
@@ -1260,8 +1343,8 @@ export async function POST(request: Request) {
                 `${saleIdText}:${variantIdText}`,
                 saleIdText,
                 variantIdText,
-                scalarText(article.name, "Verkaufter Artikel"),
-                scalarText(variant?.color || variant?.name, "Standard"),
+                scalarText(article.name, 'Verkaufter Artikel'),
+                scalarText(variant?.color || variant?.name, 'Standard'),
                 venueName || null,
                 quantity,
                 scalarText(body.args?.p_date, instant.slice(0, 10)),
@@ -1277,11 +1360,11 @@ export async function POST(request: Request) {
       return Response.json({ saved: true, result });
     }
     if (!body.entity || !body.values)
-      return Response.json({ error: "Datensatz fehlt." }, { status: 400 });
+      return Response.json({ error: 'Datensatz fehlt.' }, { status: 400 });
     const values = safeValues(body.entity, body.values);
     if (!values || !Object.keys(values).length)
       return Response.json(
-        { error: "Keine gültigen Felder." },
+        { error: 'Keine gültigen Felder.' },
         { status: 400 },
       );
     const createValues = {
@@ -1294,10 +1377,21 @@ export async function POST(request: Request) {
         : {}),
     };
     const result = await inventoryFetch(accessToken, body.entity, {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify(createValues),
     });
-    if (body.entity === "products") {
+    if (['product_variants', 'product_filaments'].includes(body.entity)) {
+      const created = Array.isArray(result)
+        ? (result[0] as JsonRecord | undefined)
+        : undefined;
+      if (created?.id != null)
+        await saveMeasurementPrecision(
+          body.entity,
+          scalarText(created.id),
+          body.values,
+        );
+    }
+    if (body.entity === 'products') {
       const created = Array.isArray(result)
         ? (result[0] as JsonRecord | undefined)
         : undefined;
@@ -1308,7 +1402,7 @@ export async function POST(request: Request) {
           user.id || null,
         );
     }
-    if (body.entity === "other_expenses") {
+    if (body.entity === 'other_expenses') {
       const created = Array.isArray(result)
         ? (result[0] as JsonRecord | undefined)
         : undefined;
@@ -1319,13 +1413,13 @@ export async function POST(request: Request) {
           user.id || null,
         );
     }
-    if (body.entity === "markets") {
+    if (body.entity === 'markets') {
       const created = Array.isArray(result)
         ? (result[0] as JsonRecord | undefined)
         : undefined;
       const marketId = created?.id;
-      const kind = body.values.venueKind === "shelf" ? "shelf" : "market";
-      if (typeof marketId === "string" || typeof marketId === "number") {
+      const kind = body.values.venueKind === 'shelf' ? 'shelf' : 'market';
+      if (typeof marketId === 'string' || typeof marketId === 'number') {
         const instant = new Date().toISOString();
         await env.DB.prepare(
           `INSERT INTO inventory_venue_classifications
@@ -1343,7 +1437,7 @@ export async function POST(request: Request) {
     return Response.json(
       {
         error:
-          error instanceof Error ? error.message : "Speichern fehlgeschlagen.",
+          error instanceof Error ? error.message : 'Speichern fehlgeschlagen.',
       },
       { status: 400 },
     );
@@ -1351,38 +1445,38 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const accessToken = readCookie(request, "fp_inventory_access");
+  const accessToken = readCookie(request, 'fp_inventory_access');
   const user = await getInventoryUser(request);
   if (!accessToken || !user)
-    return Response.json({ error: "Anmeldung erforderlich." }, { status: 401 });
+    return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
   const body = (await request.json()) as {
     entity?: string;
     id?: number | string;
     values?: JsonRecord;
   };
   if (!body.entity || body.id == null || !body.values)
-    return Response.json({ error: "Datensatz fehlt." }, { status: 400 });
-  if (body.entity === "other_expenses") {
+    return Response.json({ error: 'Datensatz fehlt.' }, { status: 400 });
+  if (body.entity === 'other_expenses') {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
-  if (body.entity === "fulfillment_tasks") {
+  if (body.entity === 'fulfillment_tasks') {
     const allowed = Object.fromEntries(
       Object.entries(body.values).filter(([key]) =>
-        ["isPrinted", "isShipped"].includes(key),
+        ['isPrinted', 'isShipped'].includes(key),
       ),
     );
     if (!Object.keys(allowed).length)
       return Response.json(
-        { error: "Keine gültigen Felder." },
+        { error: 'Keine gültigen Felder.' },
         { status: 400 },
       );
     const sets = Object.keys(allowed).map((key) =>
-      key === "isPrinted" ? "is_printed = ?" : "is_shipped = ?",
+      key === 'isPrinted' ? 'is_printed = ?' : 'is_shipped = ?',
     );
     const values = Object.values(allowed).map((value) => (value ? 1 : 0));
     await env.DB.prepare(
-      `UPDATE inventory_fulfillment_tasks SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`,
+      `UPDATE inventory_fulfillment_tasks SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`,
     )
       .bind(...values, new Date().toISOString(), String(body.id))
       .run();
@@ -1390,25 +1484,25 @@ export async function PATCH(request: Request) {
   }
   const values = safeValues(body.entity, body.values);
   const hasProductMetadata =
-    body.entity === "products" &&
-    ["studioStatus", "finalReviewed", "finalizedAt", "etsyListed"].some(
+    body.entity === 'products' &&
+    ['studioStatus', 'finalReviewed', 'finalizedAt', 'etsyListed'].some(
       (key) => key in body.values!,
     );
   const hasExpenseMetadata =
-    body.entity === "other_expenses" &&
-    ["category", "recurrence"].some((key) => key in body.values!);
+    body.entity === 'other_expenses' &&
+    ['category', 'recurrence'].some((key) => key in body.values!);
   if (
     (!values || !Object.keys(values).length) &&
     !hasProductMetadata &&
     !hasExpenseMetadata
   )
-    return Response.json({ error: "Keine gültigen Felder." }, { status: 400 });
+    return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });
   try {
     let previousOnlineSale: JsonRecord | null = null;
-    if (body.entity === "online_sales" && "isShipped" in body.values) {
+    if (body.entity === 'online_sales' && 'isShipped' in body.values) {
       const previous = await query(
         accessToken,
-        "online_sales",
+        'online_sales',
         `select=id,is_shipped,product_id&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
       );
       previousOnlineSale = Array.isArray(previous)
@@ -1423,16 +1517,17 @@ export async function PATCH(request: Request) {
           accessToken,
           `${body.entity}?id=eq.${encodeURIComponent(String(body.id))}`,
           {
-            method: "PATCH",
+            method: 'PATCH',
             body: JSON.stringify(updateValues),
           },
         )
       : [];
+    await saveMeasurementPrecision(body.entity, String(body.id), body.values);
     if (hasProductMetadata)
       await saveProductMetadata(String(body.id), body.values, user.id || null);
     if (hasExpenseMetadata)
       await saveExpenseMetadata(String(body.id), body.values, user.id || null);
-    if (body.entity === "online_sales" && previousOnlineSale) {
+    if (body.entity === 'online_sales' && previousOnlineSale) {
       const wasShipped = previousOnlineSale.isShipped === true;
       const isShipped = body.values.isShipped === true;
       if (wasShipped !== isShipped) {
@@ -1442,20 +1537,20 @@ export async function PATCH(request: Request) {
           if (productId != null) {
             const products = await query(
               accessToken,
-              "products",
+              'products',
               `select=category&id=eq.${encodeURIComponent(scalarText(productId))}&limit=1`,
             );
             const category = Array.isArray(products)
               ? scalarText((products[0] as JsonRecord | undefined)?.category)
-              : "";
+              : '';
             isDigital = /stl|digital/i.test(category);
           }
           if (!isDigital) {
             await inventoryFetch(
               accessToken,
-              `rpc/${isShipped ? "versand_buchen" : "versand_zuruecknehmen"}`,
+              `rpc/${isShipped ? 'versand_buchen' : 'versand_zuruecknehmen'}`,
               {
-                method: "POST",
+                method: 'POST',
                 body: JSON.stringify({
                   p_operation_id: crypto.randomUUID(),
                   p_sale_id: Number(body.id),
@@ -1468,7 +1563,7 @@ export async function PATCH(request: Request) {
             accessToken,
             `online_sales?id=eq.${encodeURIComponent(String(body.id))}`,
             {
-              method: "PATCH",
+              method: 'PATCH',
               body: JSON.stringify({
                 is_shipped: wasShipped,
                 updated_by: user.id || null,
@@ -1479,7 +1574,7 @@ export async function PATCH(request: Request) {
         }
       }
     }
-    if (body.entity === "markets" && body.values.venueKind) {
+    if (body.entity === 'markets' && body.values.venueKind) {
       const instant = new Date().toISOString();
       await env.DB.prepare(
         `INSERT INTO inventory_venue_classifications
@@ -1490,7 +1585,7 @@ export async function PATCH(request: Request) {
       )
         .bind(
           String(body.id),
-          body.values.venueKind === "shelf" ? "shelf" : "market",
+          body.values.venueKind === 'shelf' ? 'shelf' : 'market',
           instant,
           instant,
         )
@@ -1501,7 +1596,7 @@ export async function PATCH(request: Request) {
     return Response.json(
       {
         error:
-          error instanceof Error ? error.message : "Speichern fehlgeschlagen.",
+          error instanceof Error ? error.message : 'Speichern fehlgeschlagen.',
       },
       { status: 400 },
     );
@@ -1509,18 +1604,18 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const accessToken = readCookie(request, "fp_inventory_access");
+  const accessToken = readCookie(request, 'fp_inventory_access');
   const user = await getInventoryUser(request);
   if (!accessToken || !user)
-    return Response.json({ error: "Anmeldung erforderlich." }, { status: 401 });
+    return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
   const body = (await request.json()) as {
     entity?: string;
     id?: number | string;
     restore?: boolean;
   };
   if (!body.entity || body.id == null || !trashableEntities.has(body.entity))
-    return Response.json({ error: "Datensatz fehlt." }, { status: 400 });
-  if (body.entity === "other_expenses") {
+    return Response.json({ error: 'Datensatz fehlt.' }, { status: 400 });
+  if (body.entity === 'other_expenses') {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
@@ -1529,7 +1624,7 @@ export async function DELETE(request: Request) {
       accessToken,
       `${body.entity}?id=eq.${encodeURIComponent(String(body.id))}`,
       {
-        method: "PATCH",
+        method: 'PATCH',
         body: JSON.stringify({
           deleted_at: body.restore ? null : new Date().toISOString(),
           ...(entitiesWithUpdatedBy.has(body.entity)
@@ -1543,7 +1638,7 @@ export async function DELETE(request: Request) {
     return Response.json(
       {
         error:
-          error instanceof Error ? error.message : "Aktion fehlgeschlagen.",
+          error instanceof Error ? error.message : 'Aktion fehlgeschlagen.',
       },
       { status: 400 },
     );
