@@ -5435,12 +5435,13 @@ const ManufacturingEditor = forwardRef<
             <details
               key={id}
               open={openVariants[id] ?? index === 0}
-              onToggle={(event) =>
+              onToggle={(event) => {
+                const isOpen = event.currentTarget.open;
                 setOpenVariants((current) => ({
                   ...current,
-                  [id]: event.currentTarget.open,
-                }))
-              }
+                  [id]: isOpen,
+                }));
+              }}
               className="group rounded-2xl border bg-[var(--fp-paper)]/55"
             >
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-4">
