@@ -284,7 +284,10 @@ function inventoryItem(product: Row): InventoryItem {
     number(product.productionCostCents) ||
     number(firstVariant.productionCostCents);
   const price =
-    number(product.defaultPriceCents) || number(firstVariant.priceCents);
+    number(product.etsyPriceCents) ||
+    number(firstVariant.etsyPriceCents) ||
+    number(product.defaultPriceCents) ||
+    number(firstVariant.priceCents);
   const category = string(product.category, '3D-gedrucktes Objekt');
   const normalizedVariants = variants.length
     ? variants.map((variant, index) => ({
@@ -302,8 +305,8 @@ function inventoryItem(product: Row): InventoryItem {
         productionCost: number(variant.productionCostCents)
           ? number(variant.productionCostCents) / 100
           : null,
-        currentPrice: number(variant.priceCents)
-          ? number(variant.priceCents) / 100
+        currentPrice: number(variant.etsyPriceCents || variant.priceCents)
+          ? number(variant.etsyPriceCents || variant.priceCents) / 100
           : null,
       }))
     : [
@@ -569,6 +572,71 @@ function EuroField({
       </div>
     </label>
   );
+}
+
+const CHANNEL_PRICE_FIELDS = [
+  ['marketPriceCents', 'Markt'],
+  ['vintedPriceCents', 'Vinted'],
+  ['etsyPriceCents', 'Etsy'],
+] as const;
+
+function SalesPriceFields({
+  values,
+  standardKey,
+  onChange,
+  className = '',
+}: {
+  values: Row;
+  standardKey: 'priceCents' | 'defaultPriceCents';
+  onChange: (key: string, value: number) => void;
+  className?: string;
+}) {
+  return (
+    <fieldset className={`rounded-xl border bg-white/55 p-3 ${className}`}>
+      <legend className="px-1 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+        Verkaufspreise
+      </legend>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <EuroField
+          label="Standard / Direkt"
+          value={number(values[standardKey])}
+          onChange={(value) => onChange(standardKey, value)}
+        />
+        {CHANNEL_PRICE_FIELDS.map(([key, label]) => (
+          <EuroField
+            key={key}
+            label={label}
+            value={number(values[key] ?? values[standardKey])}
+            onChange={(value) => onChange(key, value)}
+          />
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function priceForSalesChannel(product: Row, variant: Row, channel: string) {
+  const standard =
+    number(variant.priceCents) || number(product.defaultPriceCents);
+  if (channel === 'Etsy')
+    return (
+      number(variant.etsyPriceCents) ||
+      number(product.etsyPriceCents) ||
+      standard
+    );
+  if (channel === 'Vinted')
+    return (
+      number(variant.vintedPriceCents) ||
+      number(product.vintedPriceCents) ||
+      standard
+    );
+  if (channel === 'Markt')
+    return (
+      number(variant.marketPriceCents) ||
+      number(product.marketPriceCents) ||
+      standard
+    );
+  return standard;
 }
 
 export function InventoryWorkspace({
@@ -2783,8 +2851,7 @@ function GeneralCashRegister({
 
   function add(product: Row, variant: Row) {
     const key = itemKey(product, variant);
-    const price =
-      number(variant.priceCents) || number(product.defaultPriceCents);
+    const price = priceForSalesChannel(product, variant, channel);
     setCart((current) => {
       const match = current.find(
         (item) => itemKey(item.product, item.variant) === key,
@@ -2938,12 +3005,21 @@ function GeneralCashRegister({
               <select
                 className="h-10 rounded-lg border bg-white px-3 text-sm text-foreground"
                 value={channel}
-                onChange={(event) =>
-                  setChannel(
-                    event.target
-                      .value as (typeof GENERAL_SALES_CHANNELS)[number],
-                  )
-                }
+                onChange={(event) => {
+                  const next = event.target
+                    .value as (typeof GENERAL_SALES_CHANNELS)[number];
+                  setChannel(next);
+                  setCart((current) =>
+                    current.map((item) => ({
+                      ...item,
+                      salePriceCents: priceForSalesChannel(
+                        item.product,
+                        item.variant,
+                        next,
+                      ),
+                    })),
+                  );
+                }}
               >
                 {GENERAL_SALES_CHANNELS.map((item) => (
                   <option key={item} value={item}>
@@ -2996,8 +3072,7 @@ function GeneralCashRegister({
                 products,
                 components,
               );
-              const price =
-                number(variant.priceCents) || number(product.defaultPriceCents);
+              const price = priceForSalesChannel(product, variant, channel);
               return (
                 <button
                   type="button"
@@ -4834,10 +4909,11 @@ function EntityEditor({
                     </p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <EuroField
-                      label="Verkaufspreis"
-                      value={number(form.defaultPriceCents)}
-                      onChange={(value) => setValue('defaultPriceCents', value)}
+                    <SalesPriceFields
+                      values={form}
+                      standardKey="defaultPriceCents"
+                      className="sm:col-span-2"
+                      onChange={setValue}
                     />
                     <Field
                       label="Fertigbestand"
@@ -5435,6 +5511,9 @@ const ManufacturingEditor = forwardRef<
         'accessories',
         'extraCostCents',
         'priceCents',
+        'marketPriceCents',
+        'vintedPriceCents',
+        'etsyPriceCents',
         'printer',
         'printMinutes',
       ];
@@ -5620,6 +5699,13 @@ const ManufacturingEditor = forwardRef<
                       ? 'Marge offen'
                       : `${cost.marginPercent.toFixed(1)} % Marge`}
                   </span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Markt {cents(number(draft.marketPriceCents ?? draft.priceCents))}
+                    {' · '}Vinted{' '}
+                    {cents(number(draft.vintedPriceCents ?? draft.priceCents))}
+                    {' · '}Etsy{' '}
+                    {cents(number(draft.etsyPriceCents ?? draft.priceCents))}
+                  </span>
                   {issues.length ? (
                     <span className="mt-2 block text-xs font-medium text-[#8b5c27]">
                       ⚠ {issues.join(' · ')}
@@ -5744,12 +5830,12 @@ const ManufacturingEditor = forwardRef<
                       value={string(draft.size)}
                       onChange={(value) => updateVariant(id, 'size', value)}
                     />
-                    <div>
-                      <EuroField
-                        label="Verkaufspreis"
-                        value={number(draft.priceCents)}
-                        onChange={(value) =>
-                          updateVariant(id, 'priceCents', value)
+                    <div className="sm:col-span-2">
+                      <SalesPriceFields
+                        values={draft}
+                        standardKey="priceCents"
+                        onChange={(key, value) =>
+                          updateVariant(id, key, value)
                         }
                       />
                       {issues.includes('Verkaufspreis fehlt') ? (
@@ -6233,14 +6319,12 @@ const ManufacturingEditor = forwardRef<
                     }))
                   }
                 />
-                <EuroField
-                  label="Verkaufspreis"
-                  value={number(values.priceCents)}
-                  onChange={(value) =>
-                    setValues((current) => ({
-                      ...current,
-                      priceCents: value,
-                    }))
+                <SalesPriceFields
+                  values={values}
+                  standardKey="priceCents"
+                  className="sm:col-span-2 lg:col-span-3"
+                  onChange={(key, value) =>
+                    setValues((current) => ({ ...current, [key]: value }))
                   }
                 />
                 <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
@@ -6524,14 +6608,16 @@ function ProductEditorSidebar({
     (sum, variant) => sum + number(variant.quantity),
     0,
   );
-  const priceValues = variants
-    .map((variant) => number(variant.priceCents))
-    .filter((value) => value > 0);
-  const priceLabel = priceValues.length
-    ? Math.min(...priceValues) === Math.max(...priceValues)
-      ? cents(priceValues[0])
-      : `${cents(Math.min(...priceValues))} – ${cents(Math.max(...priceValues))}`
-    : 'offen';
+  const priceLabel = (key: string, fallbackKey = 'priceCents') => {
+    const priceValues = variants
+      .map((variant) => number(variant[key] ?? variant[fallbackKey]))
+      .filter((value) => value > 0);
+    return priceValues.length
+      ? Math.min(...priceValues) === Math.max(...priceValues)
+        ? cents(priceValues[0])
+        : `${cents(Math.min(...priceValues))} – ${cents(Math.max(...priceValues))}`
+      : 'offen';
+  };
   const productionIssues = variants.flatMap((variant, index) =>
     variantProductionIssues(product, variant).map(
       (issue) => `${string(variant.name, `Variante ${index + 1}`)}: ${issue}`,
@@ -6558,9 +6644,27 @@ function ProductEditorSidebar({
               <div className="text-xs text-muted-foreground">Bestand</div>
               <strong className="mt-1 block">{stock} fertig</strong>
             </div>
-            <div className="rounded-xl bg-white/70 p-3 sm:col-span-2">
-              <div className="text-xs text-muted-foreground">Verkaufspreis</div>
-              <strong className="mt-1 block">{priceLabel}</strong>
+            <div className="rounded-xl bg-white/70 p-3">
+              <div className="text-xs text-muted-foreground">Standard</div>
+              <strong className="mt-1 block">{priceLabel('priceCents')}</strong>
+            </div>
+            <div className="rounded-xl bg-white/70 p-3">
+              <div className="text-xs text-muted-foreground">Markt</div>
+              <strong className="mt-1 block">
+                {priceLabel('marketPriceCents')}
+              </strong>
+            </div>
+            <div className="rounded-xl bg-white/70 p-3">
+              <div className="text-xs text-muted-foreground">Vinted</div>
+              <strong className="mt-1 block">
+                {priceLabel('vintedPriceCents')}
+              </strong>
+            </div>
+            <div className="rounded-xl bg-white/70 p-3">
+              <div className="text-xs text-muted-foreground">Etsy</div>
+              <strong className="mt-1 block">
+                {priceLabel('etsyPriceCents')}
+              </strong>
             </div>
           </div>
         </section>

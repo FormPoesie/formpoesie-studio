@@ -375,6 +375,7 @@ async function decorateProducts(value: unknown) {
   let metadataRows: JsonRecord[] = [];
   let assetRows: JsonRecord[] = [];
   let measurementRows: JsonRecord[] = [];
+  let channelPriceRows: JsonRecord[] = [];
   try {
     const metadataResult = await env.DB.prepare(
       `SELECT product_id AS productId, review_status AS studioStatus,
@@ -409,6 +410,19 @@ async function decorateProducts(value: unknown) {
   } catch {
     // Whole-gram inventory values remain available before the precision table exists.
   }
+  try {
+    const channelPriceResult = await env.DB.prepare(
+      `SELECT entity_kind AS entityKind, row_id AS rowId,
+              etsy_price_cents AS etsyPriceCents,
+              vinted_price_cents AS vintedPriceCents,
+              market_price_cents AS marketPriceCents
+       FROM inventory_channel_prices`,
+    ).all<JsonRecord>();
+    channelPriceRows = channelPriceResult.results || [];
+  } catch {
+    // The established standard price remains the fallback until the additive
+    // channel-price migration is available.
+  }
   const metadata = new Map(
     metadataRows.map((row) => [scalarText(row.productId), row]),
   );
@@ -418,6 +432,35 @@ async function decorateProducts(value: unknown) {
       row,
     ]),
   );
+  const channelPrices = new Map(
+    channelPriceRows.map((row) => [
+      `${scalarText(row.entityKind)}:${scalarText(row.rowId)}`,
+      row,
+    ]),
+  );
+  const withChannelPrices = (
+    entity: 'products' | 'product_variants',
+    row: JsonRecord,
+    standardPriceKey: 'defaultPriceCents' | 'priceCents',
+  ) => {
+    const saved = channelPrices.get(`${entity}:${scalarText(row.id)}`);
+    const standardPrice = Number(row[standardPriceKey]) || 0;
+    return {
+      ...row,
+      etsyPriceCents:
+        saved?.etsyPriceCents == null
+          ? standardPrice
+          : Number(saved.etsyPriceCents),
+      vintedPriceCents:
+        saved?.vintedPriceCents == null
+          ? standardPrice
+          : Number(saved.vintedPriceCents),
+      marketPriceCents:
+        saved?.marketPriceCents == null
+          ? standardPrice
+          : Number(saved.marketPriceCents),
+    };
+  };
   const withPreciseMeasurements = (entity: string, items: unknown) =>
     (Array.isArray(items) ? (items as JsonRecord[]) : []).map((item) => {
       const precise = measurements.get(`${entity}:${scalarText(item.id)}`);
@@ -443,12 +486,16 @@ async function decorateProducts(value: unknown) {
     const primaryImage = productAssets.find(
       (asset) => asset.assetKind === 'image' && asset.isPrimary === true,
     );
-    return {
+    return withChannelPrices('products', {
       ...product,
       variants: withPreciseMeasurements(
         'product_variants',
         product.variants,
-      ).sort(compareProductVariants),
+      )
+        .map((variant) =>
+          withChannelPrices('product_variants', variant, 'priceCents'),
+        )
+        .sort(compareProductVariants),
       filaments: withPreciseMeasurements(
         'product_filaments',
         product.filaments,
@@ -466,8 +513,60 @@ async function decorateProducts(value: unknown) {
         metadata.get(scalarText(product.id))?.studioUpdatedAt || null,
       studioAssets: productAssets,
       studioPrimaryImageUrl: primaryImage?.url || null,
-    };
+    }, 'defaultPriceCents');
   });
+}
+
+async function saveChannelPrices(
+  entity: string,
+  rowId: string,
+  values: JsonRecord,
+  userId: string | null,
+) {
+  if (!['products', 'product_variants'].includes(entity)) return;
+  const keys = [
+    'etsyPriceCents',
+    'vintedPriceCents',
+    'marketPriceCents',
+  ] as const;
+  if (!keys.some((key) => key in values)) return;
+  const current = await env.DB.prepare(
+    `SELECT etsy_price_cents AS etsyPriceCents,
+            vinted_price_cents AS vintedPriceCents,
+            market_price_cents AS marketPriceCents
+     FROM inventory_channel_prices
+     WHERE entity_kind = ? AND row_id = ?`,
+  )
+    .bind(entity, rowId)
+    .first<JsonRecord>();
+  const price = (key: (typeof keys)[number]) =>
+    key in values
+      ? Math.max(0, Math.trunc(Number(values[key]) || 0))
+      : current?.[key] == null
+        ? null
+        : Math.max(0, Math.trunc(Number(current[key]) || 0));
+  await env.DB.prepare(
+    `INSERT INTO inventory_channel_prices
+       (entity_kind, row_id, etsy_price_cents, vinted_price_cents,
+        market_price_cents, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(entity_kind, row_id) DO UPDATE SET
+       etsy_price_cents = excluded.etsy_price_cents,
+       vinted_price_cents = excluded.vinted_price_cents,
+       market_price_cents = excluded.market_price_cents,
+       updated_by = excluded.updated_by,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(
+      entity,
+      rowId,
+      price('etsyPriceCents'),
+      price('vintedPriceCents'),
+      price('marketPriceCents'),
+      userId,
+      new Date().toISOString(),
+    )
+    .run();
 }
 
 async function saveProductMetadata(
@@ -1206,6 +1305,23 @@ async function duplicateProduct(
       row,
     ]),
   );
+  const copiedChannelPriceResult = await env.DB.prepare(
+    `SELECT entity_kind AS entityKind, row_id AS rowId,
+            etsy_price_cents AS etsyPriceCents,
+            vinted_price_cents AS vintedPriceCents,
+            market_price_cents AS marketPriceCents
+     FROM inventory_channel_prices
+     WHERE (entity_kind = 'products' AND row_id = ?)
+        OR entity_kind = 'product_variants'`,
+  )
+    .bind(sourceProductId)
+    .all<JsonRecord>();
+  const copiedChannelPrices = new Map(
+    (copiedChannelPriceResult.results || []).map((row) => [
+      `${scalarText(row.entityKind)}:${scalarText(row.rowId)}`,
+      row,
+    ]),
+  );
   const withPrecision = (entity: string, row: JsonRecord) => {
     const precise = preciseMeasurements.get(`${entity}:${scalarText(row.id)}`);
     return {
@@ -1230,6 +1346,7 @@ async function duplicateProduct(
 
   let newProductId = '';
   const copiedAssetKeys: string[] = [];
+  const copiedVariantIds: string[] = [];
   try {
     const createdProducts = await inventoryFetch(accessToken, 'products', {
       method: 'POST',
@@ -1265,11 +1382,22 @@ async function duplicateProduct(
       if (!newVariantId)
         throw new Error('Eine Variante konnte nicht kopiert werden.');
       variantIdMap.set(scalarText(sourceVariant.id), newVariantId);
+      copiedVariantIds.push(newVariantId);
       await saveMeasurementPrecision(
         'product_variants',
         newVariantId,
         withPrecision('product_variants', sourceVariant),
       );
+      const sourcePrices = copiedChannelPrices.get(
+        `product_variants:${scalarText(sourceVariant.id)}`,
+      );
+      if (sourcePrices)
+        await saveChannelPrices(
+          'product_variants',
+          newVariantId,
+          sourcePrices,
+          userId,
+        );
     }
 
     for (const sourceFilament of filamentRows) {
@@ -1338,6 +1466,16 @@ async function duplicateProduct(
       { studioStatus: 'draft', finalizedAt: null, etsyListed: false },
       userId,
     );
+    const sourceProductPrices = copiedChannelPrices.get(
+      `products:${sourceProductId}`,
+    );
+    if (sourceProductPrices)
+      await saveChannelPrices(
+        'products',
+        newProductId,
+        sourceProductPrices,
+        userId,
+      );
 
     const assetResult = await env.DB.prepare(
       `SELECT id, asset_kind AS assetKind, object_key AS objectKey, filename,
@@ -1401,6 +1539,21 @@ async function duplicateProduct(
       )
         .bind(newProductId)
         .run();
+      await env.DB.prepare(
+        `DELETE FROM inventory_channel_prices
+         WHERE entity_kind = 'products' AND row_id = ?`,
+      )
+        .bind(newProductId)
+        .run();
+      if (copiedVariantIds.length)
+        await env.DB.batch(
+          copiedVariantIds.map((variantId) =>
+            env.DB.prepare(
+              `DELETE FROM inventory_channel_prices
+               WHERE entity_kind = 'product_variants' AND row_id = ?`,
+            ).bind(variantId),
+          ),
+        );
       await inventoryFetch(
         accessToken,
         `products?id=eq.${encodeURIComponent(newProductId)}`,
@@ -1696,10 +1849,10 @@ export async function POST(request: Request) {
       method: 'POST',
       body: JSON.stringify(createValues),
     });
+    const created = Array.isArray(result)
+      ? (result[0] as JsonRecord | undefined)
+      : undefined;
     if (['product_variants', 'product_filaments'].includes(body.entity)) {
-      const created = Array.isArray(result)
-        ? (result[0] as JsonRecord | undefined)
-        : undefined;
       if (created?.id != null)
         await saveMeasurementPrecision(
           body.entity,
@@ -1707,10 +1860,17 @@ export async function POST(request: Request) {
           body.values,
         );
     }
+    if (
+      created?.id != null &&
+      ['products', 'product_variants'].includes(body.entity)
+    )
+      await saveChannelPrices(
+        body.entity,
+        scalarText(created.id),
+        body.values,
+        user.id || null,
+      );
     if (body.entity === 'products') {
-      const created = Array.isArray(result)
-        ? (result[0] as JsonRecord | undefined)
-        : undefined;
       if (created?.id != null)
         await saveProductMetadata(
           scalarText(created.id),
@@ -1807,10 +1967,16 @@ export async function PATCH(request: Request) {
   const hasExpenseMetadata =
     body.entity === 'other_expenses' &&
     ['category', 'recurrence'].some((key) => key in body.values!);
+  const hasChannelPrices =
+    ['products', 'product_variants'].includes(body.entity) &&
+    ['etsyPriceCents', 'vintedPriceCents', 'marketPriceCents'].some(
+      (key) => key in body.values!,
+    );
   if (
     (!values || !Object.keys(values).length) &&
     !hasProductMetadata &&
-    !hasExpenseMetadata
+    !hasExpenseMetadata &&
+    !hasChannelPrices
   )
     return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });
   try {
@@ -1839,6 +2005,13 @@ export async function PATCH(request: Request) {
         )
       : [];
     await saveMeasurementPrecision(body.entity, String(body.id), body.values);
+    if (hasChannelPrices)
+      await saveChannelPrices(
+        body.entity,
+        String(body.id),
+        body.values,
+        user.id || null,
+      );
     if (hasProductMetadata)
       await saveProductMetadata(String(body.id), body.values, user.id || null);
     if (hasExpenseMetadata)
@@ -1947,6 +2120,18 @@ export async function DELETE(request: Request) {
         `${body.entity}?id=eq.${encodeURIComponent(String(body.id))}`,
         { method: 'DELETE' },
       );
+      if (body.entity === 'product_variants') {
+        await env.DB.batch([
+          env.DB.prepare(
+            `DELETE FROM inventory_channel_prices
+             WHERE entity_kind = 'product_variants' AND row_id = ?`,
+          ).bind(String(body.id)),
+          env.DB.prepare(
+            `DELETE FROM inventory_measurement_precision
+             WHERE entity_kind = 'product_variants' AND row_id = ?`,
+          ).bind(String(body.id)),
+        ]);
+      }
       return Response.json({ deleted: true, result });
     }
     const result = await inventoryFetch(

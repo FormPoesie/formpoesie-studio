@@ -109,6 +109,25 @@ export const inventoryProductMetadata = sqliteTable(
   ],
 );
 
+export const inventoryChannelPrices = sqliteTable(
+  'inventory_channel_prices',
+  {
+    entityKind: text('entity_kind').notNull(),
+    rowId: text('row_id').notNull(),
+    etsyPriceCents: integer('etsy_price_cents'),
+    vintedPriceCents: integer('vinted_price_cents'),
+    marketPriceCents: integer('market_price_cents'),
+    updatedBy: text('updated_by'),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_inventory_channel_prices_entity_row').on(
+      table.entityKind,
+      table.rowId,
+    ),
+  ],
+);
+
 export const inventoryProductAssets = sqliteTable(
   'inventory_product_assets',
   {
