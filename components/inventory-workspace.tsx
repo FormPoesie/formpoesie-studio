@@ -5221,7 +5221,7 @@ function EntityEditor({
         ) : null}
         <div
           className={`sticky -bottom-6 z-10 -mx-4 justify-end gap-2 border-t bg-[#f8f4ed]/95 px-4 py-4 backdrop-blur sm:-mx-6 sm:px-6 ${
-            isProduct ? 'flex lg:hidden' : 'flex'
+            isProduct && editor.row.id ? 'flex lg:hidden' : 'flex'
           }`}
         >
           <Button variant="outline" onClick={onClose}>
