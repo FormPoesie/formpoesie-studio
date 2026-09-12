@@ -124,6 +124,17 @@ export async function POST(request: Request) {
   const targetTable = variantId ? 'product_variants' : 'products';
   const targetField = variantId ? 'image_url' : 'image_uri';
   const targetId = variantId || productId;
+  const previousResponse = await fetch(
+    `${INVENTORY_SUPABASE_URL}/rest/v1/${targetTable}?id=eq.${encodeURIComponent(targetId)}&select=${targetField}&limit=1`,
+    { headers: inventoryHeaders(accessToken) },
+  );
+  const previousRows = (await previousResponse.json().catch(() => [])) as Array<
+    Record<string, unknown>
+  >;
+  const previousPath =
+    typeof previousRows[0]?.[targetField] === 'string'
+      ? String(previousRows[0][targetField])
+      : '';
   const update = await fetch(
     `${INVENTORY_SUPABASE_URL}/rest/v1/${targetTable}?id=eq.${encodeURIComponent(targetId)}`,
     {
@@ -143,5 +154,79 @@ export async function POST(request: Request) {
       { error: 'Bild wurde hochgeladen, aber nicht am Artikel hinterlegt.' },
       { status: 502 },
     );
+  if (
+    previousPath &&
+    !/^https?:\/\//i.test(previousPath) &&
+    previousPath !== path
+  )
+    await fetch(
+      `${INVENTORY_SUPABASE_URL}/storage/v1/object/${bucket}/${encodeObjectPath(cleanObjectPath(previousPath))}`,
+      {
+        method: 'DELETE',
+        headers: inventoryHeaders(accessToken),
+      },
+    ).catch(() => null);
   return Response.json({ uploaded: true, path }, { status: 201 });
+}
+
+export async function DELETE(request: Request) {
+  const accessToken = readCookie(request, 'fp_inventory_access');
+  const user = await getInventoryUser(request);
+  if (!accessToken || !user)
+    return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
+  const body = (await request.json().catch(() => ({}))) as {
+    productId?: string | number;
+    variantId?: string | number;
+  };
+  const productId = String(body.productId || '').trim();
+  const variantId = String(body.variantId || '').trim();
+  if (!productId)
+    return Response.json({ error: 'Artikel-ID fehlt.' }, { status: 400 });
+  const targetTable = variantId ? 'product_variants' : 'products';
+  const targetField = variantId ? 'image_url' : 'image_uri';
+  const targetId = variantId || productId;
+  const currentResponse = await fetch(
+    `${INVENTORY_SUPABASE_URL}/rest/v1/${targetTable}?id=eq.${encodeURIComponent(targetId)}&select=${targetField}&limit=1`,
+    { headers: inventoryHeaders(accessToken) },
+  );
+  const currentRows = (await currentResponse.json().catch(() => [])) as Array<
+    Record<string, unknown>
+  >;
+  const currentPath =
+    typeof currentRows[0]?.[targetField] === 'string'
+      ? String(currentRows[0][targetField])
+      : '';
+  if (!currentResponse.ok || !currentRows.length)
+    return Response.json(
+      { error: 'Artikelbild nicht gefunden.' },
+      { status: 404 },
+    );
+  const update = await fetch(
+    `${INVENTORY_SUPABASE_URL}/rest/v1/${targetTable}?id=eq.${encodeURIComponent(targetId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        ...inventoryHeaders(accessToken),
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        [targetField]: null,
+        ...(variantId ? {} : { updated_by: user.id || null }),
+      }),
+    },
+  );
+  if (!update.ok)
+    return Response.json(
+      { error: 'Artikelbild nicht gelöscht.' },
+      { status: 502 },
+    );
+  if (currentPath && !/^https?:\/\//i.test(currentPath))
+    await fetch(
+      `${INVENTORY_SUPABASE_URL}/storage/v1/object/${bucket}/${encodeObjectPath(cleanObjectPath(currentPath))}`,
+      {
+        method: 'DELETE',
+        headers: inventoryHeaders(accessToken),
+      },
+    ).catch(() => null);
+  return Response.json({ deleted: true });
 }

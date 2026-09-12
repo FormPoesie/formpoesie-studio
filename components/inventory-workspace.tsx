@@ -6710,7 +6710,7 @@ function ProductAssetManager({
   const printFiles = assets.filter(
     (asset) => string(asset.assetKind) === 'print',
   );
-  const existingImage = existingProductImagePath(product);
+  const existingImage = string(product.imageUri);
   const hasUploadedPrimary = images.some((asset) => boolean(asset.isPrimary));
   const [savingPrimary, setSavingPrimary] = useState(false);
 
@@ -6834,6 +6834,89 @@ function ProductAssetManager({
     }
   }
 
+  async function replaceExistingImage(file: File) {
+    setUploading('image');
+    setMessage('');
+    try {
+      const body = new FormData();
+      body.set('file', file);
+      body.set('productId', string(product.id));
+      const response = await fetch('/api/inventory/image', {
+        method: 'POST',
+        body,
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Artikelbild nicht ersetzt.');
+      setMessage('Artikelbild ersetzt.');
+      onChanged();
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error ? reason.message : 'Artikelbild nicht ersetzt.',
+      );
+    } finally {
+      setUploading('');
+    }
+  }
+
+  async function removeExistingImage() {
+    if (!window.confirm('Vorhandenes Artikelbild wirklich löschen?')) return;
+    setMessage('');
+    const response = await fetch('/api/inventory/image', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId: product.id }),
+    });
+    const result = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    if (!response.ok) setMessage(result.error || 'Artikelbild nicht gelöscht.');
+    else {
+      setMessage('Artikelbild gelöscht.');
+      onChanged();
+    }
+  }
+
+  async function replaceAsset(asset: Row, file: File) {
+    setUploading('image');
+    setMessage('');
+    try {
+      const body = new FormData();
+      body.set('file', file);
+      body.set('productId', string(product.id));
+      body.set('kind', 'image');
+      body.set('isPrimary', String(boolean(asset.isPrimary)));
+      const uploadResponse = await fetch('/api/inventory/product-assets', {
+        method: 'POST',
+        body,
+      });
+      const uploadResult = (await uploadResponse.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!uploadResponse.ok)
+        throw new Error(uploadResult.error || 'Bild nicht ersetzt.');
+      const deleteResponse = await fetch('/api/inventory/product-assets', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: asset.id }),
+      });
+      if (!deleteResponse.ok)
+        throw new Error(
+          'Das neue Bild wurde gespeichert, das alte aber nicht entfernt.',
+        );
+      setMessage('Galeriebild ersetzt.');
+      onChanged();
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error ? reason.message : 'Bild nicht ersetzt.',
+      );
+    } finally {
+      setUploading('');
+    }
+  }
+
   return (
     <details className="group rounded-2xl border bg-white/55 sm:col-span-2">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
@@ -6911,7 +6994,7 @@ function ProductAssetManager({
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {existingImage ? (
                 <article className="overflow-hidden rounded-xl border bg-white">
-                  <div className="relative aspect-square bg-[#ebe5db]">
+                  <label className="group/image relative block aspect-square cursor-pointer bg-[#ebe5db]">
                     <Image
                       src={inventoryImageUrl(existingImage)}
                       alt="Vorhandenes Artikelbild"
@@ -6923,20 +7006,45 @@ function ProductAssetManager({
                     {!hasUploadedPrimary ? (
                       <Badge className="absolute top-2 left-2">Hauptbild</Badge>
                     ) : null}
-                  </div>
+                    <span className="absolute inset-x-2 bottom-2 flex items-center justify-center gap-1 rounded-lg bg-black/65 px-2 py-1.5 text-xs text-white opacity-0 transition group-hover/image:opacity-100">
+                      <Pencil className="size-3" /> Bild ersetzen
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      disabled={Boolean(uploading)}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void replaceExistingImage(file);
+                        event.target.value = '';
+                      }}
+                    />
+                  </label>
                   <div className="p-2">
                     <p className="truncate text-xs">Vorhandenes Artikelbild</p>
-                    {hasUploadedPrimary ? (
+                    <div className="mt-2 flex gap-1">
+                      {hasUploadedPrimary ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 flex-1 px-2 text-xs"
+                          disabled={savingPrimary}
+                          onClick={() => void useExistingImage()}
+                        >
+                          <Star className="size-3" /> Als Hauptbild
+                        </Button>
+                      ) : null}
                       <Button
-                        size="sm"
-                        variant="outline"
-                        className="mt-2 h-8 w-full px-2 text-xs"
-                        disabled={savingPrimary}
-                        onClick={() => void useExistingImage()}
+                        size="icon"
+                        variant="ghost"
+                        className="size-8 text-red-700"
+                        aria-label="Vorhandenes Artikelbild löschen"
+                        onClick={() => void removeExistingImage()}
                       >
-                        <Star className="size-3" /> Als Hauptbild
+                        <Trash2 className="size-3.5" />
                       </Button>
-                    ) : null}
+                    </div>
                   </div>
                 </article>
               ) : null}
@@ -6945,7 +7053,7 @@ function ProductAssetManager({
                   key={string(asset.id)}
                   className="overflow-hidden rounded-xl border bg-white"
                 >
-                  <div className="relative aspect-square bg-[#ebe5db]">
+                  <label className="group/image relative block aspect-square cursor-pointer bg-[#ebe5db]">
                     <Image
                       src={string(asset.url)}
                       alt={string(asset.filename, 'Artikelbild')}
@@ -6957,7 +7065,21 @@ function ProductAssetManager({
                     {boolean(asset.isPrimary) ? (
                       <Badge className="absolute top-2 left-2">Hauptbild</Badge>
                     ) : null}
-                  </div>
+                    <span className="absolute inset-x-2 bottom-2 flex items-center justify-center gap-1 rounded-lg bg-black/65 px-2 py-1.5 text-xs text-white opacity-0 transition group-hover/image:opacity-100">
+                      <Pencil className="size-3" /> Bild ersetzen
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      disabled={Boolean(uploading)}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void replaceAsset(asset, file);
+                        event.target.value = '';
+                      }}
+                    />
+                  </label>
                   <div className="p-2">
                     <p
                       className="truncate text-xs"
