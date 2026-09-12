@@ -305,6 +305,19 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
+function currentBrowserView() {
+  if (typeof window === 'undefined') return '';
+  return new URL(window.location.href).searchParams.get('view') || '';
+}
+
+function replaceBrowserView(view = '') {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (view) url.searchParams.set('view', view);
+  else url.searchParams.delete('view');
+  window.history.replaceState({}, '', url);
+}
+
 export default function Home() {
   const [_products, setProducts] = useState<ProductRow[]>([]);
   const [trashedProducts, setTrashedProducts] = useState<ProductRow[]>([]);
@@ -381,11 +394,18 @@ export default function Home() {
     setDraftModule(null);
   }
 
+  function openHome() {
+    setActiveProduct(null);
+    closeModules();
+    replaceBrowserView();
+  }
+
   function openCalendar(entryId = '') {
     setActiveProduct(null);
     closeModules();
     setCalendarEntryId(entryId);
     setCalendarOpen(true);
+    replaceBrowserView('calendar');
   }
 
   function openInventory(area: InventoryArea = 'overview', productId = '') {
@@ -399,13 +419,13 @@ export default function Home() {
     setInventoryArea(area);
     setInventoryProductId(productId);
     setInventoryOpen(true);
+    replaceBrowserView(`inventory-${area}`);
     void loadInventory();
   }
 
   function openNavigation(label: string) {
     if (label === 'Übersicht') {
-      setActiveProduct(null);
-      closeModules();
+      openHome();
     } else if (label === 'Produkte') openInventory('products');
     else if (label === 'Preiskalkulator') openInventory('pricing');
     else if (label === 'Kasse') openInventory('cash');
@@ -419,24 +439,29 @@ export default function Home() {
       closeModules();
       setEtsyStartProductId('');
       setDraftModule('workflow');
+      replaceBrowserView('etsy-workflow');
     } else if (label === 'News-Kalender') {
       openCalendar();
     } else if (label === 'Board') {
       setActiveProduct(null);
       closeModules();
       setMindMapOpen(true);
+      replaceBrowserView('board');
     } else if (label === 'Konten & Abos') {
       setActiveProduct(null);
       closeModules();
       setAccountsOpen(true);
+      replaceBrowserView('accounts');
     } else if (label === 'Kataloge') {
       setActiveProduct(null);
       closeModules();
       setCatalogsOpen(true);
+      replaceBrowserView('catalogs');
     } else if (label === 'Bestellformular') {
       setActiveProduct(null);
       closeModules();
       setOrderFormOpen(true);
+      replaceBrowserView('order-form');
     }
   }
 
@@ -483,7 +508,72 @@ export default function Home() {
     setActiveProduct(null);
     closeModules();
     setTrashOpen(true);
+    replaceBrowserView('trash');
     void loadTrash();
+  }
+
+  function restoreBrowserView(view: string, canManage: boolean) {
+    const inventoryArea = view.startsWith('inventory-')
+      ? view.slice('inventory-'.length)
+      : '';
+    const inventoryAreas: InventoryArea[] = [
+      'overview',
+      'products',
+      'materials',
+      'pricing',
+      'markets',
+      'shelves',
+      'online',
+      'cash',
+      'expenses',
+      'sales',
+      'months',
+      'account',
+      'trash',
+    ];
+    if (inventoryAreas.includes(inventoryArea as InventoryArea)) {
+      const area = inventoryArea as InventoryArea;
+      if (
+        ['pricing', 'sales', 'months', 'expenses', 'trash'].includes(area) &&
+        !canManage
+      ) {
+        replaceBrowserView();
+        return;
+      }
+      setActiveProduct(null);
+      closeModules();
+      setInventoryArea(area);
+      setInventoryProductId('');
+      setInventoryOpen(true);
+      return;
+    }
+    if (view === 'calendar') openCalendar();
+    else if (view === 'etsy-workflow') {
+      setActiveProduct(null);
+      closeModules();
+      setDraftModule('workflow');
+    } else if (view === 'board') {
+      setActiveProduct(null);
+      closeModules();
+      setMindMapOpen(true);
+    } else if (view === 'accounts') {
+      setActiveProduct(null);
+      closeModules();
+      setAccountsOpen(true);
+    } else if (view === 'catalogs') {
+      setActiveProduct(null);
+      closeModules();
+      setCatalogsOpen(true);
+    } else if (view === 'order-form') {
+      setActiveProduct(null);
+      closeModules();
+      setOrderFormOpen(true);
+    } else if (view === 'trash' && canManage) {
+      setActiveProduct(null);
+      closeModules();
+      setTrashOpen(true);
+      void loadTrash();
+    }
   }
 
   async function loadInventory() {
@@ -500,7 +590,8 @@ export default function Home() {
       setInventoryCanManage(Boolean(session.canManage));
       if (session.email) setInventoryEmail(session.email);
       if (session.name) setInventoryUserName(session.name);
-      if (!session.connected) return false;
+      if (!session.connected)
+        return { connected: false, canManage: Boolean(session.canManage) };
       const response = await fetch('/api/inventory');
       const data = (await response.json()) as {
         connected?: boolean;
@@ -509,7 +600,7 @@ export default function Home() {
       };
       if (!response.ok) throw new Error(data.error || 'Inventar nicht lesbar.');
       setInventoryItems(data.items || []);
-      return true;
+      return { connected: true, canManage: Boolean(session.canManage) };
     } catch (error) {
       setInventoryConnected(false);
       setNotice(
@@ -517,7 +608,7 @@ export default function Home() {
           ? error.message
           : 'Inventar konnte nicht geladen werden.',
       );
-      return false;
+      return { connected: false, canManage: false };
     } finally {
       setInventoryLoading(false);
       setSessionChecked(true);
@@ -654,8 +745,9 @@ export default function Home() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadInventory().then((connected) => {
-        if (!connected) return;
+      void loadInventory().then((session) => {
+        restoreBrowserView(currentBrowserView(), session.canManage);
+        if (!session.connected) return;
         void loadProducts().catch(() =>
           setNotice('Die Produktdatenbank wird vorbereitet.'),
         );
@@ -945,6 +1037,7 @@ export default function Home() {
     closeModules();
     setEtsyStartProductId(String(item.id));
     setDraftModule('workflow');
+    replaceBrowserView('etsy-workflow');
   }
 
   async function saveFacts(facts: Created['facts']) {
@@ -1371,13 +1464,7 @@ export default function Home() {
 
       <section className="min-w-0 overflow-x-hidden pb-[calc(5.25rem+env(safe-area-inset-bottom))] lg:pl-[228px] lg:pb-0">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-[var(--fp-paper)]/92 px-5 backdrop-blur md:px-8">
-          <button
-            onClick={() => {
-              setActiveProduct(null);
-              closeModules();
-            }}
-            className="flex items-center gap-2"
-          >
+          <button onClick={openHome} className="flex items-center gap-2">
             {activeProduct ||
             calendarOpen ||
             inventoryOpen ||

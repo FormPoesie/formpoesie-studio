@@ -592,6 +592,12 @@ export function InventoryWorkspace({
   const [selectedMarket, setSelectedMarket] = useState<Row | null>(null);
   const openedInitialProduct = useRef('');
 
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', `inventory-${active}`);
+    window.history.replaceState({}, '', url);
+  }, [active]);
+
   const fetchArea = useCallback(
     async (area: Exclude<InventoryArea, 'overview'>) => {
       const response = await fetch('/api/inventory/workspace?area=' + area);
@@ -1088,6 +1094,10 @@ function Overview({
   onToggle: (row: Row, key: 'isPrinted' | 'isShipped') => Promise<void>;
   onEditTask: (row: Row) => void;
 }) {
+  const finalProducts = products.filter(
+    (item) =>
+      !item.archivedAt && inventoryReviewStatus(item.studioStatus) === 'final',
+  );
   const activeMarkets = markets.filter(
     (item) => string(item.status) !== 'abgeschlossen',
   );
@@ -1105,12 +1115,9 @@ function Overview({
   return (
     <div className="mt-6 space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Stat value={finalProducts.length} label="aktive Artikel" />
         <Stat
-          value={products.filter((item) => !item.archivedAt).length}
-          label="aktive Artikel"
-        />
-        <Stat
-          value={products.reduce(
+          value={finalProducts.reduce(
             (sum, item) => sum + number(item.stockQuantity),
             0,
           )}
@@ -1259,14 +1266,11 @@ function Products({
   onListing: (row: Row) => void;
   onBulkEdit: (ids: string[], values: Row) => Promise<boolean>;
 }) {
-  const [mainFilter, setMainFilter] = useState<
-    'all' | 'missing' | 'out' | 'margin'
-  >('all');
   const [category, setCategory] = useState('');
   const [familyId, setFamilyId] = useState('');
   const [designerId, setDesignerId] = useState('');
   const [reviewFilter, setReviewFilter] = useState<'final' | 'draft' | 'all'>(
-    'all',
+    'final',
   );
   const [sort, setSort] = useState<
     'name' | 'margin' | 'cost' | 'printTime' | 'updated'
@@ -1328,16 +1332,6 @@ function Products({
       inventoryReviewStatus(product.studioStatus) !== reviewFilter
     )
       return false;
-    if (mainFilter === 'missing' && !productMissing(product)) return false;
-    if (
-      mainFilter === 'out' &&
-      rows(product.variants).reduce(
-        (sum, variant) => sum + number(variant.quantity),
-        0,
-      ) > 0
-    )
-      return false;
-    if (mainFilter === 'margin' && averageMargin(product) != null) return false;
     return true;
   });
   products.sort((a, b) => {
@@ -1478,7 +1472,11 @@ function Products({
     missing: number;
   }>(
     (summary, product) => {
-      if (product.archivedAt) return summary;
+      if (
+        product.archivedAt ||
+        inventoryReviewStatus(product.studioStatus) !== 'final'
+      )
+        return summary;
       if (productMissing(product)) {
         summary.missing += 1;
         return summary;
@@ -1520,27 +1518,13 @@ function Products({
         </Button>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        {(
-          [
-            ['all', 'Alle'],
-            ['missing', 'Daten fehlen'],
-            ['out', 'Nichts auf Lager'],
-            ['margin', 'Marge unklar'],
-          ] as const
-        ).map(([value, label]) => (
-          <Button
-            key={value}
-            size="sm"
-            variant={mainFilter === value ? 'default' : 'outline'}
-            onClick={() =>
-              setMainFilter((current) =>
-                value !== 'all' && current === value ? 'all' : value,
-              )
-            }
-          >
-            {label}
-          </Button>
-        ))}
+        <Button
+          size="sm"
+          variant={reviewFilter === 'all' ? 'default' : 'outline'}
+          onClick={() => setReviewFilter('all')}
+        >
+          Alle
+        </Button>
         <Button
           size="sm"
           variant={reviewFilter === 'final' ? 'default' : 'outline'}
