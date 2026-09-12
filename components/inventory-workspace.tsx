@@ -5550,15 +5550,42 @@ const ManufacturingEditor = forwardRef<
             components,
           );
           const issues = variantProductionIssues(draftProduct, draft);
-          const relevantParts = filaments.filter(
-            (item) =>
-              !string(item.productVariantId) ||
-              string(item.productVariantId) === id,
+          const sharedParts = filaments.filter(
+            (item) => !string(item.productVariantId),
           );
+          const variantParts = filaments.filter(
+            (item) => string(item.productVariantId) === id,
+          );
+          const overriddenPartNames = new Set(
+            variantParts.map((item) => string(item.part).trim()).filter(Boolean),
+          );
+          const effectiveParts = [
+            ...sharedParts.filter(
+              (item) =>
+                !string(item.part).trim() ||
+                !overriddenPartNames.has(string(item.part).trim()),
+            ),
+            ...variantParts,
+          ];
+          // Mirror the calculation engine: an unnamed legacy filament row is
+          // only a fallback when the variant has no own production weight.
+          const relevantParts =
+            number(draft.grams) > 0
+              ? effectiveParts.filter((item) => string(item.part).trim())
+              : effectiveParts;
+          const partNames = new Set(
+            relevantParts
+              .map((item) => string(item.part).trim())
+              .filter(Boolean),
+          );
+          const usesPartProduction = relevantParts.length > 0;
+          const isMultipart = partNames.size > 1;
           const productionLabel =
-            relevantParts.length > 1
-              ? `Mehrteilig · ${relevantParts.length} Druckteile`
-              : 'Einfach';
+            isMultipart
+              ? `Mehrteilig · ${partNames.size} Bauteile`
+              : relevantParts.length > 1
+                ? `Einfach · ${relevantParts.length} Materialien`
+                : 'Einfach';
           const imagePath = string(draft.imageUrl || productImagePath(product));
           const printMinutes = number(draft.printMinutes);
           return (
@@ -5670,7 +5697,7 @@ const ManufacturingEditor = forwardRef<
                       value={string(draft.name)}
                       onChange={(value) => updateVariant(id, 'name', value)}
                     />
-                    {relevantParts.length <= 1 ? (
+                    {!usesPartProduction ? (
                       <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
                         Filament / Material
                         <select
@@ -5747,10 +5774,13 @@ const ManufacturingEditor = forwardRef<
                     <h4 className="border-t pt-4 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase sm:col-span-2">
                       Produktion
                     </h4>
-                    {relevantParts.length > 1 ? (
+                    {usesPartProduction ? (
                       <div className="rounded-xl border bg-[var(--fp-mist)]/60 p-3 text-sm sm:col-span-2">
                         <strong>
-                          Automatisch aus {relevantParts.length} Druckteilen
+                          Automatisch aus{' '}
+                          {isMultipart
+                            ? `${partNames.size} Bauteilen`
+                            : `${relevantParts.length} Material${relevantParts.length === 1 ? '' : 'ien'}`}
                         </strong>
                         <span className="mt-1 block text-muted-foreground">
                           {decimalInputValue(cost.netGrams + cost.wasteGrams)} g
