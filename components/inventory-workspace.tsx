@@ -6864,18 +6864,25 @@ function ProductAssetManager({
   async function removeExistingImage() {
     if (!window.confirm('Vorhandenes Artikelbild wirklich löschen?')) return;
     setMessage('');
-    const response = await fetch('/api/inventory/image', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productId: product.id }),
-    });
-    const result = (await response.json().catch(() => ({}))) as {
-      error?: string;
-    };
-    if (!response.ok) setMessage(result.error || 'Artikelbild nicht gelöscht.');
-    else {
+    try {
+      const response = await fetch('/api/inventory/image', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: product.id }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Artikelbild nicht gelöscht.');
       setMessage('Artikelbild gelöscht.');
       onChanged();
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error
+          ? reason.message
+          : 'Artikelbild nicht gelöscht.',
+      );
     }
   }
 

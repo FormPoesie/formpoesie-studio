@@ -4,6 +4,7 @@ import {
   inventoryHeaders,
   readCookie,
 } from '@/lib/inventory-bridge';
+import { env } from 'cloudflare:workers';
 
 const bucket = 'bilder';
 const maximumBytes = 12 * 1024 * 1024;
@@ -14,6 +15,15 @@ function encodeObjectPath(path: string) {
 
 function cleanObjectPath(value: string) {
   return value.replace(/^\/+/, '').replace(/^bilder\//, '');
+}
+
+function inventoryWriteHeaders(accessToken: string) {
+  const serviceKey = env.INVENTORY_SUPABASE_SERVICE_ROLE_KEY;
+  const credential = serviceKey || accessToken;
+  return {
+    ...inventoryHeaders(credential),
+    ...(serviceKey ? { apikey: serviceKey } : {}),
+  };
 }
 
 export async function GET(request: Request) {
@@ -104,8 +114,7 @@ export async function POST(request: Request) {
     {
       method: 'POST',
       headers: {
-        apikey: inventoryHeaders(accessToken).apikey,
-        Authorization: inventoryHeaders(accessToken).Authorization,
+        ...inventoryWriteHeaders(accessToken),
         'Content-Type': file.type,
         'x-upsert': 'false',
       },
@@ -140,7 +149,7 @@ export async function POST(request: Request) {
     {
       method: 'PATCH',
       headers: {
-        ...inventoryHeaders(accessToken),
+        ...inventoryWriteHeaders(accessToken),
         Prefer: 'return=representation',
       },
       body: JSON.stringify({
@@ -163,7 +172,7 @@ export async function POST(request: Request) {
       `${INVENTORY_SUPABASE_URL}/storage/v1/object/${bucket}/${encodeObjectPath(cleanObjectPath(previousPath))}`,
       {
         method: 'DELETE',
-        headers: inventoryHeaders(accessToken),
+        headers: inventoryWriteHeaders(accessToken),
       },
     ).catch(() => null);
   return Response.json({ uploaded: true, path }, { status: 201 });
@@ -206,7 +215,7 @@ export async function DELETE(request: Request) {
     {
       method: 'PATCH',
       headers: {
-        ...inventoryHeaders(accessToken),
+        ...inventoryWriteHeaders(accessToken),
         Prefer: 'return=representation',
       },
       body: JSON.stringify({
@@ -215,17 +224,23 @@ export async function DELETE(request: Request) {
       }),
     },
   );
+  const updatedRows = (await update.json().catch(() => [])) as unknown;
   if (!update.ok)
     return Response.json(
       { error: 'Artikelbild nicht gelöscht.' },
       { status: 502 },
+    );
+  if (!Array.isArray(updatedRows) || updatedRows.length === 0)
+    return Response.json(
+      { error: 'Das gespeicherte Artikelbild konnte nicht zugeordnet werden.' },
+      { status: 404 },
     );
   if (currentPath && !/^https?:\/\//i.test(currentPath))
     await fetch(
       `${INVENTORY_SUPABASE_URL}/storage/v1/object/${bucket}/${encodeObjectPath(cleanObjectPath(currentPath))}`,
       {
         method: 'DELETE',
-        headers: inventoryHeaders(accessToken),
+        headers: inventoryWriteHeaders(accessToken),
       },
     ).catch(() => null);
   return Response.json({ deleted: true });
