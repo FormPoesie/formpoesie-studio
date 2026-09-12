@@ -386,9 +386,10 @@ function Field({
 
 function decimalInputValue(value: unknown) {
   const parsed = number(value);
-  return Number.isInteger(parsed)
-    ? String(parsed)
-    : String(parsed).replace('.', ',');
+  const rounded = Math.round((parsed + Number.EPSILON) * 1000) / 1000;
+  return Number.isInteger(rounded)
+    ? String(rounded)
+    : String(rounded).replace('.', ',');
 }
 
 function decimalInputNumber(value: string) {
@@ -5377,6 +5378,22 @@ const ManufacturingEditor = forwardRef<
     );
   }
 
+  function addColorToVariant(row: Row) {
+    open('product_filaments', {
+      productId: number(product.id),
+      productVariantId: number(row.id),
+      part: '',
+      grams: 0,
+      wasteGrams: 0,
+      printer: row.printer || null,
+      printMinutes: 0,
+      position: filaments.length,
+    });
+    setMessage(
+      `Weitere Farbe für „${string(row.name, 'Variante')}“: Filament und Teilgewicht ergänzen.`,
+    );
+  }
+
   async function removeManufacturingRow(
     entity: 'product_variants' | 'product_filaments',
     row: Row,
@@ -5640,7 +5657,9 @@ const ManufacturingEditor = forwardRef<
             (item) => string(item.productVariantId) === id,
           );
           const overriddenPartNames = new Set(
-            variantParts.map((item) => string(item.part).trim()).filter(Boolean),
+            variantParts
+              .map((item) => string(item.part).trim())
+              .filter(Boolean),
           );
           const effectiveParts = [
             ...sharedParts.filter(
@@ -5654,20 +5673,33 @@ const ManufacturingEditor = forwardRef<
           // only a fallback when the variant has no own production weight.
           const relevantParts =
             number(draft.grams) > 0
-              ? effectiveParts.filter((item) => string(item.part).trim())
+              ? effectiveParts.filter(
+                  (item) =>
+                    string(item.part).trim() ||
+                    string(item.productVariantId) === id,
+                )
               : effectiveParts;
+          const structuralParts = relevantParts.filter((item) =>
+            string(item.part).trim(),
+          );
+          const additionalColors = variantParts.filter(
+            (item) => !string(item.part).trim(),
+          );
           const partNames = new Set(
-            relevantParts
+            structuralParts
               .map((item) => string(item.part).trim())
               .filter(Boolean),
           );
-          const usesPartProduction = relevantParts.length > 0;
+          const usesPartProduction = structuralParts.length > 0;
           const isMultipart = partNames.size > 1;
-          const productionLabel =
-            isMultipart
-              ? `Mehrteilig · ${partNames.size} Bauteile`
-              : relevantParts.length > 1
-                ? `Einfach · ${relevantParts.length} Materialien`
+          const simpleColorCount =
+            (string(draft.materialId) ? 1 : 0) + additionalColors.length;
+          const productionLabel = isMultipart
+            ? `Mehrteilig · ${partNames.size} Bauteile`
+            : usesPartProduction
+              ? `Einfach · ${structuralParts.length} Materialien`
+              : simpleColorCount > 1
+                ? `Einfach · ${simpleColorCount} Farben`
                 : 'Einfach';
           const imagePath = string(draft.imageUrl || productImagePath(product));
           const printMinutes = number(draft.printMinutes);
@@ -5704,7 +5736,8 @@ const ManufacturingEditor = forwardRef<
                       : `${cost.marginPercent.toFixed(1)} % Marge`}
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
-                    Markt {cents(number(draft.marketPriceCents ?? draft.priceCents))}
+                    Markt{' '}
+                    {cents(number(draft.marketPriceCents ?? draft.priceCents))}
                     {' · '}Vinted{' '}
                     {cents(number(draft.vintedPriceCents ?? draft.priceCents))}
                     {' · '}Etsy{' '}
@@ -5838,9 +5871,7 @@ const ManufacturingEditor = forwardRef<
                       <SalesPriceFields
                         values={draft}
                         standardKey="priceCents"
-                        onChange={(key, value) =>
-                          updateVariant(id, key, value)
-                        }
+                        onChange={(key, value) => updateVariant(id, key, value)}
                       />
                       {issues.includes('Verkaufspreis fehlt') ? (
                         <p className="mt-1 text-xs text-[#8b5c27]">
@@ -5870,7 +5901,7 @@ const ManufacturingEditor = forwardRef<
                           Automatisch aus{' '}
                           {isMultipart
                             ? `${partNames.size} Bauteilen`
-                            : `${relevantParts.length} Material${relevantParts.length === 1 ? '' : 'ien'}`}
+                            : `${structuralParts.length} Material${structuralParts.length === 1 ? '' : 'ien'}`}
                         </strong>
                         <span className="mt-1 block text-muted-foreground">
                           {decimalInputValue(cost.netGrams + cost.wasteGrams)} g
@@ -5947,6 +5978,85 @@ const ManufacturingEditor = forwardRef<
                         </div>
                       </>
                     )}
+                    <div className="rounded-xl border bg-white/75 p-3 sm:col-span-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h5 className="text-sm font-medium">
+                            Farben dieser Variante
+                          </h5>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Jede Farbe erhält ihr eigenes Teilgewicht und fließt
+                            in die Kosten ein.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => addColorToVariant(draft)}
+                        >
+                          <Plus className="size-3.5" /> Weitere Farbe
+                        </Button>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {!usesPartProduction && string(draft.materialId) ? (
+                          <span className="rounded-xl border bg-[var(--fp-mist)]/55 px-3 py-2 text-xs">
+                            <strong className="block">Hauptfarbe</strong>
+                            <span className="mt-0.5 block text-muted-foreground">
+                              {materialChoiceLabel(object(draft.material)) ||
+                                'Filament gewählt'}{' '}
+                              · {decimalInputValue(draft.grams)} g
+                            </span>
+                          </span>
+                        ) : null}
+                        {variantParts.map((item) => {
+                          const label =
+                            materialChoiceLabel(object(item.material)) ||
+                            'Material offen';
+                          return (
+                            <span
+                              key={string(item.id)}
+                              className="inline-flex overflow-hidden rounded-xl border bg-white"
+                            >
+                              <button
+                                type="button"
+                                className="px-3 py-2 text-left text-xs hover:bg-[var(--fp-mist)]"
+                                onClick={() => open('product_filaments', item)}
+                              >
+                                <strong className="block">
+                                  {string(item.part, 'Zusatzfarbe')}
+                                </strong>
+                                <span className="mt-0.5 block text-muted-foreground">
+                                  {label} · {decimalInputValue(item.grams)} g
+                                </span>
+                              </button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-auto w-9 rounded-none border-l text-red-700"
+                                disabled={detailSaving}
+                                aria-label={`${label} entfernen`}
+                                onClick={() =>
+                                  void removeManufacturingRow(
+                                    'product_filaments',
+                                    item,
+                                    label,
+                                  )
+                                }
+                              >
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            </span>
+                          );
+                        })}
+                        {!string(draft.materialId) && !variantParts.length ? (
+                          <span className="text-xs text-muted-foreground">
+                            Noch keine Farbe hinterlegt.
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <details className="group/more mt-4 rounded-xl border bg-white/55">
@@ -6134,7 +6244,7 @@ const ManufacturingEditor = forwardRef<
                         >
                           <span className="block font-medium">{label}</span>
                           <span className="mt-1 block text-muted-foreground">
-                            {number(item.grams)} g
+                            {decimalInputValue(item.grams)} g
                             {number(item.printMinutes) > 0
                               ? ` · ${duration(number(item.printMinutes))}`
                               : ''}
@@ -6468,11 +6578,11 @@ const ManufacturingEditor = forwardRef<
                         </div>
                         <div className="mt-2 grid gap-2 sm:grid-cols-4">
                           <span>
-                            Netto {cost.netGrams} g ·{' '}
+                            Netto {decimalInputValue(cost.netGrams)} g ·{' '}
                             {cents(cost.filamentCents)}
                           </span>
                           <span>
-                            Ausschuss {cost.wasteGrams} g ·{' '}
+                            Ausschuss {decimalInputValue(cost.wasteGrams)} g ·{' '}
                             {cents(cost.wasteCents)}
                           </span>
                           <span>Maschine {cents(cost.machineCents)}</span>

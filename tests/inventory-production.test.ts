@@ -78,3 +78,44 @@ void test('zeigt bei fehlendem Filament keine erfundene Marge', () => {
   assert.equal(result.filamentCents, 0);
   assert.equal(result.marginPercent, null);
 });
+
+void test('rechnet mehrere Farben innerhalb derselben Variante zusammen', () => {
+  const material = {
+    id: 1,
+    pricePerRollCents: 2000,
+    spoolWeightGrams: 1000,
+  };
+  const secondMaterial = {
+    id: 2,
+    pricePerRollCents: 3000,
+    spoolWeightGrams: 1000,
+  };
+  const result = variantCostBreakdown(
+    {
+      id: 1,
+      filaments: [
+        {
+          id: 9,
+          productVariantId: 2,
+          part: '',
+          material: secondMaterial,
+          grams: 28.53,
+          wasteGrams: 1.47,
+        },
+      ],
+    },
+    {
+      id: 2,
+      material,
+      grams: 200,
+      wasteGrams: 10,
+      printMinutes: 60,
+      printer: 'X2D',
+      priceCents: 1500,
+    },
+  );
+  assert.equal(result.netGrams, 228.53);
+  assert.equal(result.wasteGrams, 11.47);
+  assert.equal(result.filamentCents, 486);
+  assert.equal(result.wasteCents, 24);
+});

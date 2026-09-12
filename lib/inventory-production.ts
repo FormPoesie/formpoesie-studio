@@ -79,7 +79,11 @@ function effectiveFilaments(product: UnknownRow, variant: UnknownRow) {
     ...own,
   ];
   return numeric(variant.grams) > 0
-    ? merged.filter((row) => textual(row.part).trim() !== '')
+    ? merged.filter(
+        (row) =>
+          textual(row.part).trim() !== '' ||
+          (variantId && textual(row.productVariantId) === variantId),
+      )
     : merged;
 }
 
