@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Oxygen, Cormorant_Infant } from 'next/font/google';
 import './globals.css';
+import { VersionGuard } from '@/components/version-guard';
 
 const oxygen = Oxygen({
   variable: '--font-oxygen',
@@ -38,6 +39,7 @@ export default function RootLayout({
   return (
     <html lang="de">
       <body className={`${oxygen.variable} ${cormorant.variable} antialiased`}>
+        <VersionGuard />
         {children}
       </body>
     </html>
