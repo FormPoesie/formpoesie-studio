@@ -10,7 +10,8 @@
     {
       "binding": "DB",
       "database_name": "site-creator-d1",
-      "database_id": "683d114f-2961-4bd7-94d7-77aea5f1cca8"
+      "database_id": "683d114f-2961-4bd7-94d7-77aea5f1cca8",
+      "migrations_dir": "drizzle"
     }
   ],
   "r2_buckets": [
