@@ -67,7 +67,11 @@ import {
   inventoryReviewStatus,
   type InventoryItem,
 } from '@/lib/inventory-bridge';
-import { PRINTERS, variantCostBreakdown } from '@/lib/inventory-production';
+import {
+  PRINTERS,
+  variantCostBreakdown,
+  variantProductionIssues,
+} from '@/lib/inventory-production';
 import {
   expenseOccursInMonth,
   type ExpenseRecurrence,
@@ -228,59 +232,15 @@ function designerName(product: Row, data: AreaData) {
 
 function productionDataMissing(
   product: Row,
-  products: Row[],
-  components: Row[],
+  _products: Row[],
+  _components: Row[],
 ) {
   const variants = rows(product.variants);
-  const allFilaments = rows(product.filaments);
   return (
     !variants.length ||
-    variants.some((variant) => {
-      const cost = variantCostBreakdown(product, variant, products, components);
-      const purchased = /zubehör|zubehoer|zukauf|einkauf|handelsware/i.test(
-        string(product.category),
-      );
-      const digital = /stl|digital/i.test(string(product.category));
-      if (purchased || digital)
-        return (
-          number(variant.priceCents) <= 0 || number(variant.extraCostCents) < 0
-        );
-      const variantId = string(variant.id);
-      const sharedFilaments = allFilaments.filter(
-        (item) => !string(item.productVariantId),
-      );
-      const ownFilaments = allFilaments.filter(
-        (item) => variantId && string(item.productVariantId) === variantId,
-      );
-      const replacedParts = new Set(
-        ownFilaments
-          .map((item) => string(item.part).trim().toLocaleLowerCase('de'))
-          .filter(Boolean),
-      );
-      const effectiveFilaments = [
-        ...sharedFilaments.filter(
-          (item) =>
-            !replacedParts.has(
-              string(item.part).trim().toLocaleLowerCase('de'),
-            ),
-        ),
-        ...ownFilaments,
-      ];
-      const timedFilaments = effectiveFilaments.filter(
-        (item) => number(item.printMinutes) > 0,
-      );
-      const hasPrinter = timedFilaments.length
-        ? timedFilaments.every(
-            (item) => string(item.printer) || string(variant.printer),
-          )
-        : Boolean(string(variant.printer));
-      return (
-        number(variant.priceCents) <= 0 ||
-        cost.netGrams <= 0 ||
-        cost.printMinutes <= 0 ||
-        !hasPrinter
-      );
-    })
+    variants.some(
+      (variant) => variantProductionIssues(product, variant).length > 0,
+    )
   );
 }
 
@@ -4655,7 +4615,7 @@ function EntityEditor({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[96vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-[min(1500px,96vw)]">
+      <DialogContent className="max-h-[96vh] overflow-x-hidden overflow-y-auto bg-[#f8f4ed] sm:max-w-[min(1500px,96vw)]">
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">
             {isProduct
@@ -4667,8 +4627,8 @@ function EntityEditor({
                 : 'Neu anlegen'}
           </DialogTitle>
           <DialogDescription>
-            Die vertraute Artikelmaske: Basis, Varianten, Herstellung,
-            Kalkulation und Bestand auf einer Seite.
+            Von oben nach unten bearbeiten. Kosten und Marge werden automatisch
+            aus den Produktionsdaten berechnet.
           </DialogDescription>
         </DialogHeader>
         <div
@@ -4802,13 +4762,21 @@ function EntityEditor({
                   </div>
                 </div>
               </section>
-              <section className="rounded-2xl border border-[var(--fp-primary)]/30 bg-[var(--fp-mist)]/65 p-4 sm:col-span-2">
+              <section className="order-first rounded-2xl border border-[var(--fp-primary)]/30 bg-[var(--fp-mist)]/65 p-4 sm:col-span-2">
                 <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] sm:items-end">
                   <div>
-                    <h3 className="font-heading text-xl">Bearbeitungsstatus</h3>
+                    <h3 className="font-heading text-xl">
+                      {string(form.name, 'Neuer Artikel')}
+                    </h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Kennzeichnet, ob der Artikel vollständig geprüft und
-                      fertig bearbeitet ist.
+                      {editor.row.id &&
+                      productionDataMissing(
+                        { ...editor.row, ...form },
+                        rows(data.products?.products),
+                        rows(data.products?.components),
+                      )
+                        ? 'Produktionsdaten unvollständig · Marge bleibt offen'
+                        : 'Produktionsdaten vollständig'}
                     </p>
                   </div>
                   <label className="grid gap-1.5 text-sm font-medium text-foreground">
@@ -4826,8 +4794,8 @@ function EntityEditor({
                           );
                       }}
                     >
-                      <option value="draft">Noch offen</option>
-                      <option value="final">Final bearbeitet</option>
+                      <option value="draft">Entwurf</option>
+                      <option value="final">Final</option>
                     </select>
                   </label>
                 </div>
@@ -4896,11 +4864,6 @@ function EntityEditor({
                     products={rows(data.products?.products)}
                     components={rows(data.products?.components)}
                     onChanged={() => onProductChanged(editor.row.id)}
-                  />
-                  <ProductCalculationSummary
-                    product={editor.row}
-                    products={rows(data.products?.products)}
-                    components={rows(data.products?.components)}
                   />
                   <RelationsSummary
                     product={editor.row}
@@ -5160,7 +5123,7 @@ function EntityEditor({
           </p>
         ) : null}
         <div
-          className={`sticky -bottom-6 z-10 -mx-6 justify-end gap-2 border-t bg-[#f8f4ed]/95 px-6 py-4 backdrop-blur ${
+          className={`sticky -bottom-6 z-10 -mx-4 justify-end gap-2 border-t bg-[#f8f4ed]/95 px-4 py-4 backdrop-blur sm:-mx-6 sm:px-6 ${
             isProduct ? 'flex lg:hidden' : 'flex'
           }`}
         >
@@ -5486,7 +5449,7 @@ const ManufacturingEditor = forwardRef<
   }));
 
   return (
-    <section className="sm:col-span-2 rounded-2xl border bg-white/70 p-4">
+    <section className="min-w-0 rounded-2xl border bg-white/70 p-4 sm:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="font-heading text-xl">Varianten</h3>
@@ -5523,12 +5486,22 @@ const ManufacturingEditor = forwardRef<
             products,
             components,
           );
+          const issues = variantProductionIssues(draftProduct, draft);
+          const relevantParts = filaments.filter(
+            (item) =>
+              !string(item.productVariantId) ||
+              string(item.productVariantId) === id,
+          );
+          const productionLabel =
+            relevantParts.length > 1
+              ? `Mehrteilig · ${relevantParts.length} Druckteile`
+              : 'Einfach';
           const imagePath = string(draft.imageUrl || productImagePath(product));
           const printMinutes = number(draft.printMinutes);
           return (
             <details
               key={id}
-              open={openVariants[id] ?? index === 0}
+              open={openVariants[id] ?? false}
               onToggle={(event) => {
                 const isOpen = event.currentTarget.open;
                 setOpenVariants((current) => ({
@@ -5536,20 +5509,34 @@ const ManufacturingEditor = forwardRef<
                   [id]: isOpen,
                 }));
               }}
-              className="group rounded-2xl border bg-[var(--fp-paper)]/55"
+              className="group min-w-0 max-w-full overflow-hidden rounded-2xl border bg-[var(--fp-paper)]/55"
             >
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-4">
+              <summary className="grid cursor-pointer list-none gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                 <span className="min-w-0">
                   <strong className="block truncate">
                     {string(draft.name, `Variante ${index + 1}`)}
                   </strong>
-                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                  <span className="mt-1 block text-xs text-muted-foreground">
                     {[string(draft.size), string(draft.appearance)]
                       .filter(Boolean)
                       .join(' · ') || 'Größe und Ausprägung noch offen'}
                   </span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    {productionLabel} ·{' '}
+                    {decimalInputValue(cost.netGrams + cost.wasteGrams)} g ·{' '}
+                    {duration(cost.printMinutes)} · Herstellungskosten{' '}
+                    {cents(cost.totalCents)} ·{' '}
+                    {cost.marginPercent == null
+                      ? 'Marge offen'
+                      : `${cost.marginPercent.toFixed(1)} % Marge`}
+                  </span>
+                  {issues.length ? (
+                    <span className="mt-2 block text-xs font-medium text-[#8b5c27]">
+                      ⚠ {issues.join(' · ')}
+                    </span>
+                  ) : null}
                 </span>
-                <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                <span className="flex shrink-0 items-center justify-between gap-3 text-xs text-muted-foreground sm:justify-end">
                   <span>{number(draft.quantity)} Stück</span>
                   <strong className="text-foreground">
                     {cents(number(draft.priceCents))}
@@ -5559,9 +5546,9 @@ const ManufacturingEditor = forwardRef<
                   </span>
                 </span>
               </summary>
-              <div className="border-t p-4">
+              <div className="min-w-0 max-w-full border-t p-4">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span>Herstellung {cents(cost.totalCents)}</span>
+                  <span>Produktion: {productionLabel}</span>
                   <span>
                     {cost.marginPercent == null
                       ? 'Marge offen'
@@ -5581,7 +5568,7 @@ const ManufacturingEditor = forwardRef<
                     dieser Variante gedacht.
                   </p>
                 ) : null}
-                <div className="grid gap-4 lg:grid-cols-[180px_minmax(0,1fr)]">
+                <div className="grid min-w-0 gap-4 lg:grid-cols-[180px_minmax(0,1fr)]">
                   <div>
                     <div className="relative aspect-square overflow-hidden rounded-2xl border bg-[#ebe5db]">
                       {imagePath ? (
@@ -5611,14 +5598,17 @@ const ManufacturingEditor = forwardRef<
                       </p>
                     ) : null}
                   </div>
-                  <div className="grid content-start gap-4 sm:grid-cols-2">
+                  <div className="grid min-w-0 content-start gap-4 sm:grid-cols-2">
+                    <h4 className="text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase sm:col-span-2">
+                      Verkauf &amp; Bestand
+                    </h4>
                     <Field
                       label="Name der Variante"
                       value={string(draft.name)}
                       onChange={(value) => updateVariant(id, 'name', value)}
                     />
                     <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                      Farbe / Ausprägung
+                      Filament / Material
                       <select
                         className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
                         value={string(draft.materialId)}
@@ -5670,7 +5660,10 @@ const ManufacturingEditor = forwardRef<
                         )
                       }
                     />
-                    <div />
+                    <div className="hidden sm:block" />
+                    <h4 className="border-t pt-4 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase sm:col-span-2">
+                      Produktion
+                    </h4>
                     <DecimalField
                       label="Nettogewicht (Gramm)"
                       value={number(draft.grams)}
@@ -5715,14 +5708,14 @@ const ManufacturingEditor = forwardRef<
                 </div>
                 <details className="group/more mt-4 rounded-xl border bg-white/55">
                   <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
-                    Weitere Angaben dieser Variante
+                    Zustand, Größen &amp; Zusatzkosten
                     <span className="transition group-open/more:rotate-180">
                       ⌄
                     </span>
                   </summary>
                   <div className="grid gap-4 border-t p-3 sm:grid-cols-2">
                     <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                      Gewichtsklasse / Variantengruppe
+                      Größen &amp; Gewichtsklassen
                       <select
                         className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
                         value={string(draft.weightClassGroup)}
@@ -6292,6 +6285,11 @@ function ProductEditorSidebar({
       ? cents(priceValues[0])
       : `${cents(Math.min(...priceValues))} – ${cents(Math.max(...priceValues))}`
     : 'offen';
+  const productionIssues = variants.flatMap((variant, index) =>
+    variantProductionIssues(product, variant).map(
+      (issue) => `${string(variant.name, `Variante ${index + 1}`)}: ${issue}`,
+    ),
+  );
   const items: Array<[string, number]> = [
     ['Filament', average('filamentCents') + average('wasteCents')],
     ['Maschine', average('machineCents')],
@@ -6343,6 +6341,20 @@ function ProductEditorSidebar({
               <dd>{cents(average('totalCents'))}</dd>
             </div>
           </dl>
+          {productionIssues.length ? (
+            <div className="mt-3 rounded-2xl border border-[#d6a15e] bg-[#fff8e8] p-3 text-sm text-[#744719]">
+              <strong>Marge offen</strong>
+              <ul className="mt-2 space-y-1 text-xs">
+                {productionIssues.map((issue) => (
+                  <li key={issue}>• {issue}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs font-medium text-[var(--fp-primary)]">
+              ✓ Artikel vollständig kalkuliert
+            </p>
+          )}
         </section>
         <Button className="h-12 w-full" onClick={onSave} disabled={saving}>
           {saving ? (
@@ -6354,73 +6366,6 @@ function ProductEditorSidebar({
         </Button>
       </div>
     </aside>
-  );
-}
-
-function ProductCalculationSummary({
-  product,
-  products,
-  components,
-}: {
-  product: Row;
-  products: Row[];
-  components: Row[];
-}) {
-  const variants = rows(product.variants);
-  const calculations = variants.map((variant) => ({
-    variant,
-    cost: variantCostBreakdown(product, variant, products, components),
-  }));
-  const totalGrams = Math.max(
-    0,
-    ...calculations.map((item) => item.cost.netGrams + item.cost.wasteGrams),
-  );
-  const totalMinutes = Math.max(
-    0,
-    ...calculations.map((item) => item.cost.printMinutes),
-  );
-  return (
-    <section className="rounded-2xl border bg-white/70 p-4 sm:col-span-2">
-      <h3 className="font-heading text-xl">Kalkulation</h3>
-      <p className="text-sm text-muted-foreground">
-        Was ein Stück kostet – gerechnet, nicht eingetragen.
-      </p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border bg-[var(--fp-paper)]/55 p-3">
-          <div className="text-xs text-muted-foreground">Gesamtgewicht</div>
-          <div className="mt-1 text-lg font-medium">{totalGrams} g</div>
-        </div>
-        <div className="rounded-xl border bg-[var(--fp-paper)]/55 p-3">
-          <div className="text-xs text-muted-foreground">Druckzeit</div>
-          <div className="mt-1 text-lg font-medium">
-            {duration(totalMinutes)}
-          </div>
-        </div>
-      </div>
-      <div className="mt-3 space-y-2">
-        {calculations.map(({ variant, cost }, index) => (
-          <div
-            key={string(variant.id, String(index))}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white p-3 text-sm"
-          >
-            <span>
-              {string(
-                variant.name || variant.appearance || variant.size,
-                `Variante ${index + 1}`,
-              )}
-            </span>
-            <span className="flex gap-3">
-              <strong>Herstellung {cents(cost.totalCents)}</strong>
-              <span>
-                {cost.marginPercent == null
-                  ? 'Marge offen'
-                  : `${cost.marginPercent.toFixed(1)} % Marge`}
-              </span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }
 

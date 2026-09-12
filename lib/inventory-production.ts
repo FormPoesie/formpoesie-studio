@@ -83,6 +83,49 @@ function effectiveFilaments(product: UnknownRow, variant: UnknownRow) {
     : merged;
 }
 
+export function variantProductionIssues(
+  product: UnknownRow,
+  variant: UnknownRow,
+) {
+  const priceCents = Math.max(0, Math.round(numeric(variant.priceCents)));
+  const category = textual(product.category);
+  const doesNotRequirePrinting =
+    /stl|digital|zubehör|zubehoer|zukauf|einkauf|handelsware/i.test(category);
+  const issues: string[] = [];
+  if (priceCents <= 0) issues.push('Verkaufspreis fehlt');
+  if (doesNotRequirePrinting) return issues;
+
+  const filaments = effectiveFilaments(product, variant);
+  const ownWeight = numeric(variant.grams) + numeric(variant.wasteGrams);
+  const totalWeight =
+    ownWeight +
+    filaments.reduce(
+      (sum, row) => sum + numeric(row.grams) + numeric(row.wasteGrams),
+      0,
+    );
+  const ownHasMaterial = Boolean(textual(materialOf(variant).id));
+  const everyPartHasMaterial = filaments
+    .filter((row) => numeric(row.grams) + numeric(row.wasteGrams) > 0)
+    .every((row) => Boolean(textual(materialOf(row).id)));
+  const hasMaterial =
+    (ownWeight <= 0 || ownHasMaterial) && everyPartHasMaterial;
+  if (totalWeight <= 0) issues.push('Gewicht fehlt');
+  if (!hasMaterial) issues.push('Filament fehlt');
+
+  const timedParts = filaments.filter((row) => numeric(row.printMinutes) > 0);
+  const printMinutes = timedParts.length
+    ? timedParts.reduce((sum, row) => sum + numeric(row.printMinutes), 0)
+    : numeric(variant.printMinutes);
+  if (printMinutes <= 0) issues.push('Druckzeit fehlt');
+  const hasPrinter = timedParts.length
+    ? timedParts.every(
+        (row) => textual(row.printer) || textual(variant.printer),
+      )
+    : Boolean(textual(variant.printer));
+  if (!hasPrinter) issues.push('Drucker fehlt');
+  return issues;
+}
+
 function componentCosts(
   product: UnknownRow,
   variant: UnknownRow,
@@ -197,6 +240,8 @@ export function variantCostBreakdown(
     componentsCents;
   const priceCents = Math.max(0, Math.round(numeric(variant.priceCents)));
   const marginCents = priceCents - totalCents;
+  const calculationComplete =
+    variantProductionIssues(product, variant).length === 0;
   return {
     netGrams:
       ownNet + filaments.reduce((sum, row) => sum + numeric(row.grams), 0),
@@ -212,6 +257,9 @@ export function variantCostBreakdown(
     totalCents,
     printMinutes,
     marginCents,
-    marginPercent: priceCents > 0 ? (marginCents / priceCents) * 100 : null,
+    marginPercent:
+      priceCents > 0 && calculationComplete
+        ? (marginCents / priceCents) * 100
+        : null,
   };
 }

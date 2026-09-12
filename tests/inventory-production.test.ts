@@ -63,3 +63,18 @@ void test('trennt Netto, Ausschuss und nimmt je Bauteil-Slot nur die teuerste Al
   assert.equal(result.marginCents, 576);
   assert.ok(Math.abs((result.marginPercent || 0) - 57.6) < 0.001);
 });
+
+void test('zeigt bei fehlendem Filament keine erfundene Marge', () => {
+  const result = variantCostBreakdown(
+    { id: 1, category: 'Pflanzen-Sets', filaments: [] },
+    {
+      id: 2,
+      grams: 181,
+      printMinutes: 391,
+      printer: 'X2D',
+      priceCents: 2500,
+    },
+  );
+  assert.equal(result.filamentCents, 0);
+  assert.equal(result.marginPercent, null);
+});
