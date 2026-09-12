@@ -231,6 +231,7 @@ function productionDataMissing(
   components: Row[],
 ) {
   const variants = rows(product.variants);
+  const allFilaments = rows(product.filaments);
   return (
     !variants.length ||
     variants.some((variant) => {
@@ -243,11 +244,40 @@ function productionDataMissing(
         return (
           number(variant.priceCents) <= 0 || number(variant.extraCostCents) < 0
         );
+      const variantId = string(variant.id);
+      const sharedFilaments = allFilaments.filter(
+        (item) => !string(item.productVariantId),
+      );
+      const ownFilaments = allFilaments.filter(
+        (item) => variantId && string(item.productVariantId) === variantId,
+      );
+      const replacedParts = new Set(
+        ownFilaments
+          .map((item) => string(item.part).trim().toLocaleLowerCase('de'))
+          .filter(Boolean),
+      );
+      const effectiveFilaments = [
+        ...sharedFilaments.filter(
+          (item) =>
+            !replacedParts.has(
+              string(item.part).trim().toLocaleLowerCase('de'),
+            ),
+        ),
+        ...ownFilaments,
+      ];
+      const timedFilaments = effectiveFilaments.filter(
+        (item) => number(item.printMinutes) > 0,
+      );
+      const hasPrinter = timedFilaments.length
+        ? timedFilaments.every(
+            (item) => string(item.printer) || string(variant.printer),
+          )
+        : Boolean(string(variant.printer));
       return (
         number(variant.priceCents) <= 0 ||
         cost.netGrams <= 0 ||
         cost.printMinutes <= 0 ||
-        !string(variant.printer)
+        !hasPrinter
       );
     })
   );
@@ -5112,6 +5142,9 @@ const ManufacturingEditor = forwardRef<
 ) {
   const variants = rows(product.variants);
   const filaments = rows(product.filaments);
+  const hasSharedProduction = filaments.some(
+    (item) => !string(item.productVariantId),
+  );
   const variantGroups = Array.from(
     variants.reduce((groups, variant) => {
       const label = string(variant.name, 'Standard').trim() || 'Standard';
@@ -5474,6 +5507,19 @@ const ManufacturingEditor = forwardRef<
                       : `${cost.marginPercent.toFixed(1)} % Marge`}
                   </span>
                 </div>
+                {hasSharedProduction &&
+                number(draft.grams) <= 0 &&
+                number(draft.printMinutes) <= 0 ? (
+                  <p className="mb-4 rounded-xl border border-[var(--fp-primary)]/20 bg-[var(--fp-mist)]/70 p-3 text-sm text-foreground">
+                    Produktion aus den gemeinsamen Druckteilen:{' '}
+                    <strong>
+                      {decimalInputValue(cost.netGrams + cost.wasteGrams)} g ·{' '}
+                      {duration(cost.printMinutes)}
+                    </strong>
+                    . Die Felder unten sind nur für eine abweichende Herstellung
+                    dieser Variante gedacht.
+                  </p>
+                ) : null}
                 <div className="grid gap-4 lg:grid-cols-[180px_minmax(0,1fr)]">
                   <div>
                     <div className="relative aspect-square overflow-hidden rounded-2xl border bg-[#ebe5db]">
@@ -5715,7 +5761,10 @@ const ManufacturingEditor = forwardRef<
       >
         <Plus className="size-3.5" /> Weitere Variante
       </Button>
-      <details className="group mt-4 rounded-xl border bg-white/45">
+      <details
+        open={filaments.length > 0}
+        className="group mt-4 rounded-xl border bg-white/45"
+      >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium">
           <span>
             Herstellung
@@ -5734,8 +5783,16 @@ const ManufacturingEditor = forwardRef<
                 onClick={() => open('product_filaments', item)}
                 className="rounded-full border bg-white px-3 py-1 text-xs hover:border-[var(--fp-primary)]"
               >
-                {string(item.part, 'Filament')}: {number(item.grams)} g{' '}
-                {string(object(item.material).name)}
+                {string(item.part, 'Filament')}: {number(item.grams)} g
+                {number(item.printMinutes) > 0
+                  ? ` · ${duration(number(item.printMinutes))}`
+                  : ''}{' '}
+                {[
+                  string(object(item.material).name),
+                  string(object(item.material).variant),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </button>
             ))}
           </div>
@@ -6253,13 +6310,13 @@ function ProductCalculationSummary({
     variant,
     cost: variantCostBreakdown(product, variant, products, components),
   }));
-  const totalGrams = calculations.reduce(
-    (sum, item) => sum + item.cost.netGrams + item.cost.wasteGrams,
+  const totalGrams = Math.max(
     0,
+    ...calculations.map((item) => item.cost.netGrams + item.cost.wasteGrams),
   );
-  const totalMinutes = calculations.reduce(
-    (sum, item) => sum + item.cost.printMinutes,
+  const totalMinutes = Math.max(
     0,
+    ...calculations.map((item) => item.cost.printMinutes),
   );
   return (
     <section className="rounded-2xl border bg-white/70 p-4 sm:col-span-2">
