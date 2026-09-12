@@ -724,7 +724,14 @@ export function InventoryWorkspace({
     );
     if (saved) {
       setEditor({ entity: 'products', row: saved });
-      setForm({ ...saved });
+      setForm((current) => ({
+        ...saved,
+        ...current,
+        variants: saved.variants,
+        filaments: saved.filaments,
+        studioAssets: saved.studioAssets,
+        studioPrimaryImageUrl: saved.studioPrimaryImageUrl,
+      }));
       setEditorMessage('Herstellungsdaten gespeichert.');
     }
   }
@@ -1266,7 +1273,6 @@ function Products({
   >('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [moreFilters, setMoreFilters] = useState(false);
-  const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkCategory, setBulkCategory] = useState('');
   const [bulkFamilyId, setBulkFamilyId] = useState('keep');
@@ -1556,16 +1562,6 @@ function Products({
           }
         >
           Noch offen
-        </Button>
-        <Button
-          size="sm"
-          variant={selectionMode ? 'default' : 'outline'}
-          onClick={() => {
-            setSelectionMode((value) => !value);
-            if (selectionMode) setSelectedIds([]);
-          }}
-        >
-          Auswählen
         </Button>
         <Button
           size="sm"
@@ -1933,25 +1929,25 @@ function Products({
                   : '')
               }
             >
-              {selectionMode ? (
-                <label
-                  className="absolute top-5 left-5 z-10 grid size-9 cursor-pointer place-items-center rounded-full border bg-white/95 shadow-sm"
-                  aria-label={string(product.name) + ' auswählen'}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.includes(string(product.id))}
-                    onChange={(event) =>
-                      setSelectedIds((current) =>
-                        event.target.checked
-                          ? [...current, string(product.id)]
-                          : current.filter((id) => id !== string(product.id)),
-                      )
-                    }
-                    className="size-4"
-                  />
-                </label>
-              ) : null}
+              <label
+                className="absolute top-5 left-5 z-10 grid size-9 cursor-pointer place-items-center rounded-full border bg-white/95 shadow-sm"
+                aria-label={string(product.name) + ' auswählen'}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(string(product.id))}
+                  onChange={(event) =>
+                    setSelectedIds((current) =>
+                      event.target.checked
+                        ? current.includes(string(product.id))
+                          ? current
+                          : [...current, string(product.id)]
+                        : current.filter((id) => id !== string(product.id)),
+                    )
+                  }
+                  className="size-4"
+                />
+              </label>
               <div className="overflow-hidden rounded-[18px] bg-[var(--fp-mist)]">
                 <InventoryImage
                   product={product}
@@ -4600,7 +4596,7 @@ function EntityEditor({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[96vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-5xl">
+      <DialogContent className="max-h-[96vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-[min(1500px,96vw)]">
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">
             {isProduct
@@ -4616,7 +4612,13 @@ function EntityEditor({
             Kalkulation und Bestand auf einer Seite.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-2 sm:grid-cols-2">
+        <div
+          className={
+            isProduct
+              ? 'grid gap-4 py-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px]'
+              : 'grid gap-4 py-2 sm:grid-cols-2'
+          }
+        >
           {isProduct ? (
             <>
               <section className="rounded-2xl border bg-white/70 p-4 sm:col-span-2">
@@ -4626,103 +4628,160 @@ function EntityEditor({
                     Was es ist – Bild, Name, Einordnung und Vorlage.
                   </p>
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {input('name', 'Artikelname')}
-                  <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                    Kategorie
-                    <Input
-                      list="product-categories"
-                      value={string(form.category)}
-                      onChange={(event) =>
-                        setValue('category', event.target.value)
-                      }
-                      className="bg-white text-foreground"
-                      placeholder="Vorhandene wählen oder neu anlegen"
-                    />
-                    <datalist id="product-categories">
-                      {[
-                        ...new Set(
-                          rows(data.products?.products)
-                            .map((item) => string(item.category))
-                            .filter(Boolean),
-                        ),
-                      ]
-                        .sort()
-                        .map((item) => (
-                          <option key={item} value={item} />
-                        ))}
-                    </datalist>
-                  </label>
-                  {input('size', 'Größe')}
-                  <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                    Familie
-                    <select
-                      className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                      value={string(form.familyId)}
-                      onChange={(event) =>
-                        setValue(
-                          'familyId',
-                          event.target.value
-                            ? Number(event.target.value)
-                            : null,
-                        )
-                      }
-                    >
-                      <option value="">Ohne Familie</option>
-                      {rows(data.products?.families).map((item) => (
-                        <option key={string(item.id)} value={string(item.id)}>
-                          {string(item.name)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                    Designer / Lizenzgeber
-                    <select
-                      className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                      value={string(form.designerId)}
-                      onChange={(event) =>
-                        setValue(
-                          'designerId',
-                          event.target.value
-                            ? Number(event.target.value)
-                            : null,
-                        )
-                      }
-                    >
-                      <option value="">Eigener Entwurf</option>
-                      {rows(data.products?.designers).map((item) => (
-                        <option key={string(item.id)} value={string(item.id)}>
-                          {string(item.name)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex items-center gap-3 rounded-xl border bg-white p-3 text-sm sm:col-span-2">
-                    <input
-                      type="checkbox"
-                      checked={boolean(form.commercialLicense)}
-                      onChange={(event) =>
-                        setValue('commercialLicense', event.target.checked)
-                      }
-                    />
-                    <span>
-                      <span className="block font-medium">Verkaufslizenz</span>
-                      <span className="text-xs text-muted-foreground">
-                        {boolean(form.commercialLicense)
-                          ? 'Ja, dieses Produkt darf verkauft werden.'
-                          : 'Nein, für dieses Produkt ist keine Verkaufslizenz hinterlegt.'}
-                      </span>
-                    </span>
-                  </label>
-                  <div className="sm:col-span-2">
-                    {input('modelUrl', 'Modell-Link', 'url')}
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Die Seite, von der die Vorlage stammt. Optional.
+                <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+                  <div>
+                    <div className="aspect-square overflow-hidden rounded-[24px] border bg-[#ebe5db]">
+                      <InventoryImage
+                        product={{ ...editor.row, ...form }}
+                        alt={string(form.name, 'Artikelbild')}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Titelbild und weitere Bilder verwaltest du im Abschnitt
+                      „Bilder &amp; Druckdateien“.
                     </p>
+                  </div>
+                  <div className="grid content-start gap-4 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      {input('name', 'Artikelname')}
+                    </div>
+                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                      Kategorie
+                      <Input
+                        list="product-categories"
+                        value={string(form.category)}
+                        onChange={(event) =>
+                          setValue('category', event.target.value)
+                        }
+                        className="bg-white text-foreground"
+                        placeholder="Vorhandene wählen oder neu anlegen"
+                      />
+                      <datalist id="product-categories">
+                        {[
+                          ...new Set(
+                            rows(data.products?.products)
+                              .map((item) => string(item.category))
+                              .filter(Boolean),
+                          ),
+                        ]
+                          .sort()
+                          .map((item) => (
+                            <option key={item} value={item} />
+                          ))}
+                      </datalist>
+                    </label>
+                    {input('size', 'Größe')}
+                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                      Familie
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(form.familyId)}
+                        onChange={(event) =>
+                          setValue(
+                            'familyId',
+                            event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          )
+                        }
+                      >
+                        <option value="">Ohne Familie</option>
+                        {rows(data.products?.families).map((item) => (
+                          <option key={string(item.id)} value={string(item.id)}>
+                            {string(item.name)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                      Designer / Lizenzgeber
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(form.designerId)}
+                        onChange={(event) =>
+                          setValue(
+                            'designerId',
+                            event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          )
+                        }
+                      >
+                        <option value="">Eigener Entwurf</option>
+                        {rows(data.products?.designers).map((item) => (
+                          <option key={string(item.id)} value={string(item.id)}>
+                            {string(item.name)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-xl border bg-white p-3 text-sm sm:col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={boolean(form.commercialLicense)}
+                        onChange={(event) =>
+                          setValue('commercialLicense', event.target.checked)
+                        }
+                      />
+                      <span>
+                        <span className="block font-medium">
+                          Verkaufslizenz
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {boolean(form.commercialLicense)
+                            ? 'Ja, dieses Produkt darf verkauft werden.'
+                            : 'Nein, für dieses Produkt ist keine Verkaufslizenz hinterlegt.'}
+                        </span>
+                      </span>
+                    </label>
+                    <div className="sm:col-span-2">
+                      {input('modelUrl', 'Modell-Link', 'url')}
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Die Seite, von der die Vorlage stammt. Optional.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </section>
+              <section className="rounded-2xl border border-[var(--fp-primary)]/30 bg-[var(--fp-mist)]/65 p-4 sm:col-span-2">
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] sm:items-end">
+                  <div>
+                    <h3 className="font-heading text-xl">Bearbeitungsstatus</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Kennzeichnet, ob der Artikel vollständig geprüft und
+                      fertig bearbeitet ist.
+                    </p>
+                  </div>
+                  <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                    Status
+                    <select
+                      className="h-10 rounded-lg border bg-white px-3 text-sm text-foreground"
+                      value={inventoryReviewStatus(form.studioStatus)}
+                      onChange={(event) => {
+                        const status = event.target.value as 'draft' | 'final';
+                        setValue('studioStatus', status);
+                        if (status === 'final' && !form.finalizedAt)
+                          setValue(
+                            'finalizedAt',
+                            new Intl.DateTimeFormat('sv-SE').format(new Date()),
+                          );
+                      }}
+                    >
+                      <option value="draft">Noch offen</option>
+                      <option value="final">Final bearbeitet</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+              {editor.row.id ? (
+                <ProductEditorSidebar
+                  product={{ ...editor.row, ...form }}
+                  products={rows(data.products?.products)}
+                  components={rows(data.products?.components)}
+                  saving={saving}
+                  onSave={() => void saveEverything()}
+                />
+              ) : null}
               {!productHasVariants ? (
                 <section className="rounded-2xl border border-[var(--fp-primary)]/25 bg-white/80 p-4 sm:col-span-2">
                   <div className="mb-3">
@@ -4806,21 +4865,6 @@ function EntityEditor({
                   <span className="transition group-open:rotate-180">⌄</span>
                 </summary>
                 <div className="grid gap-4 border-t p-4 sm:grid-cols-2">
-                  <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={
-                        inventoryReviewStatus(form.studioStatus) === 'final'
-                      }
-                      onChange={(event) =>
-                        setValue(
-                          'studioStatus',
-                          event.target.checked ? 'final' : 'draft',
-                        )
-                      }
-                    />
-                    Final überarbeitet
-                  </label>
                   {inventoryReviewStatus(form.studioStatus) === 'final' ? (
                     <Field
                       label="Datum der finalen Bestätigung"
@@ -5056,7 +5100,11 @@ function EntityEditor({
             {message}
           </p>
         ) : null}
-        <div className="sticky -bottom-6 z-10 -mx-6 flex justify-end gap-2 border-t bg-[#f8f4ed]/95 px-6 py-4 backdrop-blur">
+        <div
+          className={`sticky -bottom-6 z-10 -mx-6 justify-end gap-2 border-t bg-[#f8f4ed]/95 px-6 py-4 backdrop-blur ${
+            isProduct ? 'flex lg:hidden' : 'flex'
+          }`}
+        >
           <Button variant="outline" onClick={onClose}>
             Abbrechen
           </Button>
@@ -5110,6 +5158,7 @@ const ManufacturingEditor = forwardRef<
   const [values, setValues] = useState<Row>({});
   const [message, setMessage] = useState('');
   const [quickValues, setQuickValues] = useState<Record<string, Row>>({});
+  const [openVariants, setOpenVariants] = useState<Record<string, boolean>>({});
   const [quickSaving, setQuickSaving] = useState(false);
   const [detailSaving, setDetailSaving] = useState(false);
 
@@ -5162,6 +5211,27 @@ const ManufacturingEditor = forwardRef<
       ...(entity === 'product_variants' && quick ? quick : {}),
     });
     setMessage('');
+    window.requestAnimationFrame(() =>
+      document
+        .getElementById('manufacturing-editor-' + string(product.id))
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
+  }
+
+  function duplicateVariant(row: Row) {
+    const copy = { ...row };
+    delete copy.id;
+    delete copy.createdAt;
+    delete copy.updatedAt;
+    setEditing({ entity: 'product_variants', row: {} });
+    setValues({
+      ...copy,
+      productId: number(product.id),
+      position: variants.length,
+    });
+    setMessage(
+      'Kopie vorbereitet. Passe die gewünschten Felder an und speichere anschließend alle Änderungen.',
+    );
     window.requestAnimationFrame(() =>
       document
         .getElementById('manufacturing-editor-' + string(product.id))
@@ -5394,221 +5464,271 @@ const ManufacturingEditor = forwardRef<
           const imagePath = string(draft.imageUrl || productImagePath(product));
           const printMinutes = number(draft.printMinutes);
           return (
-            <article
+            <details
               key={id}
-              className="rounded-2xl border bg-[var(--fp-paper)]/55 p-4"
+              open={openVariants[id] ?? index === 0}
+              onToggle={(event) =>
+                setOpenVariants((current) => ({
+                  ...current,
+                  [id]: event.currentTarget.open,
+                }))
+              }
+              className="group rounded-2xl border bg-[var(--fp-paper)]/55"
             >
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h4 className="font-medium">Variante {index + 1}</h4>
-                <span className="text-xs text-muted-foreground">
-                  Herstellung {cents(cost.totalCents)} ·{' '}
-                  {cost.marginPercent == null
-                    ? 'Marge offen'
-                    : `${cost.marginPercent.toFixed(1)} % Marge`}
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-4">
+                <span className="min-w-0">
+                  <strong className="block truncate">
+                    {string(draft.name, `Variante ${index + 1}`)}
+                  </strong>
+                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                    {[string(draft.size), string(draft.appearance)]
+                      .filter(Boolean)
+                      .join(' · ') || 'Größe und Ausprägung noch offen'}
+                  </span>
                 </span>
-              </div>
-              <div className="grid gap-4 lg:grid-cols-[180px_minmax(0,1fr)]">
-                <div>
-                  <div className="relative aspect-square overflow-hidden rounded-2xl border bg-[#ebe5db]">
-                    {imagePath ? (
-                      <Image
-                        src={inventoryImageUrl(imagePath)}
-                        alt={`Bild für Variante ${index + 1}`}
-                        fill
-                        unoptimized
-                        sizes="180px"
-                        className="object-cover"
-                      />
-                    ) : (
-                      <div className="grid size-full place-items-center text-sm text-muted-foreground">
-                        + Bild der Variante
-                      </div>
-                    )}
+                <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                  <span>{number(draft.quantity)} Stück</span>
+                  <strong className="text-foreground">
+                    {cents(number(draft.priceCents))}
+                  </strong>
+                  <span className="text-base transition group-open:rotate-180">
+                    ⌄
+                  </span>
+                </span>
+              </summary>
+              <div className="border-t p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>Herstellung {cents(cost.totalCents)}</span>
+                  <span>
+                    {cost.marginPercent == null
+                      ? 'Marge offen'
+                      : `${cost.marginPercent.toFixed(1)} % Marge`}
+                  </span>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-[180px_minmax(0,1fr)]">
+                  <div>
+                    <div className="relative aspect-square overflow-hidden rounded-2xl border bg-[#ebe5db]">
+                      {imagePath ? (
+                        <Image
+                          src={inventoryImageUrl(imagePath)}
+                          alt={`Bild für Variante ${index + 1}`}
+                          fill
+                          unoptimized
+                          sizes="180px"
+                          className="object-cover"
+                        />
+                      ) : (
+                        <div className="grid size-full place-items-center text-sm text-muted-foreground">
+                          + Bild der Variante
+                        </div>
+                      )}
+                    </div>
+                    <ImageUpload
+                      productId={string(product.id)}
+                      variantId={id}
+                      label={`Bild für Variante ${index + 1} wählen`}
+                      onUploaded={onChanged}
+                    />
+                    {!string(draft.imageUrl) && imagePath ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Hier wird das Produktbild verwendet.
+                      </p>
+                    ) : null}
                   </div>
-                  <ImageUpload
-                    productId={string(product.id)}
-                    variantId={id}
-                    label={`Bild für Variante ${index + 1} wählen`}
-                    onUploaded={onChanged}
-                  />
-                  {!string(draft.imageUrl) && imagePath ? (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Hier wird das Produktbild verwendet.
-                    </p>
-                  ) : null}
-                </div>
-                <div className="grid content-start gap-4 sm:grid-cols-2">
-                  <Field
-                    label="Name der Variante"
-                    value={string(draft.name)}
-                    onChange={(value) => updateVariant(id, 'name', value)}
-                  />
-                  <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                    Farbe / Ausprägung
-                    <select
-                      className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                      value={string(draft.materialId)}
-                      onChange={(event) =>
-                        updateVariant(
-                          id,
-                          'materialId',
-                          event.target.value
-                            ? Number(event.target.value)
-                            : null,
-                        )
-                      }
-                    >
-                      <option value="">Filament wählen</option>
-                      {materials.map((item) => (
-                        <option key={string(item.id)} value={string(item.id)}>
-                          {[
-                            string(object(item.brand).name),
-                            string(item.name),
-                            string(item.variant),
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <Field
-                    label="Einheit / Größe"
-                    value={string(draft.size)}
-                    onChange={(value) => updateVariant(id, 'size', value)}
-                  />
-                  <EuroField
-                    label="Verkaufspreis"
-                    value={number(draft.priceCents)}
-                    onChange={(value) => updateVariant(id, 'priceCents', value)}
-                  />
-                  <Field
-                    label="Fertigbestand"
-                    type="number"
-                    value={string(number(draft.quantity))}
-                    onChange={(value) =>
-                      updateVariant(
-                        id,
-                        'quantity',
-                        Math.max(0, Number(value) || 0),
-                      )
-                    }
-                  />
-                  <div />
-                  <DecimalField
-                    label="Nettogewicht (Gramm)"
-                    value={number(draft.grams)}
-                    onChange={(value) => updateVariant(id, 'grams', value)}
-                  />
-                  <DecimalField
-                    label="Abfall (Gramm)"
-                    value={number(draft.wasteGrams)}
-                    onChange={(value) => updateVariant(id, 'wasteGrams', value)}
-                  />
-                  <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
-                    Drucker
-                    <select
-                      className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                      value={string(draft.printer)}
-                      onChange={(event) =>
-                        updateVariant(id, 'printer', event.target.value || null)
-                      }
-                    >
-                      <option value="">Kein Drucker gewählt</option>
-                      {PRINTERS.map((printer) => (
-                        <option key={printer}>{printer}</option>
-                      ))}
-                    </select>
-                    <span className="font-normal">
-                      Ohne Gerät lassen sich die Stromkosten nicht berechnen.
-                    </span>
-                  </label>
-                  <DurationField
-                    value={printMinutes}
-                    onChange={(value) =>
-                      updateVariant(id, 'printMinutes', value)
-                    }
-                  />
-                </div>
-              </div>
-              <details className="group mt-4 rounded-xl border bg-white/55">
-                <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
-                  Weitere Angaben dieser Variante
-                  <span className="transition group-open:rotate-180">⌄</span>
-                </summary>
-                <div className="grid gap-4 border-t p-3 sm:grid-cols-2">
-                  <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                    Gewichtsklasse / Variantengruppe
-                    <select
-                      className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                      value={string(draft.weightClassGroup)}
-                      onChange={(event) =>
-                        updateVariant(
-                          id,
-                          'weightClassGroup',
-                          event.target.value || null,
-                        )
-                      }
-                    >
-                      <option value="">Eigenständige Variante</option>
-                      {variants
-                        .filter((item) => string(item.id) !== id)
-                        .map((item) => (
-                          <option
-                            key={string(item.id)}
-                            value={string(item.weightClassGroup || item.id)}
-                          >
-                            Gewichtsklasse von{' '}
-                            {string(
-                              item.name || item.appearance,
-                              'Variante ' + string(item.id),
-                            )}
+                  <div className="grid content-start gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Name der Variante"
+                      value={string(draft.name)}
+                      onChange={(value) => updateVariant(id, 'name', value)}
+                    />
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Farbe / Ausprägung
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(draft.materialId)}
+                        onChange={(event) =>
+                          updateVariant(
+                            id,
+                            'materialId',
+                            event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          )
+                        }
+                      >
+                        <option value="">Filament wählen</option>
+                        {materials.map((item) => (
+                          <option key={string(item.id)} value={string(item.id)}>
+                            {[
+                              string(object(item.brand).name),
+                              string(item.name),
+                              string(item.variant),
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
                           </option>
                         ))}
-                    </select>
-                  </label>
-                  <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                    Nachlass bei Mangelware
-                    <select
-                      className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                      value={string(draft.discountPercent, '0')}
-                      onChange={(event) =>
+                      </select>
+                    </label>
+                    <Field
+                      label="Einheit / Größe"
+                      value={string(draft.size)}
+                      onChange={(value) => updateVariant(id, 'size', value)}
+                    />
+                    <EuroField
+                      label="Verkaufspreis"
+                      value={number(draft.priceCents)}
+                      onChange={(value) =>
+                        updateVariant(id, 'priceCents', value)
+                      }
+                    />
+                    <Field
+                      label="Fertigbestand"
+                      type="number"
+                      value={string(number(draft.quantity))}
+                      onChange={(value) =>
                         updateVariant(
                           id,
-                          'discountPercent',
-                          Number(event.target.value),
+                          'quantity',
+                          Math.max(0, Number(value) || 0),
                         )
                       }
-                    >
-                      {[0, 10, 15, 20, 25, 30, 50].map((value) => (
-                        <option key={value} value={value}>
-                          {value ? `${value} %` : 'Kein Nachlass'}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <Field
-                    label="Mangel / Fehler"
-                    value={string(draft.defectNote)}
-                    onChange={(value) => updateVariant(id, 'defectNote', value)}
-                  />
-                  <Field
-                    label="Zubehör, das mitgeht"
-                    value={string(draft.accessories)}
-                    onChange={(value) =>
-                      updateVariant(id, 'accessories', value)
-                    }
-                  />
-                  <EuroField
-                    label="Zusatzkosten je Stück"
-                    value={number(draft.extraCostCents)}
-                    onChange={(value) =>
-                      updateVariant(id, 'extraCostCents', value)
-                    }
-                  />
+                    />
+                    <div />
+                    <DecimalField
+                      label="Nettogewicht (Gramm)"
+                      value={number(draft.grams)}
+                      onChange={(value) => updateVariant(id, 'grams', value)}
+                    />
+                    <DecimalField
+                      label="Abfall (Gramm)"
+                      value={number(draft.wasteGrams)}
+                      onChange={(value) =>
+                        updateVariant(id, 'wasteGrams', value)
+                      }
+                    />
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
+                      Drucker
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(draft.printer)}
+                        onChange={(event) =>
+                          updateVariant(
+                            id,
+                            'printer',
+                            event.target.value || null,
+                          )
+                        }
+                      >
+                        <option value="">Kein Drucker gewählt</option>
+                        {PRINTERS.map((printer) => (
+                          <option key={printer}>{printer}</option>
+                        ))}
+                      </select>
+                      <span className="font-normal">
+                        Ohne Gerät lassen sich die Stromkosten nicht berechnen.
+                      </span>
+                    </label>
+                    <DurationField
+                      value={printMinutes}
+                      onChange={(value) =>
+                        updateVariant(id, 'printMinutes', value)
+                      }
+                    />
+                  </div>
                 </div>
-              </details>
-            </article>
+                <details className="group/more mt-4 rounded-xl border bg-white/55">
+                  <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
+                    Weitere Angaben dieser Variante
+                    <span className="transition group-open/more:rotate-180">
+                      ⌄
+                    </span>
+                  </summary>
+                  <div className="grid gap-4 border-t p-3 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Gewichtsklasse / Variantengruppe
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(draft.weightClassGroup)}
+                        onChange={(event) =>
+                          updateVariant(
+                            id,
+                            'weightClassGroup',
+                            event.target.value || null,
+                          )
+                        }
+                      >
+                        <option value="">Eigenständige Variante</option>
+                        {variants
+                          .filter((item) => string(item.id) !== id)
+                          .map((item) => (
+                            <option
+                              key={string(item.id)}
+                              value={string(item.weightClassGroup || item.id)}
+                            >
+                              Gewichtsklasse von{' '}
+                              {string(
+                                item.name || item.appearance,
+                                'Variante ' + string(item.id),
+                              )}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Nachlass bei Mangelware
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(draft.discountPercent, '0')}
+                        onChange={(event) =>
+                          updateVariant(
+                            id,
+                            'discountPercent',
+                            Number(event.target.value),
+                          )
+                        }
+                      >
+                        {[0, 10, 15, 20, 25, 30, 50].map((value) => (
+                          <option key={value} value={value}>
+                            {value ? `${value} %` : 'Kein Nachlass'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Field
+                      label="Mangel / Fehler"
+                      value={string(draft.defectNote)}
+                      onChange={(value) =>
+                        updateVariant(id, 'defectNote', value)
+                      }
+                    />
+                    <Field
+                      label="Zubehör, das mitgeht"
+                      value={string(draft.accessories)}
+                      onChange={(value) =>
+                        updateVariant(id, 'accessories', value)
+                      }
+                    />
+                    <EuroField
+                      label="Zusatzkosten je Stück"
+                      value={number(draft.extraCostCents)}
+                      onChange={(value) =>
+                        updateVariant(id, 'extraCostCents', value)
+                      }
+                    />
+                  </div>
+                </details>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => duplicateVariant(draft)}
+                >
+                  <Plus className="size-3.5" /> Als neue Variante duplizieren
+                </Button>
+              </div>
+            </details>
           );
         })}
       </div>
@@ -5616,7 +5736,13 @@ const ManufacturingEditor = forwardRef<
         type="button"
         variant="outline"
         className="mt-4"
-        onClick={() => open('product_variants')}
+        onClick={() =>
+          variants.length
+            ? duplicateVariant(
+                quickValues[string(variants.at(-1)?.id)] || variants.at(-1)!,
+              )
+            : open('product_variants')
+        }
       >
         <Plus className="size-3.5" /> Weitere Variante
       </Button>
@@ -6034,6 +6160,115 @@ const ManufacturingEditor = forwardRef<
     </section>
   );
 });
+
+function ProductEditorSidebar({
+  product,
+  products,
+  components,
+  saving,
+  onSave,
+}: {
+  product: Row;
+  products: Row[];
+  components: Row[];
+  saving: boolean;
+  onSave: () => void;
+}) {
+  const variants = rows(product.variants);
+  const costs = variants.map((variant) =>
+    variantCostBreakdown(product, variant, products, components),
+  );
+  const average = (key: keyof (typeof costs)[number]) =>
+    costs.length
+      ? Math.round(
+          costs.reduce((sum, item) => sum + number(item[key]), 0) /
+            costs.length,
+        )
+      : 0;
+  const marginValues = costs
+    .map((item) => item.marginPercent)
+    .filter((value): value is number => value != null);
+  const margin =
+    marginValues.length === costs.length && costs.length
+      ? marginValues.reduce((sum, value) => sum + value, 0) /
+        marginValues.length
+      : null;
+  const stock = variants.reduce(
+    (sum, variant) => sum + number(variant.quantity),
+    0,
+  );
+  const priceValues = variants
+    .map((variant) => number(variant.priceCents))
+    .filter((value) => value > 0);
+  const priceLabel = priceValues.length
+    ? Math.min(...priceValues) === Math.max(...priceValues)
+      ? cents(priceValues[0])
+      : `${cents(Math.min(...priceValues))} – ${cents(Math.max(...priceValues))}`
+    : 'offen';
+  const items: Array<[string, number]> = [
+    ['Filament', average('filamentCents') + average('wasteCents')],
+    ['Maschine', average('machineCents')],
+    ['Strom', average('electricityCents')],
+    ['Zusatzkosten', average('extraCents')],
+    ['Bauteile', average('componentsCents')],
+  ];
+  return (
+    <aside className="sm:col-span-2 lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:row-span-[20]">
+      <div className="space-y-4 lg:sticky lg:top-0">
+        <section className="rounded-[24px] bg-[#e9e1d5] p-4">
+          <h3 className="font-heading text-xl">Zusammenfassung</h3>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <div className="rounded-xl bg-white/70 p-3">
+              <div className="text-xs text-muted-foreground">Varianten</div>
+              <strong className="mt-1 block">{variants.length}</strong>
+            </div>
+            <div className="rounded-xl bg-white/70 p-3">
+              <div className="text-xs text-muted-foreground">Bestand</div>
+              <strong className="mt-1 block">{stock} fertig</strong>
+            </div>
+            <div className="rounded-xl bg-white/70 p-3 sm:col-span-2">
+              <div className="text-xs text-muted-foreground">Verkaufspreis</div>
+              <strong className="mt-1 block">{priceLabel}</strong>
+            </div>
+          </div>
+        </section>
+        <section className="rounded-[24px] bg-[#e9e1d5] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="font-heading text-xl">Herstellungskosten</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Durchschnitt je Variante
+              </p>
+            </div>
+            <strong className={margin == null ? 'text-[#8b5c27]' : ''}>
+              {margin == null ? 'Marge offen' : `${margin.toFixed(1)} %`}
+            </strong>
+          </div>
+          <dl className="mt-4 rounded-2xl bg-white/75 p-4 text-sm">
+            {items.map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-3 py-1.5">
+                <dt>{label}</dt>
+                <dd>{cents(value)}</dd>
+              </div>
+            ))}
+            <div className="mt-2 flex justify-between gap-3 border-t pt-3 font-semibold">
+              <dt>Je Stück</dt>
+              <dd>{cents(average('totalCents'))}</dd>
+            </div>
+          </dl>
+        </section>
+        <Button className="h-12 w-full" onClick={onSave} disabled={saving}>
+          {saving ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Check className="size-4" />
+          )}{' '}
+          Alle Änderungen speichern
+        </Button>
+      </div>
+    </aside>
+  );
+}
 
 function ProductCalculationSummary({
   product,
@@ -6513,201 +6748,210 @@ function ProductAssetManager({
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border bg-white/55 p-4 sm:col-span-2">
-      <div>
-        <h3 className="font-medium">Bilder & interne Druckdateien</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Bilder werden zentral wiederverwendet. STL-, 3MF-, OBJ- und
-          ZIP-Dateien bleiben geschützt und erscheinen nie automatisch in Etsy
-          oder Katalogen.
+    <details className="group rounded-2xl border bg-white/55 sm:col-span-2">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+        <span>
+          <span className="block font-medium">Bilder &amp; Druckdateien</span>
+          <span className="mt-1 block text-xs font-normal text-muted-foreground">
+            {images.length} Bilder · {printFiles.length} interne Druckdateien
+          </span>
+        </span>
+        <span className="transition group-open:rotate-180">⌄</span>
+      </summary>
+      <div className="space-y-4 border-t p-4">
+        <p className="text-xs text-muted-foreground">
+          Galeriebilder, aktives Titelbild und geschützte STL-, 3MF-, OBJ- oder
+          ZIP-Dateien werden hier gemeinsam verwaltet.
         </p>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
-          {uploading === 'image' ? (
-            <Loader2 className="size-5 animate-spin" />
-          ) : (
-            <ImagePlus className="size-5" />
-          )}
-          <span className="text-sm">
-            <span className="block font-medium">Galeriebilder hinzufügen</span>
-            <span className="text-xs text-muted-foreground">
-              Mehrfachauswahl möglich · ändert das Hauptbild nicht
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
+            {uploading === 'image' ? (
+              <Loader2 className="size-5 animate-spin" />
+            ) : (
+              <ImagePlus className="size-5" />
+            )}
+            <span className="text-sm">
+              <span className="block font-medium">
+                Galeriebilder hinzufügen
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Mehrfachauswahl möglich · ändert das Hauptbild nicht
+              </span>
             </span>
-          </span>
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            multiple
-            className="sr-only"
-            disabled={Boolean(uploading)}
-            onChange={(event) => {
-              const files = Array.from(event.target.files || []);
-              if (files.length) void upload(files, 'image');
-              event.target.value = '';
-            }}
-          />
-        </label>
-        <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
-          {uploading === 'print' ? (
-            <Loader2 className="size-5 animate-spin" />
-          ) : (
-            <FileArchive className="size-5" />
-          )}
-          <span className="text-sm">
-            <span className="block font-medium">Druckdatei hinzufügen</span>
-            <span className="text-xs text-muted-foreground">
-              STL, 3MF, OBJ, GCODE, BGCODE, STEP, ZIP · max. 100 MB
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              className="sr-only"
+              disabled={Boolean(uploading)}
+              onChange={(event) => {
+                const files = Array.from(event.target.files || []);
+                if (files.length) void upload(files, 'image');
+                event.target.value = '';
+              }}
+            />
+          </label>
+          <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
+            {uploading === 'print' ? (
+              <Loader2 className="size-5 animate-spin" />
+            ) : (
+              <FileArchive className="size-5" />
+            )}
+            <span className="text-sm">
+              <span className="block font-medium">Druckdatei hinzufügen</span>
+              <span className="text-xs text-muted-foreground">
+                STL, 3MF, OBJ, GCODE, BGCODE, STEP, ZIP · max. 100 MB
+              </span>
             </span>
-          </span>
-          <input
-            type="file"
-            accept=".stl,.3mf,.obj,.gcode,.gco,.bgcode,.step,.stp,.zip"
-            className="sr-only"
-            disabled={Boolean(uploading)}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload([file], 'print');
-              event.target.value = '';
-            }}
-          />
-        </label>
-      </div>
-      {images.length || existingImage ? (
-        <div>
-          <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
-            Artikelbilder
-          </p>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {existingImage ? (
-              <article className="overflow-hidden rounded-xl border bg-white">
-                <div className="relative aspect-square bg-[#ebe5db]">
-                  <Image
-                    src={inventoryImageUrl(existingImage)}
-                    alt="Vorhandenes Artikelbild"
-                    fill
-                    unoptimized
-                    sizes="160px"
-                    className="object-cover"
-                  />
-                  {!hasUploadedPrimary ? (
-                    <Badge className="absolute top-2 left-2">Hauptbild</Badge>
-                  ) : null}
-                </div>
-                <div className="p-2">
-                  <p className="truncate text-xs">Vorhandenes Artikelbild</p>
-                  {hasUploadedPrimary ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-2 h-8 w-full px-2 text-xs"
-                      disabled={savingPrimary}
-                      onClick={() => void useExistingImage()}
-                    >
-                      <Star className="size-3" /> Als Hauptbild
-                    </Button>
-                  ) : null}
-                </div>
-              </article>
-            ) : null}
-            {images.map((asset) => (
-              <article
-                key={string(asset.id)}
-                className="overflow-hidden rounded-xl border bg-white"
-              >
-                <div className="relative aspect-square bg-[#ebe5db]">
-                  <Image
-                    src={string(asset.url)}
-                    alt={string(asset.filename, 'Artikelbild')}
-                    fill
-                    unoptimized
-                    sizes="160px"
-                    className="object-cover"
-                  />
-                  {boolean(asset.isPrimary) ? (
-                    <Badge className="absolute top-2 left-2">Hauptbild</Badge>
-                  ) : null}
-                </div>
-                <div className="p-2">
-                  <p
-                    className="truncate text-xs"
-                    title={string(asset.filename)}
-                  >
-                    {string(asset.filename)}
-                  </p>
-                  <div className="mt-2 flex gap-1">
-                    {!boolean(asset.isPrimary) ? (
+            <input
+              type="file"
+              accept=".stl,.3mf,.obj,.gcode,.gco,.bgcode,.step,.stp,.zip"
+              className="sr-only"
+              disabled={Boolean(uploading)}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void upload([file], 'print');
+                event.target.value = '';
+              }}
+            />
+          </label>
+        </div>
+        {images.length || existingImage ? (
+          <div>
+            <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+              Artikelbilder
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {existingImage ? (
+                <article className="overflow-hidden rounded-xl border bg-white">
+                  <div className="relative aspect-square bg-[#ebe5db]">
+                    <Image
+                      src={inventoryImageUrl(existingImage)}
+                      alt="Vorhandenes Artikelbild"
+                      fill
+                      unoptimized
+                      sizes="160px"
+                      className="object-cover"
+                    />
+                    {!hasUploadedPrimary ? (
+                      <Badge className="absolute top-2 left-2">Hauptbild</Badge>
+                    ) : null}
+                  </div>
+                  <div className="p-2">
+                    <p className="truncate text-xs">Vorhandenes Artikelbild</p>
+                    {hasUploadedPrimary ? (
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-8 flex-1 px-2 text-xs"
+                        className="mt-2 h-8 w-full px-2 text-xs"
                         disabled={savingPrimary}
-                        onClick={() => void setPrimary(string(asset.id))}
+                        onClick={() => void useExistingImage()}
                       >
                         <Star className="size-3" /> Als Hauptbild
                       </Button>
                     ) : null}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-8 text-red-700"
-                      aria-label={string(asset.filename) + ' löschen'}
-                      onClick={() => void remove(asset)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
                   </div>
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {printFiles.length ? (
-        <div>
-          <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
-            Interne Druckdateien
-          </p>
-          <div className="space-y-2">
-            {printFiles.map((asset) => (
-              <article
-                key={string(asset.id)}
-                className="flex items-center gap-3 rounded-xl border bg-white p-3"
-              >
-                <FileArchive className="size-5 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
-                    {string(asset.filename)}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatBytes(asset.sizeBytes)} · geschützt
-                  </p>
-                </div>
-                <a
-                  href={string(asset.url)}
-                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-white hover:bg-muted"
-                  aria-label={string(asset.filename) + ' herunterladen'}
+                </article>
+              ) : null}
+              {images.map((asset) => (
+                <article
+                  key={string(asset.id)}
+                  className="overflow-hidden rounded-xl border bg-white"
                 >
-                  <Download className="size-4" />
-                </a>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="text-red-700"
-                  aria-label={string(asset.filename) + ' löschen'}
-                  onClick={() => void remove(asset)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </article>
-            ))}
+                  <div className="relative aspect-square bg-[#ebe5db]">
+                    <Image
+                      src={string(asset.url)}
+                      alt={string(asset.filename, 'Artikelbild')}
+                      fill
+                      unoptimized
+                      sizes="160px"
+                      className="object-cover"
+                    />
+                    {boolean(asset.isPrimary) ? (
+                      <Badge className="absolute top-2 left-2">Hauptbild</Badge>
+                    ) : null}
+                  </div>
+                  <div className="p-2">
+                    <p
+                      className="truncate text-xs"
+                      title={string(asset.filename)}
+                    >
+                      {string(asset.filename)}
+                    </p>
+                    <div className="mt-2 flex gap-1">
+                      {!boolean(asset.isPrimary) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 flex-1 px-2 text-xs"
+                          disabled={savingPrimary}
+                          onClick={() => void setPrimary(string(asset.id))}
+                        >
+                          <Star className="size-3" /> Als Hauptbild
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8 text-red-700"
+                        aria-label={string(asset.filename) + ' löschen'}
+                        onClick={() => void remove(asset)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
-      {message ? (
-        <p className="text-xs text-muted-foreground">{message}</p>
-      ) : null}
-    </section>
+        ) : null}
+        {printFiles.length ? (
+          <div>
+            <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+              Interne Druckdateien
+            </p>
+            <div className="space-y-2">
+              {printFiles.map((asset) => (
+                <article
+                  key={string(asset.id)}
+                  className="flex items-center gap-3 rounded-xl border bg-white p-3"
+                >
+                  <FileArchive className="size-5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {string(asset.filename)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatBytes(asset.sizeBytes)} · geschützt
+                    </p>
+                  </div>
+                  <a
+                    href={string(asset.url)}
+                    className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-white hover:bg-muted"
+                    aria-label={string(asset.filename) + ' herunterladen'}
+                  >
+                    <Download className="size-4" />
+                  </a>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="text-red-700"
+                    aria-label={string(asset.filename) + ' löschen'}
+                    onClick={() => void remove(asset)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {message ? (
+          <p className="text-xs text-muted-foreground">{message}</p>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

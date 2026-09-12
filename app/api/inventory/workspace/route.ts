@@ -214,6 +214,36 @@ function scalarText(value: unknown, fallback = '') {
     : fallback;
 }
 
+const variantCollator = new Intl.Collator('de', {
+  numeric: true,
+  sensitivity: 'base',
+});
+
+function compareProductVariants(left: JsonRecord, right: JsonRecord) {
+  const leftPosition =
+    left.position == null || left.position === ''
+      ? null
+      : Number(left.position);
+  const rightPosition =
+    right.position == null || right.position === ''
+      ? null
+      : Number(right.position);
+  if (
+    leftPosition != null &&
+    rightPosition != null &&
+    Number.isFinite(leftPosition) &&
+    Number.isFinite(rightPosition) &&
+    leftPosition !== rightPosition
+  )
+    return leftPosition - rightPosition;
+  const label = (row: JsonRecord) =>
+    [row.name, row.size, row.appearance]
+      .map((value) => scalarText(value).trim())
+      .filter(Boolean)
+      .join(' ');
+  return variantCollator.compare(label(left), label(right));
+}
+
 function safeValues(entity: string, values: JsonRecord) {
   const allowed = entityFields[entity];
   if (!allowed) return null;
@@ -407,7 +437,10 @@ async function decorateProducts(value: unknown) {
     );
     return {
       ...product,
-      variants: withPreciseMeasurements('product_variants', product.variants),
+      variants: withPreciseMeasurements(
+        'product_variants',
+        product.variants,
+      ).sort(compareProductVariants),
       filaments: withPreciseMeasurements(
         'product_filaments',
         product.filaments,
