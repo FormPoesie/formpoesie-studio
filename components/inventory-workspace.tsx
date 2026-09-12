@@ -6192,18 +6192,25 @@ const ManufacturingEditor = forwardRef<
       {editing ? (
         <div
           id={'manufacturing-editor-' + string(product.id)}
-          className="mt-4 scroll-mt-6 rounded-2xl border bg-[#f8f4ed] p-4"
+          className="mt-4 scroll-mt-6 overflow-hidden rounded-2xl border bg-[var(--fp-paper)]/55"
         >
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="font-medium">
-              {editing.entity === 'product_variants'
-                ? editing.row.id
-                  ? 'Variante bearbeiten'
-                  : 'Neue Variante'
-                : editing.row.id
-                  ? 'Filament bearbeiten'
-                  : 'Neues Filament'}
-            </h4>
+          <div className="flex items-start justify-between gap-3 p-4">
+            <div>
+              <h4 className="font-medium">
+                {editing.entity === 'product_variants'
+                  ? editing.row.id
+                    ? 'Variante bearbeiten'
+                    : 'Neue Variante'
+                  : editing.row.id
+                    ? 'Bauteil bearbeiten'
+                    : 'Neues Bauteil'}
+              </h4>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {editing.entity === 'product_variants'
+                  ? 'Dieselben Angaben wie bei jeder bereits gespeicherten Variante.'
+                  : 'Material und Produktionsdaten dieses Druckteils.'}
+              </p>
+            </div>
             <Button
               type="button"
               variant="ghost"
@@ -6213,211 +6220,239 @@ const ManufacturingEditor = forwardRef<
               <X className="size-4" />
             </Button>
           </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            className={
+              editing.entity === 'product_variants'
+                ? 'grid min-w-0 gap-4 border-t p-4'
+                : 'grid min-w-0 gap-4 border-t p-4 sm:grid-cols-2 lg:grid-cols-3'
+            }
+          >
             {editing.entity === 'product_variants' ? (
               <>
-                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                  Gewichtsklasse / Variantengruppe
-                  <select
-                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                    value={string(values.weightClassGroup)}
-                    onChange={(event) =>
-                      setValues((current) => ({
-                        ...current,
-                        weightClassGroup: event.target.value || null,
-                      }))
-                    }
-                  >
-                    <option value="">Eigenständige Variante</option>
-                    {variants
-                      .filter((item) => string(item.id) !== string(values.id))
-                      .map((item) => (
-                        <option
-                          key={string(item.id)}
-                          value={string(item.weightClassGroup || item.id)}
-                        >
-                          Gewichtsklasse von{' '}
-                          {string(
-                            item.name || item.appearance,
-                            'Variante ' + string(item.id),
-                          )}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <Field
-                  label="Name"
-                  value={string(values.name)}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, name: value }))
-                  }
-                />
-                <Field
-                  label="Farbe / Erscheinung"
-                  value={string(values.appearance)}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, appearance: value }))
-                  }
-                />
-                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                  Material / Rolle
-                  <select
-                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                    value={string(values.materialId)}
-                    onChange={(event) => {
-                      const material = materials.find(
-                        (item) => string(item.id) === event.target.value,
-                      );
-                      setValues((current) => ({
-                        ...current,
-                        materialId: event.target.value
-                          ? Number(event.target.value)
-                          : null,
-                        material: material || null,
-                      }));
-                    }}
-                  >
-                    <option value="">Material wählen</option>
-                    {materials.map((item) => (
-                      <option key={string(item.id)} value={string(item.id)}>
-                        {materialChoiceOption(item)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <Field
-                  label="Größe"
-                  value={string(values.size)}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, size: value }))
-                  }
-                />
-                <Field
-                  label="Bestand"
-                  type="number"
-                  value={string(values.quantity)}
-                  onChange={(value) =>
-                    setValues((current) => ({
-                      ...current,
-                      quantity: Number(value),
-                    }))
-                  }
-                />
-                <DecimalField
-                  label="Nettogewicht in g"
-                  value={number(values.grams)}
-                  onChange={(value) =>
-                    setValues((current) => ({
-                      ...current,
-                      grams: value,
-                    }))
-                  }
-                />
-                <DecimalField
-                  label="Ausschuss in g"
-                  value={number(values.wasteGrams)}
-                  onChange={(value) =>
-                    setValues((current) => ({
-                      ...current,
-                      wasteGrams: value,
-                    }))
-                  }
-                />
-                <SalesPriceFields
-                  values={values}
-                  standardKey="priceCents"
-                  className="sm:col-span-2 lg:col-span-3"
-                  onChange={(key, value) =>
-                    setValues((current) => ({ ...current, [key]: value }))
-                  }
-                />
-                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                  Drucker
-                  <select
-                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                    value={string(values.printer)}
-                    onChange={(event) =>
-                      setValues((current) => ({
-                        ...current,
-                        printer: event.target.value || null,
-                      }))
-                    }
-                  >
-                    <option value="">Drucker wählen</option>
-                    {PRINTERS.map((printer) => (
-                      <option key={printer}>{printer}</option>
-                    ))}
-                  </select>
-                </label>
-                <DurationField
-                  value={number(values.printMinutes)}
-                  onChange={(value) =>
-                    setValues((current) => ({
-                      ...current,
-                      printMinutes: value,
-                    }))
-                  }
-                />
-                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                  Nachlass bei Mangelware
-                  <select
-                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                    value={string(values.discountPercent, '0')}
-                    onChange={(event) =>
-                      setValues((current) => ({
-                        ...current,
-                        discountPercent: Number(event.target.value),
-                      }))
-                    }
-                  >
-                    {![0, 10, 15, 20, 25, 30, 50].includes(
-                      number(values.discountPercent),
-                    ) ? (
-                      <option value={string(values.discountPercent)}>
-                        {string(values.discountPercent)} %
-                      </option>
-                    ) : null}
-                    <option value="0">Kein Nachlass</option>
-                    <option value="10">10 %</option>
-                    <option value="15">15 %</option>
-                    <option value="20">20 %</option>
-                    <option value="25">25 %</option>
-                    <option value="30">30 %</option>
-                    <option value="50">50 %</option>
-                  </select>
-                </label>
-                <Field
-                  label="Mangel / Fehler"
-                  value={string(values.defectNote)}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, defectNote: value }))
-                  }
-                />
-                <Field
-                  label="Zubehör, das mitgeht"
-                  value={string(values.accessories)}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, accessories: value }))
-                  }
-                />
-                <EuroField
-                  label="Zusatzkosten je Stück"
-                  value={number(values.extraCostCents)}
-                  onChange={(value) =>
-                    setValues((current) => ({
-                      ...current,
-                      extraCostCents: value,
-                    }))
-                  }
-                />
-                {editing.row.id ? (
-                  <ImageUpload
-                    productId={string(product.id)}
-                    variantId={string(editing.row.id)}
-                    label="Bild dieser Variante ersetzen"
-                    onUploaded={onChanged}
-                  />
-                ) : null}
+                <section className="rounded-xl border bg-white/70 p-4">
+                  <h5 className="text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+                    Verkauf &amp; Bestand
+                  </h5>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Name der Variante"
+                      value={string(values.name)}
+                      onChange={(value) =>
+                        setValues((current) => ({ ...current, name: value }))
+                      }
+                    />
+                    <Field
+                      label="Einheit / Größe"
+                      value={string(values.size)}
+                      onChange={(value) =>
+                        setValues((current) => ({ ...current, size: value }))
+                      }
+                    />
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Filament / Material
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(values.materialId)}
+                        onChange={(event) => {
+                          const material = materials.find(
+                            (item) => string(item.id) === event.target.value,
+                          );
+                          setValues((current) => ({
+                            ...current,
+                            materialId: event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                            material: material || null,
+                          }));
+                        }}
+                      >
+                        <option value="">Filament wählen</option>
+                        {materials.map((item) => (
+                          <option key={string(item.id)} value={string(item.id)}>
+                            {materialChoiceOption(item)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Field
+                      label="Fertigbestand"
+                      type="number"
+                      value={string(values.quantity)}
+                      onChange={(value) =>
+                        setValues((current) => ({
+                          ...current,
+                          quantity: Math.max(0, Number(value) || 0),
+                        }))
+                      }
+                    />
+                    <SalesPriceFields
+                      values={values}
+                      standardKey="priceCents"
+                      className="sm:col-span-2"
+                      onChange={(key, value) =>
+                        setValues((current) => ({ ...current, [key]: value }))
+                      }
+                    />
+                  </div>
+                </section>
+                <section className="rounded-xl border bg-white/70 p-4">
+                  <h5 className="text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+                    Produktion
+                  </h5>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <DecimalField
+                      label="Nettogewicht (Gramm)"
+                      value={number(values.grams)}
+                      onChange={(value) =>
+                        setValues((current) => ({ ...current, grams: value }))
+                      }
+                    />
+                    <DecimalField
+                      label="Abfall (Gramm)"
+                      value={number(values.wasteGrams)}
+                      onChange={(value) =>
+                        setValues((current) => ({
+                          ...current,
+                          wasteGrams: value,
+                        }))
+                      }
+                    />
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Drucker
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(values.printer)}
+                        onChange={(event) =>
+                          setValues((current) => ({
+                            ...current,
+                            printer: event.target.value || null,
+                          }))
+                        }
+                      >
+                        <option value="">Kein Drucker gewählt</option>
+                        {PRINTERS.map((printer) => (
+                          <option key={printer}>{printer}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <DurationField
+                      value={number(values.printMinutes)}
+                      onChange={(value) =>
+                        setValues((current) => ({
+                          ...current,
+                          printMinutes: value,
+                        }))
+                      }
+                    />
+                  </div>
+                </section>
+                <details className="group/more rounded-xl border bg-white/55">
+                  <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
+                    Zustand, Größen &amp; Zusatzkosten
+                    <span className="transition group-open/more:rotate-180">
+                      ⌄
+                    </span>
+                  </summary>
+                  <div className="grid gap-4 border-t p-4 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Größen &amp; Gewichtsklassen
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(values.weightClassGroup)}
+                        onChange={(event) =>
+                          setValues((current) => ({
+                            ...current,
+                            weightClassGroup: event.target.value || null,
+                          }))
+                        }
+                      >
+                        <option value="">Eigenständige Variante</option>
+                        {variants
+                          .filter(
+                            (item) => string(item.id) !== string(values.id),
+                          )
+                          .map((item) => (
+                            <option
+                              key={string(item.id)}
+                              value={string(item.weightClassGroup || item.id)}
+                            >
+                              Gewichtsklasse von{' '}
+                              {string(
+                                item.name || item.appearance,
+                                'Variante ' + string(item.id),
+                              )}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <Field
+                      label="Farbe / Erscheinung"
+                      value={string(values.appearance)}
+                      onChange={(value) =>
+                        setValues((current) => ({
+                          ...current,
+                          appearance: value,
+                        }))
+                      }
+                    />
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Nachlass bei Mangelware
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(values.discountPercent, '0')}
+                        onChange={(event) =>
+                          setValues((current) => ({
+                            ...current,
+                            discountPercent: Number(event.target.value),
+                          }))
+                        }
+                      >
+                        {![0, 10, 15, 20, 25, 30, 50].includes(
+                          number(values.discountPercent),
+                        ) ? (
+                          <option value={string(values.discountPercent)}>
+                            {string(values.discountPercent)} %
+                          </option>
+                        ) : null}
+                        {[0, 10, 15, 20, 25, 30, 50].map((value) => (
+                          <option key={value} value={value}>
+                            {value ? `${value} %` : 'Kein Nachlass'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Field
+                      label="Mangel / Fehler"
+                      value={string(values.defectNote)}
+                      onChange={(value) =>
+                        setValues((current) => ({
+                          ...current,
+                          defectNote: value,
+                        }))
+                      }
+                    />
+                    <Field
+                      label="Zubehör, das mitgeht"
+                      value={string(values.accessories)}
+                      onChange={(value) =>
+                        setValues((current) => ({
+                          ...current,
+                          accessories: value,
+                        }))
+                      }
+                    />
+                    <EuroField
+                      label="Zusatzkosten je Stück"
+                      value={number(values.extraCostCents)}
+                      onChange={(value) =>
+                        setValues((current) => ({
+                          ...current,
+                          extraCostCents: value,
+                        }))
+                      }
+                    />
+                  </div>
+                </details>
                 <div className="rounded-xl border bg-white p-3 text-xs sm:col-span-2 lg:col-span-3">
                   {(() => {
                     const cost = variantCostBreakdown(
