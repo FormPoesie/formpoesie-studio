@@ -476,12 +476,9 @@ async function saveProductMetadata(
     .first<JsonRecord>();
   const instant = new Date().toISOString();
   const reviewStatus =
-    values.studioStatus === 'final' ||
-    (values.finalReviewed === true && values.studioStatus !== 'draft')
-      ? 'final'
-      : values.studioStatus === 'draft' || values.finalReviewed === false
-        ? 'draft'
-        : scalarText(current?.reviewStatus, 'draft');
+    'studioStatus' in values
+      ? inventoryReviewStatus(values.studioStatus)
+      : inventoryReviewStatus(current?.reviewStatus);
   const finalizedAt =
     reviewStatus === 'final'
       ? scalarText(values.finalizedAt).trim() ||

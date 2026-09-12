@@ -13,4 +13,6 @@ void test('nur ausdrücklich gespeichertes final gilt als final', () => {
   assert.equal(inventoryReviewStatus('final'), 'final');
   assert.equal(inventoryReviewStatus('FINAL'), 'final');
   assert.equal(inventoryReviewStatus('draft'), 'draft');
+  assert.equal(inventoryReviewStatus('Final bearbeitet'), 'draft');
+  assert.equal(inventoryReviewStatus(true), 'draft');
 });

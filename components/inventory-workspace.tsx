@@ -1550,7 +1550,7 @@ function Products({
             )
           }
         >
-          <Check className="size-3.5" /> Final bearbeitet
+          Final
         </Button>
         <Button
           size="sm"
@@ -1561,7 +1561,7 @@ function Products({
             )
           }
         >
-          Noch offen
+          Entwurf
         </Button>
         <Button
           size="sm"
@@ -1573,7 +1573,6 @@ function Products({
             category,
             familyId,
             designerId,
-            reviewFilter !== 'all' ? reviewFilter : '',
             sort !== 'name' || sortDirection !== 'asc' ? sort : '',
           ].filter(Boolean).length
             ? ` (${
@@ -1581,7 +1580,6 @@ function Products({
                   category,
                   familyId,
                   designerId,
-                  reviewFilter !== 'all' ? reviewFilter : '',
                   sort !== 'name' || sortDirection !== 'asc' ? sort : '',
                 ].filter(Boolean).length
               })`
@@ -1829,20 +1827,6 @@ function Products({
                   {string(item.name)}
                 </option>
               ))}
-            </select>
-          </label>
-          <label className="grid gap-1 text-xs text-muted-foreground">
-            Bearbeitungsstatus
-            <select
-              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-              value={reviewFilter}
-              onChange={(event) =>
-                setReviewFilter(event.target.value as typeof reviewFilter)
-              }
-            >
-              <option value="all">Alle Status</option>
-              <option value="final">Final</option>
-              <option value="draft">Entwurf</option>
             </select>
           </label>
           <label className="grid gap-1 text-xs text-muted-foreground xl:col-span-1">
