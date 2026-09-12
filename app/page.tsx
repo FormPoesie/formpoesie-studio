@@ -3839,7 +3839,9 @@ function DailyNewsFeed({
                       event.detail,
                       new Intl.DateTimeFormat('de-DE', {
                         dateStyle: 'short',
-                        timeStyle: 'short',
+                        ...(event.kind === 'calendar-news'
+                          ? {}
+                          : { timeStyle: 'short' as const }),
                       }).format(new Date(event.occurredAt)),
                     ]
                       .filter(Boolean)

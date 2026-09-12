@@ -1,4 +1,8 @@
 import { env } from 'cloudflare:workers';
+import {
+  newsCalendarDate,
+  newsCalendarInstant,
+} from '@/lib/news-calendar-date';
 
 const CALENDAR_DATA_URL =
   'https://formpoesie.github.io/formpoesie-themen-kalender/data.json';
@@ -90,7 +94,7 @@ async function syncCalendar() {
   const instant = new Date().toISOString();
   const today = berlinDate();
   const todayCount = archive.eintraege.filter(
-    (entry) => text(entry.erfasstAm).slice(0, 10) === today,
+    (entry) => newsCalendarDate(entry) === today,
   ).length;
   const newEntries: CalendarEntry[] = [];
   const statements = archive.eintraege.map((entry) => {
@@ -118,7 +122,7 @@ async function syncCalendar() {
       text(entry.kategorie),
       text(entry.organisation) || null,
       text(entry.ort) || null,
-      text(entry.ereignisDatum),
+      newsCalendarDate(entry),
       text(entry.veroeffentlichungsDatum) || null,
       text(entry.erfasstAm) || null,
       text(entry.quelleName) || null,
@@ -136,11 +140,15 @@ async function syncCalendar() {
   for (let index = 0; index < statements.length; index += 75)
     await env.DB.batch(statements.slice(index, index + 75));
 
-  const activity = newEntries.map((entry) =>
+  const activity = archive.eintraege.map((entry) =>
     env.DB.prepare(
-      `INSERT OR IGNORE INTO activity_events
+      `INSERT INTO activity_events
         (id, kind, title, detail, source_url, occurred_at, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         title=excluded.title, detail=excluded.detail,
+         source_url=excluded.source_url, occurred_at=excluded.occurred_at,
+         payload_json=excluded.payload_json`,
     ).bind(
       'news-' + entryId(entry),
       'calendar-news',
@@ -149,7 +157,7 @@ async function syncCalendar() {
         .filter(Boolean)
         .join(' · ') || null,
       text(entry.quelleUrl) || null,
-      instant,
+      newsCalendarInstant(entry),
       JSON.stringify(entry),
     ),
   );

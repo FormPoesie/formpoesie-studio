@@ -46,14 +46,11 @@ export async function GET(request: Request) {
               json_extract(payload_json, '$.bild.url') AS imageUrl,
               json_extract(payload_json, '$.bild.alt') AS imageAlt
        FROM activity_events
-       WHERE ((kind = 'calendar-news'
-               AND substr(json_extract(payload_json, '$.erfasstAm'), 1, 10) = ?)
-          OR (kind != 'calendar-news'
-              AND substr(occurred_at, 1, 10) = ?))
+       WHERE substr(occurred_at, 1, 10) = ?
          AND (? = 1 OR kind != 'model-of-month')
        ORDER BY occurred_at DESC LIMIT 40`,
     )
-      .bind(today, today, access.canManage ? 1 : 0)
+      .bind(today, access.canManage ? 1 : 0)
       .all<Activity>(),
     env.DB.prepare(
       `SELECT key, value, updated_at AS updatedAt
