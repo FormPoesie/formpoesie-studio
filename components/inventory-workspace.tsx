@@ -236,6 +236,16 @@ function materialChoiceLabel(material: Row) {
   return [brand, color].filter(Boolean).join(' · ') || string(material.name);
 }
 
+function materialChoiceOption(material: Row) {
+  const rollWeight = number(material.spoolWeightGrams);
+  const rollPrice = number(material.pricePerRollCents);
+  const pricePerKilogram =
+    rollWeight > 0 && rollPrice > 0
+      ? ` · ${cents(Math.round((rollPrice / rollWeight) * 1000))}/kg`
+      : '';
+  return materialChoiceLabel(material) + pricePerKilogram;
+}
+
 function productionDataMissing(
   product: Row,
   _products: Row[],
@@ -5287,6 +5297,36 @@ const ManufacturingEditor = forwardRef<
     );
   }
 
+  async function removeManufacturingRow(
+    entity: 'product_variants' | 'product_filaments',
+    row: Row,
+    label: string,
+  ) {
+    if (!window.confirm(`„${label}“ wirklich entfernen?`)) return;
+    setDetailSaving(true);
+    setMessage('');
+    try {
+      const response = await fetch('/api/inventory/workspace', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity, id: row.id }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Eintrag nicht entfernt.');
+      setMessage(`${label} wurde entfernt.`);
+      await onChanged();
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error ? reason.message : 'Eintrag nicht entfernt.',
+      );
+    } finally {
+      setDetailSaving(false);
+    }
+  }
+
   async function save(refreshAfterSave = true) {
     if (!editing) return true;
     setDetailSaving(true);
@@ -5630,41 +5670,67 @@ const ManufacturingEditor = forwardRef<
                       value={string(draft.name)}
                       onChange={(value) => updateVariant(id, 'name', value)}
                     />
-                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                      Filament / Material
-                      <select
-                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                        value={string(draft.materialId)}
-                        onChange={(event) =>
-                          updateVariant(
-                            id,
-                            'materialId',
-                            event.target.value
-                              ? Number(event.target.value)
-                              : null,
-                          )
-                        }
-                      >
-                        <option value="">Filament wählen</option>
-                        {materials.map((item) => (
-                          <option key={string(item.id)} value={string(item.id)}>
-                            {materialChoiceLabel(item)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    {relevantParts.length <= 1 ? (
+                      <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                        Filament / Material
+                        <select
+                          className={`h-9 rounded-lg border bg-white px-3 text-sm text-foreground ${issues.includes('Filament fehlt') ? 'border-[#b87935]' : ''}`}
+                          value={string(draft.materialId)}
+                          onChange={(event) =>
+                            updateVariant(
+                              id,
+                              'materialId',
+                              event.target.value
+                                ? Number(event.target.value)
+                                : null,
+                            )
+                          }
+                        >
+                          <option value="">Filament wählen</option>
+                          {materials.map((item) => (
+                            <option
+                              key={string(item.id)}
+                              value={string(item.id)}
+                            >
+                              {materialChoiceOption(item)}
+                            </option>
+                          ))}
+                        </select>
+                        {issues.includes('Filament fehlt') ? (
+                          <span className="font-normal text-[#8b5c27]">
+                            ⚠ Für die Kostenberechnung erforderlich
+                          </span>
+                        ) : null}
+                      </label>
+                    ) : (
+                      <div className="rounded-xl border bg-white p-3 text-sm">
+                        <span className="font-medium">
+                          Mehrteilige Produktion
+                        </span>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          Materialien werden unten je Bauteil gepflegt.
+                        </span>
+                      </div>
+                    )}
                     <Field
                       label="Einheit / Größe"
                       value={string(draft.size)}
                       onChange={(value) => updateVariant(id, 'size', value)}
                     />
-                    <EuroField
-                      label="Verkaufspreis"
-                      value={number(draft.priceCents)}
-                      onChange={(value) =>
-                        updateVariant(id, 'priceCents', value)
-                      }
-                    />
+                    <div>
+                      <EuroField
+                        label="Verkaufspreis"
+                        value={number(draft.priceCents)}
+                        onChange={(value) =>
+                          updateVariant(id, 'priceCents', value)
+                        }
+                      />
+                      {issues.includes('Verkaufspreis fehlt') ? (
+                        <p className="mt-1 text-xs text-[#8b5c27]">
+                          ⚠ Für die Kalkulation erforderlich
+                        </p>
+                      ) : null}
+                    </div>
                     <Field
                       label="Fertigbestand"
                       type="number"
@@ -5681,46 +5747,86 @@ const ManufacturingEditor = forwardRef<
                     <h4 className="border-t pt-4 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase sm:col-span-2">
                       Produktion
                     </h4>
-                    <DecimalField
-                      label="Nettogewicht (Gramm)"
-                      value={number(draft.grams)}
-                      onChange={(value) => updateVariant(id, 'grams', value)}
-                    />
-                    <DecimalField
-                      label="Abfall (Gramm)"
-                      value={number(draft.wasteGrams)}
-                      onChange={(value) =>
-                        updateVariant(id, 'wasteGrams', value)
-                      }
-                    />
-                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
-                      Drucker
-                      <select
-                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                        value={string(draft.printer)}
-                        onChange={(event) =>
-                          updateVariant(
-                            id,
-                            'printer',
-                            event.target.value || null,
-                          )
-                        }
-                      >
-                        <option value="">Kein Drucker gewählt</option>
-                        {PRINTERS.map((printer) => (
-                          <option key={printer}>{printer}</option>
-                        ))}
-                      </select>
-                      <span className="font-normal">
-                        Ohne Gerät lassen sich die Stromkosten nicht berechnen.
-                      </span>
-                    </label>
-                    <DurationField
-                      value={printMinutes}
-                      onChange={(value) =>
-                        updateVariant(id, 'printMinutes', value)
-                      }
-                    />
+                    {relevantParts.length > 1 ? (
+                      <div className="rounded-xl border bg-[var(--fp-mist)]/60 p-3 text-sm sm:col-span-2">
+                        <strong>
+                          Automatisch aus {relevantParts.length} Druckteilen
+                        </strong>
+                        <span className="mt-1 block text-muted-foreground">
+                          {decimalInputValue(cost.netGrams + cost.wasteGrams)} g
+                          {' · '}
+                          {duration(cost.printMinutes)}. Gewicht, Druckzeit,
+                          Drucker und Material werden ausschließlich an den
+                          Bauteilen bearbeitet.
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <DecimalField
+                            label="Nettogewicht (Gramm)"
+                            value={number(draft.grams)}
+                            onChange={(value) =>
+                              updateVariant(id, 'grams', value)
+                            }
+                          />
+                          {issues.includes('Gewicht fehlt') ? (
+                            <p className="mt-1 text-xs text-[#8b5c27]">
+                              ⚠ Für die Kostenberechnung erforderlich
+                            </p>
+                          ) : null}
+                        </div>
+                        <DecimalField
+                          label="Abfall (Gramm)"
+                          value={number(draft.wasteGrams)}
+                          onChange={(value) =>
+                            updateVariant(id, 'wasteGrams', value)
+                          }
+                        />
+                        <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
+                          Drucker
+                          <select
+                            className={`h-9 rounded-lg border bg-white px-3 text-sm text-foreground ${issues.includes('Drucker fehlt') ? 'border-[#b87935]' : ''}`}
+                            value={string(draft.printer)}
+                            onChange={(event) =>
+                              updateVariant(
+                                id,
+                                'printer',
+                                event.target.value || null,
+                              )
+                            }
+                          >
+                            <option value="">Kein Drucker gewählt</option>
+                            {PRINTERS.map((printer) => (
+                              <option key={printer}>{printer}</option>
+                            ))}
+                          </select>
+                          <span
+                            className={
+                              issues.includes('Drucker fehlt')
+                                ? 'font-normal text-[#8b5c27]'
+                                : 'font-normal'
+                            }
+                          >
+                            {issues.includes('Drucker fehlt') ? '⚠ ' : ''}Ohne
+                            Gerät lassen sich die Stromkosten nicht berechnen.
+                          </span>
+                        </label>
+                        <div>
+                          <DurationField
+                            value={printMinutes}
+                            onChange={(value) =>
+                              updateVariant(id, 'printMinutes', value)
+                            }
+                          />
+                          {issues.includes('Druckzeit fehlt') ? (
+                            <p className="mt-1 text-xs text-[#8b5c27]">
+                              ⚠ Für die Kostenberechnung erforderlich
+                            </p>
+                          ) : null}
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
                 <details className="group/more mt-4 rounded-xl border bg-white/55">
@@ -5804,15 +5910,34 @@ const ManufacturingEditor = forwardRef<
                     />
                   </div>
                 </details>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3"
-                  onClick={() => duplicateVariant(draft)}
-                >
-                  <Plus className="size-3.5" /> Als neue Variante duplizieren
-                </Button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => duplicateVariant(draft)}
+                  >
+                    <Plus className="size-3.5" /> Variante duplizieren
+                  </Button>
+                  {variants.length > 1 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-700"
+                      disabled={detailSaving}
+                      onClick={() =>
+                        void removeManufacturingRow(
+                          'product_variants',
+                          variant,
+                          string(draft.name, `Variante ${index + 1}`),
+                        )
+                      }
+                    >
+                      <Trash2 className="size-3.5" /> Variante entfernen
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             </details>
           );
@@ -5874,28 +5999,49 @@ const ManufacturingEditor = forwardRef<
                       (variant) =>
                         string(variant.id) === string(item.productVariantId),
                     );
+                    const label =
+                      materialChoiceLabel(object(item.material)) ||
+                      'Material offen';
                     return (
-                      <button
-                        type="button"
+                      <span
                         key={string(item.id)}
-                        onClick={() => open('product_filaments', item)}
-                        className="rounded-xl border bg-white px-3 py-2 text-left text-xs hover:border-[var(--fp-primary)]"
+                        className="inline-flex overflow-hidden rounded-xl border bg-white"
                       >
-                        <span className="block font-medium">
-                          {materialChoiceLabel(object(item.material)) ||
-                            'Material offen'}
-                        </span>
-                        <span className="mt-1 block text-muted-foreground">
-                          {number(item.grams)} g
-                          {number(item.printMinutes) > 0
-                            ? ` · ${duration(number(item.printMinutes))}`
-                            : ''}
-                          {' · '}
-                          {assignedVariant
-                            ? string(assignedVariant.name, 'Variante')
-                            : 'alle Varianten'}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => open('product_filaments', item)}
+                          className="px-3 py-2 text-left text-xs hover:bg-[var(--fp-mist)]"
+                        >
+                          <span className="block font-medium">{label}</span>
+                          <span className="mt-1 block text-muted-foreground">
+                            {number(item.grams)} g
+                            {number(item.printMinutes) > 0
+                              ? ` · ${duration(number(item.printMinutes))}`
+                              : ''}
+                            {' · '}
+                            {assignedVariant
+                              ? string(assignedVariant.name, 'Variante')
+                              : 'alle Varianten'}
+                          </span>
+                        </button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-auto w-9 rounded-none border-l text-red-700"
+                          disabled={detailSaving}
+                          aria-label={`${label} entfernen`}
+                          onClick={() =>
+                            void removeManufacturingRow(
+                              'product_filaments',
+                              item,
+                              `${part} · ${label}`,
+                            )
+                          }
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </span>
                     );
                   })}
                 </div>
@@ -6014,7 +6160,7 @@ const ManufacturingEditor = forwardRef<
                     <option value="">Material wählen</option>
                     {materials.map((item) => (
                       <option key={string(item.id)} value={string(item.id)}>
-                        {materialChoiceLabel(item)}
+                        {materialChoiceOption(item)}
                       </option>
                     ))}
                   </select>
@@ -6237,7 +6383,7 @@ const ManufacturingEditor = forwardRef<
                     <option value="">Material wählen</option>
                     {materials.map((item) => (
                       <option key={string(item.id)} value={string(item.id)}>
-                        {materialChoiceLabel(item)}
+                        {materialChoiceOption(item)}
                       </option>
                     ))}
                   </select>
