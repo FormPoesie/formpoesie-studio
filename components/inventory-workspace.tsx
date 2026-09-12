@@ -1,7 +1,15 @@
 'use client';
 
 import Image from 'next/image';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Archive,
   Boxes,
@@ -18,6 +26,7 @@ import {
   ImagePlus,
   Loader2,
   MapPin,
+  MoreHorizontal,
   Package,
   Pencil,
   Plus,
@@ -46,6 +55,12 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   buyerWorldFromCategory,
   inventoryReviewStatus,
@@ -155,12 +170,23 @@ function monthKey(value: unknown) {
 }
 
 function productImagePath(product: Row) {
+  return string(
+    product.studioPrimaryImageUrl || existingProductImagePath(product),
+  );
+}
+
+function existingProductImagePath(product: Row) {
   const variants = rows(product.variants);
   return string(
-    product.studioPrimaryImageUrl ||
-      variants.find((item) => string(item.imageUrl))?.imageUrl ||
+    variants.find((item) => string(item.imageUrl))?.imageUrl ||
       product.imageUri,
   );
+}
+
+function inventoryImageUrl(path: string) {
+  return path.startsWith('/api/')
+    ? path
+    : '/api/inventory/image?path=' + encodeURIComponent(path);
 }
 
 function InventoryImage({ product, alt }: { product: Row; alt: string }) {
@@ -169,11 +195,7 @@ function InventoryImage({ product, alt }: { product: Row; alt: string }) {
     <div className="relative aspect-square overflow-hidden rounded-2xl bg-[#ebe5db]">
       {path ? (
         <Image
-          src={
-            path.startsWith('/api/')
-              ? path
-              : '/api/inventory/image?path=' + encodeURIComponent(path)
-          }
+          src={inventoryImageUrl(path)}
           alt={alt}
           fill
           unoptimized
@@ -201,6 +223,34 @@ function designerName(product: Row, data: AreaData) {
     (item) => string(item.id) === string(product.designerId),
   );
   return string(designer?.name);
+}
+
+function productionDataMissing(
+  product: Row,
+  products: Row[],
+  components: Row[],
+) {
+  const variants = rows(product.variants);
+  return (
+    !variants.length ||
+    variants.some((variant) => {
+      const cost = variantCostBreakdown(product, variant, products, components);
+      const purchased = /zubehör|zubehoer|zukauf|einkauf|handelsware/i.test(
+        string(product.category),
+      );
+      const digital = /stl|digital/i.test(string(product.category));
+      if (purchased || digital)
+        return (
+          number(variant.priceCents) <= 0 || number(variant.extraCostCents) < 0
+        );
+      return (
+        number(variant.priceCents) <= 0 ||
+        cost.netGrams <= 0 ||
+        cost.printMinutes <= 0 ||
+        !string(variant.printer)
+      );
+    })
+  );
 }
 
 function inventoryItem(product: Row): InventoryItem {
@@ -312,7 +362,7 @@ function Field({
   type?: string;
 }) {
   return (
-    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+    <label className="grid gap-1.5 text-sm font-medium text-foreground">
       {label}
       <Input
         type={type}
@@ -320,6 +370,196 @@ function Field({
         onChange={(event) => onChange(event.target.value)}
         className="bg-white text-foreground"
       />
+    </label>
+  );
+}
+
+function decimalInputValue(value: unknown) {
+  const parsed = number(value);
+  return Number.isInteger(parsed)
+    ? String(parsed)
+    : String(parsed).replace('.', ',');
+}
+
+function decimalInputNumber(value: string) {
+  const normalized = value.trim().replace(/\s/g, '').replace(',', '.');
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+}
+
+function DecimalField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(() => decimalInputValue(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(decimalInputValue(value));
+  }, [focused, value]);
+
+  return (
+    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+      {label}
+      <div className="relative">
+        <Input
+          type="text"
+          inputMode="decimal"
+          value={draft}
+          onFocus={() => setFocused(true)}
+          onChange={(event) => {
+            const next = event.target.value;
+            setDraft(next);
+            const parsed = decimalInputNumber(next);
+            if (parsed !== null) onChange(parsed);
+          }}
+          onBlur={() => {
+            setFocused(false);
+            const parsed = decimalInputNumber(draft);
+            if (parsed !== null) {
+              onChange(parsed);
+              setDraft(decimalInputValue(parsed));
+            } else {
+              setDraft(decimalInputValue(value));
+            }
+          }}
+          className="bg-white pr-9 text-foreground"
+        />
+        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground">
+          g
+        </span>
+      </div>
+    </label>
+  );
+}
+
+function DurationField({
+  label = 'Druckzeit',
+  value,
+  onChange,
+}: {
+  label?: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const totalMinutes = Math.max(0, Math.round(value || 0));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return (
+    <fieldset className="grid gap-1.5 text-sm font-medium text-foreground">
+      <legend>{label}</legend>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="relative">
+          <span className="sr-only">Stunden</span>
+          <Input
+            type="number"
+            min="0"
+            value={hours}
+            aria-label={`${label} Stunden`}
+            onChange={(event) =>
+              onChange(
+                Math.max(0, Number(event.target.value) || 0) * 60 + minutes,
+              )
+            }
+            className="bg-white pr-7 text-foreground"
+          />
+          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+            h
+          </span>
+        </label>
+        <label className="relative">
+          <span className="sr-only">Minuten</span>
+          <Input
+            type="number"
+            min="0"
+            max="59"
+            value={minutes}
+            aria-label={`${label} Minuten`}
+            onChange={(event) =>
+              onChange(
+                hours * 60 +
+                  Math.max(0, Math.min(59, Number(event.target.value) || 0)),
+              )
+            }
+            className="bg-white pr-9 text-foreground"
+          />
+          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+            min
+          </span>
+        </label>
+      </div>
+    </fieldset>
+  );
+}
+
+function euroInputValue(value: unknown) {
+  return (number(value) / 100).toFixed(2).replace('.', ',');
+}
+
+function euroInputCents(value: string) {
+  const normalized = value
+    .trim()
+    .replace(/\s/g, '')
+    .replace(/€/g, '')
+    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
+    .replace(',', '.');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100)) : null;
+}
+
+function EuroField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(() => euroInputValue(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(euroInputValue(value));
+  }, [focused, value]);
+
+  return (
+    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+      {label}
+      <div className="relative">
+        <Input
+          type="text"
+          inputMode="decimal"
+          value={draft}
+          onFocus={() => setFocused(true)}
+          onChange={(event) => {
+            const next = event.target.value;
+            setDraft(next);
+            const parsed = euroInputCents(next);
+            if (parsed !== null) onChange(parsed);
+          }}
+          onBlur={() => {
+            setFocused(false);
+            const parsed = euroInputCents(draft);
+            if (parsed !== null) {
+              onChange(parsed);
+              setDraft(euroInputValue(parsed));
+            } else {
+              setDraft(euroInputValue(value));
+            }
+          }}
+          className="bg-white pr-10 text-foreground"
+        />
+        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground">
+          €
+        </span>
+      </div>
     </label>
   );
 }
@@ -419,57 +659,62 @@ export function InventoryWorkspace({
     if (!editor) return;
     setSaving(true);
     setError('');
-    const id = editor.row.id;
-    const response = await fetch('/api/inventory/workspace', {
-      method: id == null ? 'POST' : 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entity: editor.entity, id, values: form }),
-    });
-    const result = (await response.json()) as {
-      error?: string;
-      result?: Row[];
-    };
-    setSaving(false);
-    if (!response.ok) {
-      setError(result.error || 'Speichern fehlgeschlagen.');
-      return;
-    }
-    if (editor.entity === 'products') {
-      const productResult = await fetchArea('products');
-      const savedId = id ?? rows(result.result)[0]?.id;
-      const saved = rows(productResult.products).find(
-        (item) => string(item.id) === string(savedId),
-      );
-      if (saved) {
-        setEditor({ entity: 'products', row: saved });
-        setForm({ ...saved });
-        setEditorMessage(
-          id == null
-            ? 'Artikel gespeichert. Du kannst jetzt Varianten und Filamente hinzufügen.'
-            : 'Artikeländerungen gespeichert.',
+    try {
+      const id = editor.row.id;
+      const response = await fetch('/api/inventory/workspace', {
+        method: id == null ? 'POST' : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity: editor.entity, id, values: form }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        result?: Row[];
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Speichern fehlgeschlagen.');
+      if (editor.entity === 'products') {
+        const productResult = await fetchArea('products');
+        const savedId = id ?? rows(result.result)[0]?.id;
+        const saved = rows(productResult.products).find(
+          (item) => string(item.id) === string(savedId),
         );
+        if (saved) {
+          setEditor({ entity: 'products', row: saved });
+          setForm({ ...saved });
+          setEditorMessage(
+            id == null
+              ? 'Artikel gespeichert. Du kannst jetzt Varianten und Filamente hinzufügen.'
+              : 'Artikeländerungen gespeichert.',
+          );
+        }
+        return;
       }
-      return;
-    }
-    if (editor.entity === 'materials') {
-      const materialResult = await fetchArea('materials');
-      const savedId = id ?? rows(result.result)[0]?.id;
-      const saved = rows(materialResult.materials).find(
-        (item) => string(item.id) === string(savedId),
-      );
-      if (saved) {
-        setEditor({ entity: 'materials', row: saved });
-        setForm({ ...saved });
-        setEditorMessage(
-          id == null
-            ? 'Material gespeichert. Du kannst jetzt Bilder hinzufügen.'
-            : 'Materialänderungen gespeichert.',
+      if (editor.entity === 'materials') {
+        const materialResult = await fetchArea('materials');
+        const savedId = id ?? rows(result.result)[0]?.id;
+        const saved = rows(materialResult.materials).find(
+          (item) => string(item.id) === string(savedId),
         );
+        if (saved) {
+          setEditor({ entity: 'materials', row: saved });
+          setForm({ ...saved });
+          setEditorMessage(
+            id == null
+              ? 'Material gespeichert. Du kannst jetzt Bilder hinzufügen.'
+              : 'Materialänderungen gespeichert.',
+          );
+        }
+        return;
       }
-      return;
+      setEditor(null);
+      await refresh();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Speichern fehlgeschlagen.',
+      );
+    } finally {
+      setSaving(false);
     }
-    setEditor(null);
-    await refresh();
   }
 
   async function refreshProductEditor(productId: unknown) {
@@ -479,7 +724,14 @@ export function InventoryWorkspace({
     );
     if (saved) {
       setEditor({ entity: 'products', row: saved });
-      setForm({ ...saved });
+      setForm((current) => ({
+        ...saved,
+        ...current,
+        variants: saved.variants,
+        filaments: saved.filaments,
+        studioAssets: saved.studioAssets,
+        studioPrimaryImageUrl: saved.studioPrimaryImageUrl,
+      }));
       setEditorMessage('Herstellungsdaten gespeichert.');
     }
   }
@@ -639,9 +891,14 @@ export function InventoryWorkspace({
           .filter(
             (section) =>
               canManage ||
-              !['pricing', 'sales', 'months', 'expenses', 'account', 'trash'].includes(
-                section.id,
-              ),
+              ![
+                'pricing',
+                'sales',
+                'months',
+                'expenses',
+                'account',
+                'trash',
+              ].includes(section.id),
           )
           .map((section) => {
             const Icon = section.icon;
@@ -1002,7 +1259,9 @@ function Products({
   onListing: (row: Row) => void;
   onBulkEdit: (ids: string[], values: Row) => Promise<boolean>;
 }) {
-  const [mainFilter, setMainFilter] = useState<'all' | 'missing'>('all');
+  const [mainFilter, setMainFilter] = useState<
+    'all' | 'missing' | 'out' | 'margin'
+  >('all');
   const [category, setCategory] = useState('');
   const [familyId, setFamilyId] = useState('');
   const [designerId, setDesignerId] = useState('');
@@ -1041,30 +1300,8 @@ function Products({
       ? values.reduce((sum, value) => sum + value, 0) / values.length
       : null;
   };
-  const productMissing = (product: Row) => {
-    const variants = rows(product.variants);
-    return (
-      !variants.length ||
-      variants.some((variant) => {
-        const cost = variantCostBreakdown(product, variant, source, components);
-        const purchased = /zubehör|zubehoer|zukauf|einkauf|handelsware/i.test(
-          string(product.category),
-        );
-        const digital = /stl|digital/i.test(string(product.category));
-        if (purchased || digital)
-          return (
-            number(variant.priceCents) <= 0 ||
-            number(variant.extraCostCents) < 0
-          );
-        return (
-          number(variant.priceCents) <= 0 ||
-          cost.netGrams <= 0 ||
-          cost.printMinutes <= 0 ||
-          !string(variant.printer)
-        );
-      })
-    );
-  };
+  const productMissing = (product: Row) =>
+    productionDataMissing(product, source, components);
   const products = source.filter((product) => {
     const query = search.trim().toLocaleLowerCase('de');
     const matches = [
@@ -1092,6 +1329,15 @@ function Products({
     )
       return false;
     if (mainFilter === 'missing' && !productMissing(product)) return false;
+    if (
+      mainFilter === 'out' &&
+      rows(product.variants).reduce(
+        (sum, variant) => sum + number(variant.quantity),
+        0,
+      ) > 0
+    )
+      return false;
+    if (mainFilter === 'margin' && averageMargin(product) != null) return false;
     return true;
   });
   products.sort((a, b) => {
@@ -1276,36 +1522,10 @@ function Products({
       <div className="mt-3 flex flex-wrap gap-2">
         {(
           [
-            ['final', 'Final'],
-            ['draft', 'Entwürfe'],
-            ['all', 'Alle Status'],
-          ] as const
-        ).map(([value, label]) => (
-          <Button
-            key={value}
-            size="sm"
-            variant={reviewFilter === value ? 'default' : 'outline'}
-            onClick={() =>
-              setReviewFilter((current) =>
-                value !== 'all' && current === value ? 'all' : value,
-              )
-            }
-          >
-            {label}
-            {' · '}
-            {
-              source.filter((item) =>
-                value === 'all'
-                  ? true
-                  : inventoryReviewStatus(item.studioStatus) === value,
-              ).length
-            }
-          </Button>
-        ))}
-        {(
-          [
             ['all', 'Alle'],
             ['missing', 'Daten fehlen'],
+            ['out', 'Nichts auf Lager'],
+            ['margin', 'Marge unklar'],
           ] as const
         ).map(([value, label]) => (
           <Button
@@ -1323,17 +1543,48 @@ function Products({
         ))}
         <Button
           size="sm"
+          variant={reviewFilter === 'final' ? 'default' : 'outline'}
+          onClick={() =>
+            setReviewFilter((current) =>
+              current === 'final' ? 'all' : 'final',
+            )
+          }
+        >
+          <Check className="size-3.5" /> Final bearbeitet
+        </Button>
+        <Button
+          size="sm"
+          variant={reviewFilter === 'draft' ? 'default' : 'outline'}
+          onClick={() =>
+            setReviewFilter((current) =>
+              current === 'draft' ? 'all' : 'draft',
+            )
+          }
+        >
+          Noch offen
+        </Button>
+        <Button
+          size="sm"
           variant={moreFilters ? 'default' : 'outline'}
           onClick={() => setMoreFilters((value) => !value)}
         >
-          Weitere Filter
+          Weitere Filter · {sort === 'name' ? 'A–Z' : 'Sortiert'}
           {[
             category,
             familyId,
             designerId,
+            reviewFilter !== 'all' ? reviewFilter : '',
             sort !== 'name' || sortDirection !== 'asc' ? sort : '',
           ].filter(Boolean).length
-            ? ` (${[category, familyId, designerId, sort !== 'name' || sortDirection !== 'asc' ? sort : ''].filter(Boolean).length})`
+            ? ` (${
+                [
+                  category,
+                  familyId,
+                  designerId,
+                  reviewFilter !== 'all' ? reviewFilter : '',
+                  sort !== 'name' || sortDirection !== 'asc' ? sort : '',
+                ].filter(Boolean).length
+              })`
             : ''}
         </Button>
       </div>
@@ -1580,6 +1831,20 @@ function Products({
               ))}
             </select>
           </label>
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Bearbeitungsstatus
+            <select
+              className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+              value={reviewFilter}
+              onChange={(event) =>
+                setReviewFilter(event.target.value as typeof reviewFilter)
+              }
+            >
+              <option value="all">Alle Status</option>
+              <option value="final">Final</option>
+              <option value="draft">Entwurf</option>
+            </select>
+          </label>
           <label className="grid gap-1 text-xs text-muted-foreground xl:col-span-1">
             Sortierung
             <span className="grid grid-cols-[1fr_auto] gap-2">
@@ -1613,19 +1878,20 @@ function Products({
           </label>
         </div>
       ) : null}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          value={source.filter((item) => !item.archivedAt).length}
-          label="aktive Artikel"
-        />
-        <Stat value={portfolio.stock} label="kalkulierte Stück im Bestand" />
-        <Stat value={cents(portfolio.profitCents)} label="Gewinn im Bestand" />
-        <Stat
-          value={`${cents(portfolio.boundCents)} · ${portfolio.missing} offen`}
-          label="gebunden · Kalkulation fehlt"
-        />
+      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-2xl border bg-white/60 px-4 py-3 text-sm">
+        <strong>{products.length} Artikel</strong>
+        <span>
+          Gewinn im Bestand <strong>{cents(portfolio.profitCents)}</strong>
+        </span>
+        <span>{portfolio.stock} Stück</span>
+        <span>{cents(portfolio.boundCents)} gebunden</span>
+        {portfolio.missing ? (
+          <span className="text-[#8b5c27]">
+            {portfolio.missing} ohne vollständige Kalkulation
+          </span>
+        ) : null}
       </div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {products.map((product) => {
           const variants = rows(product.variants);
           const price = variants.length
@@ -1645,6 +1911,8 @@ function Products({
             0,
             ...productMetrics.map((item) => item.netGrams + item.wasteGrams),
           );
+          const isFinal =
+            inventoryReviewStatus(product.studioStatus) === 'final';
           const marketStock = rows(data.marketArticles)
             .filter(
               (article) => string(article.productId) === string(product.id),
@@ -1655,14 +1923,14 @@ function Products({
             <article
               key={string(product.id)}
               className={
-                'relative overflow-hidden rounded-[24px] border bg-white/65 p-3 ' +
+                'group relative overflow-hidden rounded-[24px] border bg-white/75 p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ' +
                 (selectedIds.includes(string(product.id))
                   ? 'ring-2 ring-[var(--fp-primary)]'
                   : '')
               }
             >
               <label
-                className="absolute top-5 left-5 z-10 grid size-9 cursor-pointer place-items-center rounded-full border bg-white/90 shadow-sm"
+                className="absolute top-5 left-5 z-10 grid size-9 cursor-pointer place-items-center rounded-full border bg-white/95 shadow-sm"
                 aria-label={string(product.name) + ' auswählen'}
               >
                 <input
@@ -1671,51 +1939,58 @@ function Products({
                   onChange={(event) =>
                     setSelectedIds((current) =>
                       event.target.checked
-                        ? [...current, string(product.id)]
+                        ? current.includes(string(product.id))
+                          ? current
+                          : [...current, string(product.id)]
                         : current.filter((id) => id !== string(product.id)),
                     )
                   }
                   className="size-4"
                 />
               </label>
-              <InventoryImage product={product} alt={string(product.name)} />
+              <div className="overflow-hidden rounded-[18px] bg-[var(--fp-mist)]">
+                <InventoryImage
+                  product={product}
+                  alt={string(product.name, 'Artikelbild')}
+                />
+              </div>
               <div className="p-2 pt-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
                     <h2 className="font-medium leading-tight">
                       {string(product.name)}
                     </h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                       {[
                         string(product.category),
                         familyName(product, data),
                         designerName(product, data),
+                        string(product.size),
                       ]
                         .filter(Boolean)
                         .join(' · ') || 'Ohne Zuordnung'}
                     </p>
                   </div>
-                  {product.archivedAt ? (
-                    <Badge variant="outline">Archiv</Badge>
-                  ) : (
-                    <div className="flex flex-wrap justify-end gap-1">
-                      <Badge
-                        variant={
-                          inventoryReviewStatus(product.studioStatus) === 'final'
-                            ? 'default'
-                            : 'outline'
-                        }
-                      >
-                        {inventoryReviewStatus(product.studioStatus) === 'final'
-                          ? 'Final'
-                          : 'Entwurf'}
+                  <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                    {product.archivedAt ? (
+                      <Badge variant="outline">Archiv</Badge>
+                    ) : (
+                      <Badge variant={isFinal ? 'default' : 'outline'}>
+                        {isFinal ? 'Final' : 'Offen'}
                       </Badge>
-                      {boolean(product.etsyListed) ? (
-                        <Badge variant="outline">Etsy</Badge>
-                      ) : null}
-                    </div>
-                  )}
+                    )}
+                    {boolean(product.etsyListed) ? (
+                      <Badge variant="outline">Etsy</Badge>
+                    ) : null}
+                  </div>
                 </div>
+                {productMissing(product) ? (
+                  <p className="mt-3 rounded-lg bg-[#f3eadb] px-2.5 py-2 text-xs text-[#795124]">
+                    {isFinal
+                      ? 'Kalkulation prüfen'
+                      : 'Produktionsdaten unvollständig'}
+                  </p>
+                ) : null}
                 <dl className="mt-4 grid grid-cols-3 gap-2 text-xs">
                   <div>
                     <dt className="text-muted-foreground">Bestand</dt>
@@ -1735,34 +2010,52 @@ function Products({
                     </dd>
                   </div>
                 </dl>
-                <p className="mt-2 text-[11px] text-muted-foreground">
+                <p className="mt-3 text-[11px] text-muted-foreground">
                   {variants.length}{' '}
-                  {variants.length === 1 ? 'Variante' : 'Varianten'} · Preis ab{' '}
-                  {cents(price)} · {duration(printMinutes)} · {grams} g
+                  {variants.length === 1 ? 'Variante' : 'Varianten'} ·{' '}
+                  {duration(printMinutes)} · {decimalInputValue(grams)} g
                 </p>
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <Button variant="outline" onClick={() => onEdit(product)}>
+                <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
+                  <Button
+                    variant="outline"
+                    className="justify-start"
+                    onClick={() => onEdit(product)}
+                  >
                     <Pencil className="size-4" /> Bearbeiten
                   </Button>
-                  <Button variant="outline" onClick={() => onListing(product)}>
-                    <Sparkles className="size-4" /> Etsy
-                  </Button>
-                  <Button variant="ghost" onClick={() => onArchive(product)}>
-                    <Archive className="size-4" />{' '}
-                    {product.archivedAt ? 'Aktivieren' : 'Archivieren'}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="text-red-700"
-                    onClick={() => onTrash(product)}
-                  >
-                    <Trash2 className="size-4" /> Löschen
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      aria-label={`Weitere Optionen für ${string(product.name)}`}
+                      className="grid size-9 place-items-center rounded-lg border bg-white hover:bg-[var(--fp-mist)]"
+                    >
+                      <MoreHorizontal className="size-5" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuItem onClick={() => onListing(product)}>
+                        <Sparkles /> Für Etsy öffnen
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onArchive(product)}>
+                        <Archive />
+                        {product.archivedAt ? 'Aktivieren' : 'Archivieren'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => onTrash(product)}
+                      >
+                        <Trash2 /> Löschen
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </div>
             </article>
           );
         })}
+        {!products.length ? (
+          <p className="p-6 text-center text-sm text-muted-foreground">
+            Keine passenden Artikel gefunden.
+          </p>
+        ) : null}
       </div>
     </section>
   );
@@ -4265,11 +4558,12 @@ function EntityEditor({
   data: Record<string, AreaData>;
   saving: boolean;
   message: string;
-  onSave: () => void;
+  onSave: () => void | Promise<void>;
   onClose: () => void;
   onProductChanged: (productId: unknown) => void;
   onMaterialChanged: (materialId: unknown) => void;
 }) {
+  const manufacturingEditorRef = useRef<ManufacturingEditorHandle>(null);
   if (!editor) return null;
   const input = (key: string, label: string, type = 'text') => (
     <Field
@@ -4282,10 +4576,19 @@ function EntityEditor({
     />
   );
   const isProduct = editor.entity === 'products';
+  const productHasVariants = isProduct && rows(editor.row.variants).length > 0;
   const isMaterial = editor.entity === 'materials';
   const isMarket = editor.entity === 'markets';
   const isOnline = editor.entity === 'online_sales';
   const isExpense = editor.entity === 'other_expenses';
+  async function saveEverything() {
+    if (isProduct && editor?.row.id) {
+      const manufacturingSaved =
+        await manufacturingEditorRef.current?.savePending();
+      if (manufacturingSaved === false) return;
+    }
+    await onSave();
+  }
   return (
     <Dialog
       open
@@ -4293,149 +4596,252 @@ function EntityEditor({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[92vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-4xl">
+      <DialogContent className="max-h-[96vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-[min(1500px,96vw)]">
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">
-            {editor.row.id ? 'Bearbeiten' : 'Neu anlegen'}
+            {isProduct
+              ? editor.row.id
+                ? 'Artikel bearbeiten'
+                : 'Artikel anlegen'
+              : editor.row.id
+                ? 'Bearbeiten'
+                : 'Neu anlegen'}
           </DialogTitle>
           <DialogDescription>
-            Alle Änderungen werden direkt in der gemeinsamen Inventardatenbank
-            gespeichert.
+            Die vertraute Artikelmaske: Basis, Varianten, Herstellung,
+            Kalkulation und Bestand auf einer Seite.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-2 sm:grid-cols-2">
+        <div
+          className={
+            isProduct
+              ? 'grid gap-4 py-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px]'
+              : 'grid gap-4 py-2 sm:grid-cols-2'
+          }
+        >
           {isProduct ? (
             <>
-              {input('name', 'Artikelname')}
-              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                Kategorie
-                <Input
-                  list="product-categories"
-                  value={string(form.category)}
-                  onChange={(event) => setValue('category', event.target.value)}
-                  className="bg-white text-foreground"
-                  placeholder="Vorhandene wählen oder neu anlegen"
-                />
-                <datalist id="product-categories">
-                  {[
-                    ...new Set(
-                      rows(data.products?.products)
-                        .map((item) => string(item.category))
-                        .filter(Boolean),
-                    ),
-                  ]
-                    .sort()
-                    .map((item) => (
-                      <option key={item} value={item} />
-                    ))}
-                </datalist>
-              </label>
-              {input('modelUrl', 'Modell-/MakerWorld-Link', 'url')}
-              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                Produktfamilie
-                <select
-                  className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                  value={string(form.familyId)}
-                  onChange={(event) =>
-                    setValue(
-                      'familyId',
-                      event.target.value ? Number(event.target.value) : null,
-                    )
-                  }
-                >
-                  <option value="">Keine</option>
-                  {rows(data.products?.families).map((item) => (
-                    <option key={string(item.id)} value={string(item.id)}>
-                      {string(item.name)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                Designer/Lizenzgeber
-                <select
-                  className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                  value={string(form.designerId)}
-                  onChange={(event) =>
-                    setValue(
-                      'designerId',
-                      event.target.value ? Number(event.target.value) : null,
-                    )
-                  }
-                >
-                  <option value="">Eigener Entwurf / keine Zuordnung</option>
-                  {rows(data.products?.designers).map((item) => (
-                    <option key={string(item.id)} value={string(item.id)}>
-                      {string(item.name)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
-                <input
-                  type="checkbox"
-                  checked={boolean(form.commercialLicense)}
-                  onChange={(event) =>
-                    setValue('commercialLicense', event.target.checked)
-                  }
-                />{' '}
-                Gewerbliche Lizenz vorhanden
-              </label>
-              <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
-                <input
-                  type="checkbox"
-                  checked={
-                    inventoryReviewStatus(form.studioStatus) === 'final'
-                  }
-                  onChange={(event) =>
-                    setValue(
-                      'studioStatus',
-                      event.target.checked ? 'final' : 'draft',
-                    )
-                  }
-                />{' '}
-                Final überarbeitet
-              </label>
-              <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
-                <input
-                  type="checkbox"
-                  checked={boolean(form.etsyListed)}
-                  onChange={(event) =>
-                    setValue('etsyListed', event.target.checked)
-                  }
-                />{' '}
-                Auf Etsy inseriert
-              </label>
-              {inventoryReviewStatus(form.studioStatus) === 'final' ? (
-                <Field
-                  label="Datum der finalen Bestätigung"
-                  type="date"
-                  value={string(form.finalizedAt).slice(0, 10)}
-                  onChange={(value) => setValue('finalizedAt', value)}
+              <section className="rounded-2xl border bg-white/70 p-4 sm:col-span-2">
+                <div className="mb-3">
+                  <h3 className="font-heading text-xl">Basis</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Was es ist – Bild, Name, Einordnung und Vorlage.
+                  </p>
+                </div>
+                <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+                  <div>
+                    <div className="aspect-square overflow-hidden rounded-[24px] border bg-[#ebe5db]">
+                      <InventoryImage
+                        product={{ ...editor.row, ...form }}
+                        alt={string(form.name, 'Artikelbild')}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Titelbild und weitere Bilder verwaltest du im Abschnitt
+                      „Bilder &amp; Druckdateien“.
+                    </p>
+                  </div>
+                  <div className="grid content-start gap-4 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      {input('name', 'Artikelname')}
+                    </div>
+                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                      Kategorie
+                      <Input
+                        list="product-categories"
+                        value={string(form.category)}
+                        onChange={(event) =>
+                          setValue('category', event.target.value)
+                        }
+                        className="bg-white text-foreground"
+                        placeholder="Vorhandene wählen oder neu anlegen"
+                      />
+                      <datalist id="product-categories">
+                        {[
+                          ...new Set(
+                            rows(data.products?.products)
+                              .map((item) => string(item.category))
+                              .filter(Boolean),
+                          ),
+                        ]
+                          .sort()
+                          .map((item) => (
+                            <option key={item} value={item} />
+                          ))}
+                      </datalist>
+                    </label>
+                    {input('size', 'Größe')}
+                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                      Familie
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(form.familyId)}
+                        onChange={(event) =>
+                          setValue(
+                            'familyId',
+                            event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          )
+                        }
+                      >
+                        <option value="">Ohne Familie</option>
+                        {rows(data.products?.families).map((item) => (
+                          <option key={string(item.id)} value={string(item.id)}>
+                            {string(item.name)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                      Designer / Lizenzgeber
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(form.designerId)}
+                        onChange={(event) =>
+                          setValue(
+                            'designerId',
+                            event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          )
+                        }
+                      >
+                        <option value="">Eigener Entwurf</option>
+                        {rows(data.products?.designers).map((item) => (
+                          <option key={string(item.id)} value={string(item.id)}>
+                            {string(item.name)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-xl border bg-white p-3 text-sm sm:col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={boolean(form.commercialLicense)}
+                        onChange={(event) =>
+                          setValue('commercialLicense', event.target.checked)
+                        }
+                      />
+                      <span>
+                        <span className="block font-medium">
+                          Verkaufslizenz
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {boolean(form.commercialLicense)
+                            ? 'Ja, dieses Produkt darf verkauft werden.'
+                            : 'Nein, für dieses Produkt ist keine Verkaufslizenz hinterlegt.'}
+                        </span>
+                      </span>
+                    </label>
+                    <div className="sm:col-span-2">
+                      {input('modelUrl', 'Modell-Link', 'url')}
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Die Seite, von der die Vorlage stammt. Optional.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section className="rounded-2xl border border-[var(--fp-primary)]/30 bg-[var(--fp-mist)]/65 p-4 sm:col-span-2">
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] sm:items-end">
+                  <div>
+                    <h3 className="font-heading text-xl">Bearbeitungsstatus</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Kennzeichnet, ob der Artikel vollständig geprüft und
+                      fertig bearbeitet ist.
+                    </p>
+                  </div>
+                  <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                    Status
+                    <select
+                      className="h-10 rounded-lg border bg-white px-3 text-sm text-foreground"
+                      value={inventoryReviewStatus(form.studioStatus)}
+                      onChange={(event) => {
+                        const status = event.target.value as 'draft' | 'final';
+                        setValue('studioStatus', status);
+                        if (status === 'final' && !form.finalizedAt)
+                          setValue(
+                            'finalizedAt',
+                            new Intl.DateTimeFormat('sv-SE').format(new Date()),
+                          );
+                      }}
+                    >
+                      <option value="draft">Noch offen</option>
+                      <option value="final">Final bearbeitet</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+              {editor.row.id ? (
+                <ProductEditorSidebar
+                  product={{ ...editor.row, ...form }}
+                  products={rows(data.products?.products)}
+                  components={rows(data.products?.components)}
+                  saving={saving}
+                  onSave={() => void saveEverything()}
                 />
               ) : null}
-              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
-                Notiz
-                <Textarea
-                  value={string(form.note)}
-                  onChange={(event) => setValue('note', event.target.value)}
-                  className="bg-white text-foreground"
-                />
-              </label>
-              {editor.row.id ? (
-                <ProductAssetManager
-                  product={form}
-                  onChanged={() => onProductChanged(editor.row.id)}
-                />
+              {!productHasVariants ? (
+                <section className="rounded-2xl border border-[var(--fp-primary)]/25 bg-white/80 p-4 sm:col-span-2">
+                  <div className="mb-3">
+                    <h3 className="font-heading text-xl">Preis und Bestand</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Preis in Euro und aktuelle fertige Stückzahl.
+                    </p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <EuroField
+                      label="Verkaufspreis"
+                      value={number(form.defaultPriceCents)}
+                      onChange={(value) => setValue('defaultPriceCents', value)}
+                    />
+                    <Field
+                      label="Fertigbestand"
+                      type="number"
+                      value={string(form.stockQuantity)}
+                      onChange={(value) => {
+                        const quantity = Math.max(0, Number(value) || 0);
+                        setValue('stockQuantity', quantity);
+                        setValue('baseStockQuantity', quantity);
+                      }}
+                    />
+                  </div>
+                </section>
               ) : null}
               {editor.row.id ? (
                 <>
+                  <ProductAssetManager
+                    product={form}
+                    onChanged={() => onProductChanged(editor.row.id)}
+                  />
+                  {productionDataMissing(
+                    editor.row,
+                    rows(data.products?.products),
+                    rows(data.products?.components),
+                  ) ? (
+                    <div className="rounded-2xl border border-[#d6a15e] bg-[#fff8e8] p-4 text-sm sm:col-span-2">
+                      <div className="font-medium text-[#744719]">
+                        ⚠ Produktionsdaten unvollständig
+                      </div>
+                      <p className="mt-1 text-[#8b5c27]">
+                        Marge und Bestandswert stimmen erst, wenn Material,
+                        Druckzeit und Herstellung vollständig eingetragen sind.
+                      </p>
+                    </div>
+                  ) : null}
                   <ManufacturingEditor
+                    ref={manufacturingEditorRef}
                     product={editor.row}
                     materials={rows(data.products?.materials)}
                     products={rows(data.products?.products)}
                     components={rows(data.products?.components)}
                     onChanged={() => onProductChanged(editor.row.id)}
+                  />
+                  <ProductCalculationSummary
+                    product={editor.row}
+                    products={rows(data.products?.products)}
+                    components={rows(data.products?.components)}
                   />
                   <RelationsSummary
                     product={editor.row}
@@ -4448,6 +4854,45 @@ function EntityEditor({
                   vollständige Varianten- und Kostenmaske.
                 </p>
               )}
+              <details className="group rounded-2xl border bg-white/55 sm:col-span-2">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-4 font-medium">
+                  <span>
+                    Weitere Angaben &amp; Notiz
+                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                      Alles, was sonst nirgends hingehört.
+                    </span>
+                  </span>
+                  <span className="transition group-open:rotate-180">⌄</span>
+                </summary>
+                <div className="grid gap-4 border-t p-4 sm:grid-cols-2">
+                  {inventoryReviewStatus(form.studioStatus) === 'final' ? (
+                    <Field
+                      label="Datum der finalen Bestätigung"
+                      type="date"
+                      value={string(form.finalizedAt).slice(0, 10)}
+                      onChange={(value) => setValue('finalizedAt', value)}
+                    />
+                  ) : null}
+                  <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={boolean(form.etsyListed)}
+                      onChange={(event) =>
+                        setValue('etsyListed', event.target.checked)
+                      }
+                    />
+                    Auf Etsy inseriert
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-medium text-foreground sm:col-span-2">
+                    Notiz
+                    <Textarea
+                      value={string(form.note)}
+                      onChange={(event) => setValue('note', event.target.value)}
+                      className="bg-white text-foreground"
+                    />
+                  </label>
+                </div>
+              </details>
             </>
           ) : null}
           {isMaterial ? (
@@ -4475,7 +4920,11 @@ function EntityEditor({
               </label>
               {input('variant', 'Farbe / Variante')}
               {input('materialType', 'Materialtyp')}
-              {input('pricePerRollCents', 'Preis pro Rolle in Cent', 'number')}
+              <EuroField
+                label="Preis pro Rolle"
+                value={number(form.pricePerRollCents)}
+                onChange={(value) => setValue('pricePerRollCents', value)}
+              />
               {input('spoolWeightGrams', 'Rollengewicht in g', 'number')}
               {input('quantity', 'Gesamtmenge', 'number')}
               {input('unit', 'Einheit')}
@@ -4571,7 +5020,11 @@ function EntityEditor({
               {input('articleName', 'Beschreibung')}
               {input('vendor', 'Lieferant')}
               {input('invoiceDate', 'Datum', 'date')}
-              {input('priceCents', 'Betrag in Cent', 'number')}
+              <EuroField
+                label="Betrag"
+                value={number(form.priceCents)}
+                onChange={(value) => setValue('priceCents', value)}
+              />
               {input('quantity', 'Menge', 'number')}
               <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
                 Kategorie
@@ -4647,12 +5100,16 @@ function EntityEditor({
             {message}
           </p>
         ) : null}
-        <div className="flex justify-end gap-2">
+        <div
+          className={`sticky -bottom-6 z-10 -mx-6 justify-end gap-2 border-t bg-[#f8f4ed]/95 px-6 py-4 backdrop-blur ${
+            isProduct ? 'flex lg:hidden' : 'flex'
+          }`}
+        >
           <Button variant="outline" onClick={onClose}>
             Abbrechen
           </Button>
           <Button
-            onClick={onSave}
+            onClick={() => void saveEverything()}
             disabled={saving || (isProduct && !string(form.name))}
           >
             {saving ? (
@@ -4660,7 +5117,7 @@ function EntityEditor({
             ) : (
               <Check className="size-4" />
             )}{' '}
-            Speichern
+            Alle Änderungen speichern
           </Button>
         </div>
       </DialogContent>
@@ -4668,19 +5125,23 @@ function EntityEditor({
   );
 }
 
-function ManufacturingEditor({
-  product,
-  materials,
-  products,
-  components,
-  onChanged,
-}: {
-  product: Row;
-  materials: Row[];
-  products: Row[];
-  components: Row[];
-  onChanged: () => void | Promise<void>;
-}) {
+type ManufacturingEditorHandle = {
+  savePending: () => Promise<boolean>;
+};
+
+const ManufacturingEditor = forwardRef<
+  ManufacturingEditorHandle,
+  {
+    product: Row;
+    materials: Row[];
+    products: Row[];
+    components: Row[];
+    onChanged: () => void | Promise<void>;
+  }
+>(function ManufacturingEditor(
+  { product, materials, products, components, onChanged },
+  ref,
+) {
   const variants = rows(product.variants);
   const filaments = rows(product.filaments);
   const variantGroups = Array.from(
@@ -4696,6 +5157,33 @@ function ManufacturingEditor({
   } | null>(null);
   const [values, setValues] = useState<Row>({});
   const [message, setMessage] = useState('');
+  const [quickValues, setQuickValues] = useState<Record<string, Row>>({});
+  const [openVariants, setOpenVariants] = useState<Record<string, boolean>>({});
+  const [quickSaving, setQuickSaving] = useState(false);
+  const [detailSaving, setDetailSaving] = useState(false);
+
+  useEffect(() => {
+    setQuickValues((current) =>
+      Object.fromEntries(
+        variants.map((variant) => [
+          string(variant.id),
+          { ...variant, ...(current[string(variant.id)] || {}) },
+        ]),
+      ),
+    );
+  }, [product.id, product.variants]);
+
+  function updateVariant(id: unknown, key: string, value: unknown) {
+    setQuickValues((current) => ({
+      ...current,
+      [string(id)]: {
+        ...(current[string(id)] ||
+          variants.find((variant) => string(variant.id) === string(id)) ||
+          {}),
+        [key]: value,
+      },
+    }));
+  }
 
   function open(
     entity: 'product_variants' | 'product_filaments',
@@ -4715,8 +5203,13 @@ function ManufacturingEditor({
             wasteGrams: 0,
             position: filaments.length,
           };
+    const quick = quickValues[string(row.id)];
     setEditing({ entity, row });
-    setValues({ ...defaults, ...row });
+    setValues({
+      ...defaults,
+      ...row,
+      ...(entity === 'product_variants' && quick ? quick : {}),
+    });
     setMessage('');
     window.requestAnimationFrame(() =>
       document
@@ -4725,8 +5218,31 @@ function ManufacturingEditor({
     );
   }
 
-  async function save() {
-    if (!editing) return;
+  function duplicateVariant(row: Row) {
+    const copy = { ...row };
+    delete copy.id;
+    delete copy.createdAt;
+    delete copy.updatedAt;
+    setEditing({ entity: 'product_variants', row: {} });
+    setValues({
+      ...copy,
+      productId: number(product.id),
+      position: variants.length,
+    });
+    setMessage(
+      'Kopie vorbereitet. Passe die gewünschten Felder an und speichere anschließend alle Änderungen.',
+    );
+    window.requestAnimationFrame(() =>
+      document
+        .getElementById('manufacturing-editor-' + string(product.id))
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
+  }
+
+  async function save(refreshAfterSave = true) {
+    if (!editing) return true;
+    setDetailSaving(true);
+    setMessage('');
     const saveValues =
       editing.entity === 'product_variants'
         ? {
@@ -4744,187 +5260,504 @@ function ManufacturingEditor({
             ).totalCents,
           }
         : values;
-    const response = await fetch('/api/inventory/workspace', {
-      method: editing.row.id == null ? 'POST' : 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        entity: editing.entity,
-        id: editing.row.id,
-        values: saveValues,
-      }),
-    });
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setMessage(result.error || 'Ausführung konnte nicht gespeichert werden.');
-      return;
-    }
-    if (editing.entity === 'product_filaments') {
-      const nextFilaments = editing.row.id
-        ? filaments.map((item) =>
-            string(item.id) === string(editing.row.id) ? values : item,
-          )
-        : [...filaments, values];
-      const nextProduct = { ...product, filaments: nextFilaments };
-      await Promise.all(
-        variants.map((variant) =>
-          fetch('/api/inventory/workspace', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              entity: 'product_variants',
-              id: variant.id,
-              values: {
-                productionCostCents: variantCostBreakdown(
-                  nextProduct,
-                  variant,
-                  products,
-                  components,
-                ).totalCents,
-              },
-            }),
-          }),
-        ),
-      );
-    }
-    await onChanged();
-    setEditing(null);
-  }
-
-  return (
-    <div className="sm:col-span-2 rounded-2xl border bg-white/55 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-medium">Ausführungen & Herstellung</h3>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => open('product_variants')}
-          >
-            <Plus className="size-3.5" /> Neue Variante
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => open('product_filaments')}
-          >
-            <Plus className="size-3.5" /> Neues Filament
-          </Button>
-        </div>
-      </div>
-      <div className="mt-3 space-y-2">
-        {variantGroups.map(([label, group]) => {
-          const appearances = [
-            ...new Set(
-              group
-                .map((variant) => string(variant.appearance, 'Standard'))
-                .filter(Boolean),
-            ),
-          ];
-          return (
-            <details
-              key={label}
-              className="group rounded-xl border bg-white/55 open:bg-white"
-            >
-              <summary className="flex cursor-pointer list-none items-center gap-3 p-3.5">
-                <span className="min-w-0 flex-1">
-                  <span className="block font-medium">{label}</span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {group.length}{' '}
-                    {group.length === 1 ? 'Variante' : 'Varianten'}
-                    {appearances.length ? ` · ${appearances.join(', ')}` : ''}
-                  </span>
-                </span>
-                <Badge variant="outline">
-                  {group.reduce(
-                    (sum, variant) => sum + number(variant.quantity),
-                    0,
-                  )}{' '}
-                  Stück
-                </Badge>
-                <span className="text-sm transition group-open:rotate-180">
-                  ⌄
-                </span>
-              </summary>
-              <div className="grid gap-2 border-t p-3 md:grid-cols-2">
-                {group.map((variant) => {
-                  const cost = variantCostBreakdown(
-                    product,
+    try {
+      const response = await fetch('/api/inventory/workspace', {
+        method: editing.row.id == null ? 'POST' : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entity: editing.entity,
+          id: editing.row.id,
+          values: saveValues,
+        }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(
+          result.error || 'Ausführung konnte nicht gespeichert werden.',
+        );
+      if (editing.entity === 'product_filaments') {
+        const nextFilaments = editing.row.id
+          ? filaments.map((item) =>
+              string(item.id) === string(editing.row.id) ? values : item,
+            )
+          : [...filaments, values];
+        const nextProduct = { ...product, filaments: nextFilaments };
+        const costResponses = await Promise.all(
+          variants.map((variant) =>
+            fetch('/api/inventory/workspace', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                entity: 'product_variants',
+                id: variant.id,
+                values: {
+                  productionCostCents: variantCostBreakdown(
+                    nextProduct,
                     variant,
                     products,
                     components,
-                  );
-                  return (
-                    <article
-                      key={string(variant.id)}
-                      className="rounded-xl border bg-[var(--fp-paper)]/45 p-3 text-sm"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-medium">
-                            {string(variant.appearance, 'Standard')}
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
+                  ).totalCents,
+                },
+              }),
+            }),
+          ),
+        );
+        if (costResponses.some((item) => !item.ok))
+          throw new Error(
+            'Die Herstellkosten der Varianten konnten nicht vollständig aktualisiert werden.',
+          );
+      }
+      if (refreshAfterSave) await onChanged();
+      setEditing(null);
+      setMessage('Variante und Herstellungsdaten wurden gespeichert.');
+      return true;
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error
+          ? reason.message
+          : 'Ausführung konnte nicht gespeichert werden.',
+      );
+      return false;
+    } finally {
+      setDetailSaving(false);
+    }
+  }
+
+  async function saveQuickValues(
+    refreshAfterSave = true,
+    excludedVariantId = '',
+  ) {
+    const changed = variants.filter((variant) => {
+      if (string(variant.id) === excludedVariantId) return false;
+      const next = quickValues[string(variant.id)];
+      if (!next) return false;
+      const fields = [
+        'weightClassGroup',
+        'name',
+        'materialId',
+        'grams',
+        'wasteGrams',
+        'size',
+        'appearance',
+        'quantity',
+        'discountPercent',
+        'defectNote',
+        'accessories',
+        'extraCostCents',
+        'priceCents',
+        'printer',
+        'printMinutes',
+      ];
+      return fields.some((field) => next[field] !== variant[field]);
+    });
+    if (!changed.length) {
+      return true;
+    }
+    setQuickSaving(true);
+    setMessage('');
+    try {
+      for (const variant of changed) {
+        const next = quickValues[string(variant.id)];
+        const nextProduct = {
+          ...product,
+          variants: variants.map(
+            (item) => quickValues[string(item.id)] || item,
+          ),
+        };
+        const response = await fetch('/api/inventory/workspace', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity: 'product_variants',
+            id: variant.id,
+            values: {
+              ...next,
+              quantity: Math.max(0, Math.trunc(number(next.quantity))),
+              priceCents: Math.max(0, Math.trunc(number(next.priceCents))),
+              productionCostCents: variantCostBreakdown(
+                nextProduct,
+                next,
+                products,
+                components,
+              ).totalCents,
+            },
+          }),
+        });
+        const result = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(
+            result.error ||
+              `${string(variant.name, 'Variante')} konnte nicht gespeichert werden.`,
+          );
+      }
+      if (refreshAfterSave) await onChanged();
+      setMessage(
+        `${changed.length} ${changed.length === 1 ? 'Variante wurde' : 'Varianten wurden'} gespeichert.`,
+      );
+      return true;
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error
+          ? reason.message
+          : 'Bestand und Preise konnten nicht gespeichert werden.',
+      );
+      return false;
+    } finally {
+      setQuickSaving(false);
+    }
+  }
+
+  useImperativeHandle(ref, () => ({
+    async savePending() {
+      const editedVariantId =
+        editing?.entity === 'product_variants' ? string(editing.row.id) : '';
+      if (editing) {
+        const detailSaved = await save(false);
+        if (!detailSaved) return false;
+      }
+      return saveQuickValues(false, editedVariantId);
+    },
+  }));
+
+  return (
+    <section className="sm:col-span-2 rounded-2xl border bg-white/70 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="font-heading text-xl">Varianten</h3>
+          <p className="text-sm text-muted-foreground">
+            Jede Ausführung mit eigenem Preis, eigener Größe, eigenem Bestand
+            und eigener Produktion.
+          </p>
+        </div>
+        <Badge variant="outline">
+          {variants.reduce(
+            (sum, variant) =>
+              sum +
+              number(
+                quickValues[string(variant.id)]?.quantity ?? variant.quantity,
+              ),
+            0,
+          )}{' '}
+          fertig
+        </Badge>
+      </div>
+      <div className="mt-4 space-y-4">
+        {variants.map((variant, index) => {
+          const id = string(variant.id);
+          const draft = quickValues[id] || variant;
+          const draftProduct = {
+            ...product,
+            variants: variants.map(
+              (item) => quickValues[string(item.id)] || item,
+            ),
+          };
+          const cost = variantCostBreakdown(
+            draftProduct,
+            draft,
+            products,
+            components,
+          );
+          const imagePath = string(draft.imageUrl || productImagePath(product));
+          const printMinutes = number(draft.printMinutes);
+          return (
+            <details
+              key={id}
+              open={openVariants[id] ?? index === 0}
+              onToggle={(event) =>
+                setOpenVariants((current) => ({
+                  ...current,
+                  [id]: event.currentTarget.open,
+                }))
+              }
+              className="group rounded-2xl border bg-[var(--fp-paper)]/55"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-4">
+                <span className="min-w-0">
+                  <strong className="block truncate">
+                    {string(draft.name, `Variante ${index + 1}`)}
+                  </strong>
+                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                    {[string(draft.size), string(draft.appearance)]
+                      .filter(Boolean)
+                      .join(' · ') || 'Größe und Ausprägung noch offen'}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                  <span>{number(draft.quantity)} Stück</span>
+                  <strong className="text-foreground">
+                    {cents(number(draft.priceCents))}
+                  </strong>
+                  <span className="text-base transition group-open:rotate-180">
+                    ⌄
+                  </span>
+                </span>
+              </summary>
+              <div className="border-t p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>Herstellung {cents(cost.totalCents)}</span>
+                  <span>
+                    {cost.marginPercent == null
+                      ? 'Marge offen'
+                      : `${cost.marginPercent.toFixed(1)} % Marge`}
+                  </span>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-[180px_minmax(0,1fr)]">
+                  <div>
+                    <div className="relative aspect-square overflow-hidden rounded-2xl border bg-[#ebe5db]">
+                      {imagePath ? (
+                        <Image
+                          src={inventoryImageUrl(imagePath)}
+                          alt={`Bild für Variante ${index + 1}`}
+                          fill
+                          unoptimized
+                          sizes="180px"
+                          className="object-cover"
+                        />
+                      ) : (
+                        <div className="grid size-full place-items-center text-sm text-muted-foreground">
+                          + Bild der Variante
+                        </div>
+                      )}
+                    </div>
+                    <ImageUpload
+                      productId={string(product.id)}
+                      variantId={id}
+                      label={`Bild für Variante ${index + 1} wählen`}
+                      onUploaded={onChanged}
+                    />
+                    {!string(draft.imageUrl) && imagePath ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Hier wird das Produktbild verwendet.
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="grid content-start gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Name der Variante"
+                      value={string(draft.name)}
+                      onChange={(value) => updateVariant(id, 'name', value)}
+                    />
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Farbe / Ausprägung
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(draft.materialId)}
+                        onChange={(event) =>
+                          updateVariant(
+                            id,
+                            'materialId',
+                            event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          )
+                        }
+                      >
+                        <option value="">Filament wählen</option>
+                        {materials.map((item) => (
+                          <option key={string(item.id)} value={string(item.id)}>
                             {[
-                              string(variant.size),
-                              string(object(variant.material).name),
+                              string(object(item.brand).name),
+                              string(item.name),
+                              string(item.variant),
                             ]
                               .filter(Boolean)
                               .join(' · ')}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`${label} – ${string(variant.appearance, 'Standard')} bearbeiten`}
-                          onClick={() => open('product_variants', variant)}
-                        >
-                          <Pencil className="size-3.5" /> Bearbeiten
-                        </Button>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-3 text-xs">
-                        <span>{number(variant.quantity)} Stück</span>
-                        <span>
-                          {cost.netGrams} g + {cost.wasteGrams} g Ausschuss
-                        </span>
-                        <span>{cents(variant.priceCents)}</span>
-                      </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-[#f3ede4] p-2 text-xs">
-                        <span>
-                          Gesamtkosten <strong>{cents(cost.totalCents)}</strong>
-                        </span>
-                        <span>
-                          Marge{' '}
-                          <strong>
-                            {cost.marginPercent == null
-                              ? 'unklar'
-                              : `${cost.marginPercent.toFixed(1)} %`}
-                          </strong>
-                        </span>
-                        <span>Material {cents(cost.filamentCents)}</span>
-                        <span>Ausschuss {cents(cost.wasteCents)}</span>
-                        <span>Maschine {cents(cost.machineCents)}</span>
-                        <span>Strom {cents(cost.electricityCents)}</span>
-                        <span>Zusatz {cents(cost.extraCents)}</span>
-                        <span>Bauteile {cents(cost.componentsCents)}</span>
-                      </div>
-                    </article>
-                  );
-                })}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Field
+                      label="Einheit / Größe"
+                      value={string(draft.size)}
+                      onChange={(value) => updateVariant(id, 'size', value)}
+                    />
+                    <EuroField
+                      label="Verkaufspreis"
+                      value={number(draft.priceCents)}
+                      onChange={(value) =>
+                        updateVariant(id, 'priceCents', value)
+                      }
+                    />
+                    <Field
+                      label="Fertigbestand"
+                      type="number"
+                      value={string(number(draft.quantity))}
+                      onChange={(value) =>
+                        updateVariant(
+                          id,
+                          'quantity',
+                          Math.max(0, Number(value) || 0),
+                        )
+                      }
+                    />
+                    <div />
+                    <DecimalField
+                      label="Nettogewicht (Gramm)"
+                      value={number(draft.grams)}
+                      onChange={(value) => updateVariant(id, 'grams', value)}
+                    />
+                    <DecimalField
+                      label="Abfall (Gramm)"
+                      value={number(draft.wasteGrams)}
+                      onChange={(value) =>
+                        updateVariant(id, 'wasteGrams', value)
+                      }
+                    />
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
+                      Drucker
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(draft.printer)}
+                        onChange={(event) =>
+                          updateVariant(
+                            id,
+                            'printer',
+                            event.target.value || null,
+                          )
+                        }
+                      >
+                        <option value="">Kein Drucker gewählt</option>
+                        {PRINTERS.map((printer) => (
+                          <option key={printer}>{printer}</option>
+                        ))}
+                      </select>
+                      <span className="font-normal">
+                        Ohne Gerät lassen sich die Stromkosten nicht berechnen.
+                      </span>
+                    </label>
+                    <DurationField
+                      value={printMinutes}
+                      onChange={(value) =>
+                        updateVariant(id, 'printMinutes', value)
+                      }
+                    />
+                  </div>
+                </div>
+                <details className="group/more mt-4 rounded-xl border bg-white/55">
+                  <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
+                    Weitere Angaben dieser Variante
+                    <span className="transition group-open/more:rotate-180">
+                      ⌄
+                    </span>
+                  </summary>
+                  <div className="grid gap-4 border-t p-3 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Gewichtsklasse / Variantengruppe
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(draft.weightClassGroup)}
+                        onChange={(event) =>
+                          updateVariant(
+                            id,
+                            'weightClassGroup',
+                            event.target.value || null,
+                          )
+                        }
+                      >
+                        <option value="">Eigenständige Variante</option>
+                        {variants
+                          .filter((item) => string(item.id) !== id)
+                          .map((item) => (
+                            <option
+                              key={string(item.id)}
+                              value={string(item.weightClassGroup || item.id)}
+                            >
+                              Gewichtsklasse von{' '}
+                              {string(
+                                item.name || item.appearance,
+                                'Variante ' + string(item.id),
+                              )}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                      Nachlass bei Mangelware
+                      <select
+                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                        value={string(draft.discountPercent, '0')}
+                        onChange={(event) =>
+                          updateVariant(
+                            id,
+                            'discountPercent',
+                            Number(event.target.value),
+                          )
+                        }
+                      >
+                        {[0, 10, 15, 20, 25, 30, 50].map((value) => (
+                          <option key={value} value={value}>
+                            {value ? `${value} %` : 'Kein Nachlass'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Field
+                      label="Mangel / Fehler"
+                      value={string(draft.defectNote)}
+                      onChange={(value) =>
+                        updateVariant(id, 'defectNote', value)
+                      }
+                    />
+                    <Field
+                      label="Zubehör, das mitgeht"
+                      value={string(draft.accessories)}
+                      onChange={(value) =>
+                        updateVariant(id, 'accessories', value)
+                      }
+                    />
+                    <EuroField
+                      label="Zusatzkosten je Stück"
+                      value={number(draft.extraCostCents)}
+                      onChange={(value) =>
+                        updateVariant(id, 'extraCostCents', value)
+                      }
+                    />
+                  </div>
+                </details>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => duplicateVariant(draft)}
+                >
+                  <Plus className="size-3.5" /> Als neue Variante duplizieren
+                </Button>
               </div>
             </details>
           );
         })}
       </div>
-      {filaments.length ? (
-        <details className="group mt-3 rounded-xl border bg-white/45">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium">
-            Filamente & Bauteile ({filaments.length})
-            <span className="text-sm transition group-open:rotate-180">⌄</span>
-          </summary>
-          <div className="flex flex-wrap gap-2 border-t p-3">
+      <Button
+        type="button"
+        variant="outline"
+        className="mt-4"
+        onClick={() =>
+          variants.length
+            ? duplicateVariant(
+                quickValues[string(variants.at(-1)?.id)] || variants.at(-1)!,
+              )
+            : open('product_variants')
+        }
+      >
+        <Plus className="size-3.5" /> Weitere Variante
+      </Button>
+      <details className="group mt-4 rounded-xl border bg-white/45">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium">
+          <span>
+            Herstellung
+            <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+              Woraus ein Stück entsteht – Druckteile, Lagerartikel und Zubehör.
+            </span>
+          </span>
+          <span className="text-sm transition group-open:rotate-180">⌄</span>
+        </summary>
+        <div className="border-t p-3">
+          <div className="flex flex-wrap gap-2">
             {filaments.map((item) => (
               <button
                 type="button"
@@ -4937,8 +5770,22 @@ function ManufacturingEditor({
               </button>
             ))}
           </div>
-        </details>
-      ) : null}
+          {!filaments.length ? (
+            <p className="text-sm text-muted-foreground">
+              Noch keine eigenen Druckteile hinterlegt.
+            </p>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => open('product_filaments')}
+          >
+            <Plus className="size-3.5" /> Druckteil hinzufügen
+          </Button>
+        </div>
+      </details>
       {!variants.length && !filaments.length ? (
         <p className="mt-2 text-sm text-muted-foreground">
           Noch keine Ausführungen oder Filamente hinterlegt.
@@ -5064,36 +5911,33 @@ function ManufacturingEditor({
                     }))
                   }
                 />
-                <Field
+                <DecimalField
                   label="Nettogewicht in g"
-                  type="number"
-                  value={string(values.grams)}
+                  value={number(values.grams)}
                   onChange={(value) =>
                     setValues((current) => ({
                       ...current,
-                      grams: Number(value),
+                      grams: value,
                     }))
                   }
                 />
-                <Field
+                <DecimalField
                   label="Ausschuss in g"
-                  type="number"
-                  value={string(values.wasteGrams)}
+                  value={number(values.wasteGrams)}
                   onChange={(value) =>
                     setValues((current) => ({
                       ...current,
-                      wasteGrams: Number(value),
+                      wasteGrams: value,
                     }))
                   }
                 />
-                <Field
-                  label="Preis in Cent"
-                  type="number"
-                  value={string(values.priceCents)}
+                <EuroField
+                  label="Verkaufspreis"
+                  value={number(values.priceCents)}
                   onChange={(value) =>
                     setValues((current) => ({
                       ...current,
-                      priceCents: Number(value),
+                      priceCents: value,
                     }))
                   }
                 />
@@ -5115,14 +5959,12 @@ function ManufacturingEditor({
                     ))}
                   </select>
                 </label>
-                <Field
-                  label="Druckzeit in Minuten"
-                  type="number"
-                  value={string(values.printMinutes)}
+                <DurationField
+                  value={number(values.printMinutes)}
                   onChange={(value) =>
                     setValues((current) => ({
                       ...current,
-                      printMinutes: Number(value),
+                      printMinutes: value,
                     }))
                   }
                 />
@@ -5168,14 +6010,13 @@ function ManufacturingEditor({
                     setValues((current) => ({ ...current, accessories: value }))
                   }
                 />
-                <Field
-                  label="Zusatzkosten je Stück in Cent"
-                  type="number"
-                  value={string(values.extraCostCents)}
+                <EuroField
+                  label="Zusatzkosten je Stück"
+                  value={number(values.extraCostCents)}
                   onChange={(value) =>
                     setValues((current) => ({
                       ...current,
-                      extraCostCents: Number(value),
+                      extraCostCents: value,
                     }))
                   }
                 />
@@ -5257,25 +6098,23 @@ function ManufacturingEditor({
                     setValues((current) => ({ ...current, part: value }))
                   }
                 />
-                <Field
+                <DecimalField
                   label="Nettogewicht in g"
-                  type="number"
-                  value={string(values.grams)}
+                  value={number(values.grams)}
                   onChange={(value) =>
                     setValues((current) => ({
                       ...current,
-                      grams: Number(value),
+                      grams: value,
                     }))
                   }
                 />
-                <Field
+                <DecimalField
                   label="Ausschuss in g"
-                  type="number"
-                  value={string(values.wasteGrams)}
+                  value={number(values.wasteGrams)}
                   onChange={(value) =>
                     setValues((current) => ({
                       ...current,
-                      wasteGrams: Number(value),
+                      wasteGrams: value,
                     }))
                   }
                 />
@@ -5297,14 +6136,12 @@ function ManufacturingEditor({
                     ))}
                   </select>
                 </label>
-                <Field
-                  label="Druckzeit in Minuten"
-                  type="number"
-                  value={string(values.printMinutes)}
+                <DurationField
+                  value={number(values.printMinutes)}
                   onChange={(value) =>
                     setValues((current) => ({
                       ...current,
-                      printMinutes: Number(value),
+                      printMinutes: value,
                     }))
                   }
                 />
@@ -5312,22 +6149,203 @@ function ManufacturingEditor({
             )}
           </div>
           {message ? (
-            <p className="mt-2 text-xs text-red-700">{message}</p>
+            <p className="mt-2 text-xs text-muted-foreground">{message}</p>
           ) : null}
-          <Button type="button" className="mt-3" onClick={() => void save()}>
-            <Check className="size-4" /> Speichern
-          </Button>
+          <p className="mt-3 rounded-xl border border-[var(--fp-primary)]/20 bg-white/70 p-3 text-sm">
+            Auch diese Angaben werden unten mit „Alle Änderungen speichern“
+            übernommen.
+          </p>
         </div>
       ) : null}
-    </div>
+    </section>
+  );
+});
+
+function ProductEditorSidebar({
+  product,
+  products,
+  components,
+  saving,
+  onSave,
+}: {
+  product: Row;
+  products: Row[];
+  components: Row[];
+  saving: boolean;
+  onSave: () => void;
+}) {
+  const variants = rows(product.variants);
+  const costs = variants.map((variant) =>
+    variantCostBreakdown(product, variant, products, components),
+  );
+  const average = (key: keyof (typeof costs)[number]) =>
+    costs.length
+      ? Math.round(
+          costs.reduce((sum, item) => sum + number(item[key]), 0) /
+            costs.length,
+        )
+      : 0;
+  const marginValues = costs
+    .map((item) => item.marginPercent)
+    .filter((value): value is number => value != null);
+  const margin =
+    marginValues.length === costs.length && costs.length
+      ? marginValues.reduce((sum, value) => sum + value, 0) /
+        marginValues.length
+      : null;
+  const stock = variants.reduce(
+    (sum, variant) => sum + number(variant.quantity),
+    0,
+  );
+  const priceValues = variants
+    .map((variant) => number(variant.priceCents))
+    .filter((value) => value > 0);
+  const priceLabel = priceValues.length
+    ? Math.min(...priceValues) === Math.max(...priceValues)
+      ? cents(priceValues[0])
+      : `${cents(Math.min(...priceValues))} – ${cents(Math.max(...priceValues))}`
+    : 'offen';
+  const items: Array<[string, number]> = [
+    ['Filament', average('filamentCents') + average('wasteCents')],
+    ['Maschine', average('machineCents')],
+    ['Strom', average('electricityCents')],
+    ['Zusatzkosten', average('extraCents')],
+    ['Bauteile', average('componentsCents')],
+  ];
+  return (
+    <aside className="sm:col-span-2 lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:row-span-[20]">
+      <div className="space-y-4 lg:sticky lg:top-0">
+        <section className="rounded-[24px] bg-[#e9e1d5] p-4">
+          <h3 className="font-heading text-xl">Zusammenfassung</h3>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <div className="rounded-xl bg-white/70 p-3">
+              <div className="text-xs text-muted-foreground">Varianten</div>
+              <strong className="mt-1 block">{variants.length}</strong>
+            </div>
+            <div className="rounded-xl bg-white/70 p-3">
+              <div className="text-xs text-muted-foreground">Bestand</div>
+              <strong className="mt-1 block">{stock} fertig</strong>
+            </div>
+            <div className="rounded-xl bg-white/70 p-3 sm:col-span-2">
+              <div className="text-xs text-muted-foreground">Verkaufspreis</div>
+              <strong className="mt-1 block">{priceLabel}</strong>
+            </div>
+          </div>
+        </section>
+        <section className="rounded-[24px] bg-[#e9e1d5] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="font-heading text-xl">Herstellungskosten</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Durchschnitt je Variante
+              </p>
+            </div>
+            <strong className={margin == null ? 'text-[#8b5c27]' : ''}>
+              {margin == null ? 'Marge offen' : `${margin.toFixed(1)} %`}
+            </strong>
+          </div>
+          <dl className="mt-4 rounded-2xl bg-white/75 p-4 text-sm">
+            {items.map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-3 py-1.5">
+                <dt>{label}</dt>
+                <dd>{cents(value)}</dd>
+              </div>
+            ))}
+            <div className="mt-2 flex justify-between gap-3 border-t pt-3 font-semibold">
+              <dt>Je Stück</dt>
+              <dd>{cents(average('totalCents'))}</dd>
+            </div>
+          </dl>
+        </section>
+        <Button className="h-12 w-full" onClick={onSave} disabled={saving}>
+          {saving ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Check className="size-4" />
+          )}{' '}
+          Alle Änderungen speichern
+        </Button>
+      </div>
+    </aside>
+  );
+}
+
+function ProductCalculationSummary({
+  product,
+  products,
+  components,
+}: {
+  product: Row;
+  products: Row[];
+  components: Row[];
+}) {
+  const variants = rows(product.variants);
+  const calculations = variants.map((variant) => ({
+    variant,
+    cost: variantCostBreakdown(product, variant, products, components),
+  }));
+  const totalGrams = calculations.reduce(
+    (sum, item) => sum + item.cost.netGrams + item.cost.wasteGrams,
+    0,
+  );
+  const totalMinutes = calculations.reduce(
+    (sum, item) => sum + item.cost.printMinutes,
+    0,
+  );
+  return (
+    <section className="rounded-2xl border bg-white/70 p-4 sm:col-span-2">
+      <h3 className="font-heading text-xl">Kalkulation</h3>
+      <p className="text-sm text-muted-foreground">
+        Was ein Stück kostet – gerechnet, nicht eingetragen.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border bg-[var(--fp-paper)]/55 p-3">
+          <div className="text-xs text-muted-foreground">Gesamtgewicht</div>
+          <div className="mt-1 text-lg font-medium">{totalGrams} g</div>
+        </div>
+        <div className="rounded-xl border bg-[var(--fp-paper)]/55 p-3">
+          <div className="text-xs text-muted-foreground">Druckzeit</div>
+          <div className="mt-1 text-lg font-medium">
+            {duration(totalMinutes)}
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 space-y-2">
+        {calculations.map(({ variant, cost }, index) => (
+          <div
+            key={string(variant.id, String(index))}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white p-3 text-sm"
+          >
+            <span>
+              {string(
+                variant.name || variant.appearance || variant.size,
+                `Variante ${index + 1}`,
+              )}
+            </span>
+            <span className="flex gap-3">
+              <strong>Herstellung {cents(cost.totalCents)}</strong>
+              <span>
+                {cost.marginPercent == null
+                  ? 'Marge offen'
+                  : `${cost.marginPercent.toFixed(1)} % Marge`}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
 function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
   const allProducts = rows(data.products);
   const variants = rows(product.variants);
-  const components = rows(data.components).filter(
+  const allComponents = rows(data.components);
+  const components = allComponents.filter(
     (item) => string(item.parentProductId) === string(product.id),
+  );
+  const usedBy = allComponents.filter(
+    (item) => string(item.componentProductId) === string(product.id),
   );
   const accessories = rows(data.accessories).filter(
     (item) => string(item.productId) === string(product.id),
@@ -5341,6 +6359,40 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
     string(variants.find((item) => string(item.id) === string(id))?.name);
   return (
     <div className="sm:col-span-2 grid gap-3 lg:grid-cols-2">
+      <details className="group rounded-2xl border bg-white/55 lg:col-span-2">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+          <span>
+            <span className="block font-medium">Bestand</span>
+            <span className="text-xs text-muted-foreground">
+              Was fertig ist, was daneben liegt und was daraus wird.
+            </span>
+          </span>
+          <span className="flex items-center gap-3 text-sm">
+            {variants.reduce(
+              (sum, variant) => sum + number(variant.quantity),
+              0,
+            )}{' '}
+            fertig
+            <span className="transition group-open:rotate-180">⌄</span>
+          </span>
+        </summary>
+        <div className="space-y-2 border-t p-4">
+          {variants.map((variant, index) => (
+            <div
+              key={string(variant.id, String(index))}
+              className="flex justify-between rounded-xl border bg-white p-3 text-sm"
+            >
+              <span>
+                {string(
+                  variant.name || variant.appearance || variant.size,
+                  `Variante ${index + 1}`,
+                )}
+              </span>
+              <strong>{number(variant.quantity)} Stück</strong>
+            </div>
+          ))}
+        </div>
+      </details>
       <section className="rounded-2xl border bg-white/55 p-4">
         <h3 className="font-medium">Bauteile & Stückliste</h3>
         <div className="mt-3 space-y-2">
@@ -5387,6 +6439,35 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
           ) : null}
         </div>
       </section>
+      <details className="group rounded-2xl border bg-white/55 lg:col-span-2">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+          <span>
+            <span className="block font-medium">Wo verwendet</span>
+            <span className="text-xs text-muted-foreground">
+              Artikel, die diesen hier einbauen.
+            </span>
+          </span>
+          <span className="flex items-center gap-3 text-sm">
+            {usedBy.length ? `${usedBy.length} Zuordnungen` : 'nirgends'}
+            <span className="transition group-open:rotate-180">⌄</span>
+          </span>
+        </summary>
+        <div className="space-y-2 border-t p-4">
+          {usedBy.map((item, index) => (
+            <div
+              key={string(item.id, String(index))}
+              className="rounded-xl border bg-white p-3 text-sm"
+            >
+              {productName(item.parentProductId)}
+            </div>
+          ))}
+          {!usedBy.length ? (
+            <p className="text-sm text-muted-foreground">
+              Dieser Artikel wird derzeit in keinem anderen Artikel verbaut.
+            </p>
+          ) : null}
+        </div>
+      </details>
     </div>
   );
 }
@@ -5542,42 +6623,111 @@ function ProductAssetManager({
   const printFiles = assets.filter(
     (asset) => string(asset.assetKind) === 'print',
   );
+  const existingImage = existingProductImagePath(product);
+  const hasUploadedPrimary = images.some((asset) => boolean(asset.isPrimary));
+  const [savingPrimary, setSavingPrimary] = useState(false);
 
-  async function upload(file: File, kind: 'image' | 'print') {
+  async function upload(files: File[], kind: 'image' | 'print') {
+    if (!files.length) return;
     setUploading(kind);
     setMessage('');
-    const body = new FormData();
-    body.set('file', file);
-    body.set('productId', string(product.id));
-    body.set('kind', kind);
-    const response = await fetch('/api/inventory/product-assets', {
-      method: 'POST',
-      body,
-    });
-    const result = (await response.json()) as { error?: string };
-    setUploading('');
-    if (!response.ok) {
-      setMessage(result.error || 'Upload fehlgeschlagen.');
-      return;
+    try {
+      let uploaded = 0;
+      for (const file of files) {
+        const body = new FormData();
+        body.set('file', file);
+        body.set('productId', string(product.id));
+        body.set('kind', kind);
+        if (kind === 'image') {
+          body.set(
+            'isPrimary',
+            String(!existingImage && !hasUploadedPrimary && uploaded === 0),
+          );
+        }
+        const response = await fetch('/api/inventory/product-assets', {
+          method: 'POST',
+          body,
+        });
+        const result = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(
+            result.error || `„${file.name}“ konnte nicht hochgeladen werden.`,
+          );
+        uploaded += 1;
+      }
+      setMessage(
+        kind === 'image'
+          ? `${uploaded} ${uploaded === 1 ? 'Bild wurde' : 'Bilder wurden'} zur Galerie hinzugefügt.`
+          : 'Druckdatei gespeichert.',
+      );
+      onChanged();
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error
+          ? reason.message
+          : 'Die Verbindung wurde beim Upload unterbrochen. Bitte erneut versuchen.',
+      );
+    } finally {
+      setUploading('');
     }
-    setMessage(
-      kind === 'image' ? 'Bild gespeichert.' : 'Druckdatei gespeichert.',
-    );
-    onChanged();
   }
 
   async function setPrimary(id: string) {
-    const response = await fetch('/api/inventory/product-assets', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, isPrimary: true }),
-    });
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok)
-      setMessage(result.error || 'Hauptbild nicht gespeichert.');
-    else {
+    setSavingPrimary(true);
+    setMessage('');
+    try {
+      const response = await fetch('/api/inventory/product-assets', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, isPrimary: true }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Hauptbild nicht gespeichert.');
       setMessage('Hauptbild aktualisiert.');
       onChanged();
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error
+          ? reason.message
+          : 'Hauptbild nicht gespeichert.',
+      );
+    } finally {
+      setSavingPrimary(false);
+    }
+  }
+
+  async function useExistingImage() {
+    setSavingPrimary(true);
+    setMessage('');
+    try {
+      const response = await fetch('/api/inventory/product-assets', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: product.id,
+          useExistingImage: true,
+        }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Hauptbild nicht gespeichert.');
+      setMessage('Vorhandenes Bild ist wieder das Hauptbild.');
+      onChanged();
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error
+          ? reason.message
+          : 'Hauptbild nicht gespeichert.',
+      );
+    } finally {
+      setSavingPrimary(false);
     }
   }
 
@@ -5598,168 +6748,210 @@ function ProductAssetManager({
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border bg-white/55 p-4 sm:col-span-2">
-      <div>
-        <h3 className="font-medium">Bilder & interne Druckdateien</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Bilder werden zentral wiederverwendet. STL-, 3MF-, OBJ- und
-          ZIP-Dateien bleiben geschützt und erscheinen nie automatisch in Etsy
-          oder Katalogen.
+    <details className="group rounded-2xl border bg-white/55 sm:col-span-2">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+        <span>
+          <span className="block font-medium">Bilder &amp; Druckdateien</span>
+          <span className="mt-1 block text-xs font-normal text-muted-foreground">
+            {images.length} Bilder · {printFiles.length} interne Druckdateien
+          </span>
+        </span>
+        <span className="transition group-open:rotate-180">⌄</span>
+      </summary>
+      <div className="space-y-4 border-t p-4">
+        <p className="text-xs text-muted-foreground">
+          Galeriebilder, aktives Titelbild und geschützte STL-, 3MF-, OBJ- oder
+          ZIP-Dateien werden hier gemeinsam verwaltet.
         </p>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
-          {uploading === 'image' ? (
-            <Loader2 className="size-5 animate-spin" />
-          ) : (
-            <ImagePlus className="size-5" />
-          )}
-          <span className="text-sm">
-            <span className="block font-medium">Weitere Bilder</span>
-            <span className="text-xs text-muted-foreground">
-              JPEG, PNG, WebP · max. 20 MB
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
+            {uploading === 'image' ? (
+              <Loader2 className="size-5 animate-spin" />
+            ) : (
+              <ImagePlus className="size-5" />
+            )}
+            <span className="text-sm">
+              <span className="block font-medium">
+                Galeriebilder hinzufügen
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Mehrfachauswahl möglich · ändert das Hauptbild nicht
+              </span>
             </span>
-          </span>
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            className="sr-only"
-            disabled={Boolean(uploading)}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file, 'image');
-              event.target.value = '';
-            }}
-          />
-        </label>
-        <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
-          {uploading === 'print' ? (
-            <Loader2 className="size-5 animate-spin" />
-          ) : (
-            <FileArchive className="size-5" />
-          )}
-          <span className="text-sm">
-            <span className="block font-medium">Druckdatei hinzufügen</span>
-            <span className="text-xs text-muted-foreground">
-              STL, 3MF, OBJ, ZIP · max. 100 MB
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              className="sr-only"
+              disabled={Boolean(uploading)}
+              onChange={(event) => {
+                const files = Array.from(event.target.files || []);
+                if (files.length) void upload(files, 'image');
+                event.target.value = '';
+              }}
+            />
+          </label>
+          <label className="flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border border-dashed bg-white p-3">
+            {uploading === 'print' ? (
+              <Loader2 className="size-5 animate-spin" />
+            ) : (
+              <FileArchive className="size-5" />
+            )}
+            <span className="text-sm">
+              <span className="block font-medium">Druckdatei hinzufügen</span>
+              <span className="text-xs text-muted-foreground">
+                STL, 3MF, OBJ, GCODE, BGCODE, STEP, ZIP · max. 100 MB
+              </span>
             </span>
-          </span>
-          <input
-            type="file"
-            accept=".stl,.3mf,.obj,.zip"
-            className="sr-only"
-            disabled={Boolean(uploading)}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file, 'print');
-              event.target.value = '';
-            }}
-          />
-        </label>
-      </div>
-      {images.length ? (
-        <div>
-          <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
-            Artikelbilder
-          </p>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {images.map((asset) => (
-              <article
-                key={string(asset.id)}
-                className="overflow-hidden rounded-xl border bg-white"
-              >
-                <div className="relative aspect-square bg-[#ebe5db]">
-                  <Image
-                    src={string(asset.url)}
-                    alt={string(asset.filename, 'Artikelbild')}
-                    fill
-                    unoptimized
-                    sizes="160px"
-                    className="object-cover"
-                  />
-                  {boolean(asset.isPrimary) ? (
-                    <Badge className="absolute top-2 left-2">Hauptbild</Badge>
-                  ) : null}
-                </div>
-                <div className="p-2">
-                  <p
-                    className="truncate text-xs"
-                    title={string(asset.filename)}
-                  >
-                    {string(asset.filename)}
-                  </p>
-                  <div className="mt-2 flex gap-1">
-                    {!boolean(asset.isPrimary) ? (
+            <input
+              type="file"
+              accept=".stl,.3mf,.obj,.gcode,.gco,.bgcode,.step,.stp,.zip"
+              className="sr-only"
+              disabled={Boolean(uploading)}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void upload([file], 'print');
+                event.target.value = '';
+              }}
+            />
+          </label>
+        </div>
+        {images.length || existingImage ? (
+          <div>
+            <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+              Artikelbilder
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {existingImage ? (
+                <article className="overflow-hidden rounded-xl border bg-white">
+                  <div className="relative aspect-square bg-[#ebe5db]">
+                    <Image
+                      src={inventoryImageUrl(existingImage)}
+                      alt="Vorhandenes Artikelbild"
+                      fill
+                      unoptimized
+                      sizes="160px"
+                      className="object-cover"
+                    />
+                    {!hasUploadedPrimary ? (
+                      <Badge className="absolute top-2 left-2">Hauptbild</Badge>
+                    ) : null}
+                  </div>
+                  <div className="p-2">
+                    <p className="truncate text-xs">Vorhandenes Artikelbild</p>
+                    {hasUploadedPrimary ? (
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-8 flex-1 px-2 text-xs"
-                        onClick={() => void setPrimary(string(asset.id))}
+                        className="mt-2 h-8 w-full px-2 text-xs"
+                        disabled={savingPrimary}
+                        onClick={() => void useExistingImage()}
                       >
-                        <Star className="size-3" /> Hauptbild
+                        <Star className="size-3" /> Als Hauptbild
                       </Button>
                     ) : null}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-8 text-red-700"
-                      aria-label={string(asset.filename) + ' löschen'}
-                      onClick={() => void remove(asset)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
                   </div>
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {printFiles.length ? (
-        <div>
-          <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
-            Interne Druckdateien
-          </p>
-          <div className="space-y-2">
-            {printFiles.map((asset) => (
-              <article
-                key={string(asset.id)}
-                className="flex items-center gap-3 rounded-xl border bg-white p-3"
-              >
-                <FileArchive className="size-5 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
-                    {string(asset.filename)}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatBytes(asset.sizeBytes)} · geschützt
-                  </p>
-                </div>
-                <a
-                  href={string(asset.url)}
-                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-white hover:bg-muted"
-                  aria-label={string(asset.filename) + ' herunterladen'}
+                </article>
+              ) : null}
+              {images.map((asset) => (
+                <article
+                  key={string(asset.id)}
+                  className="overflow-hidden rounded-xl border bg-white"
                 >
-                  <Download className="size-4" />
-                </a>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="text-red-700"
-                  aria-label={string(asset.filename) + ' löschen'}
-                  onClick={() => void remove(asset)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </article>
-            ))}
+                  <div className="relative aspect-square bg-[#ebe5db]">
+                    <Image
+                      src={string(asset.url)}
+                      alt={string(asset.filename, 'Artikelbild')}
+                      fill
+                      unoptimized
+                      sizes="160px"
+                      className="object-cover"
+                    />
+                    {boolean(asset.isPrimary) ? (
+                      <Badge className="absolute top-2 left-2">Hauptbild</Badge>
+                    ) : null}
+                  </div>
+                  <div className="p-2">
+                    <p
+                      className="truncate text-xs"
+                      title={string(asset.filename)}
+                    >
+                      {string(asset.filename)}
+                    </p>
+                    <div className="mt-2 flex gap-1">
+                      {!boolean(asset.isPrimary) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 flex-1 px-2 text-xs"
+                          disabled={savingPrimary}
+                          onClick={() => void setPrimary(string(asset.id))}
+                        >
+                          <Star className="size-3" /> Als Hauptbild
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8 text-red-700"
+                        aria-label={string(asset.filename) + ' löschen'}
+                        onClick={() => void remove(asset)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
-      {message ? (
-        <p className="text-xs text-muted-foreground">{message}</p>
-      ) : null}
-    </section>
+        ) : null}
+        {printFiles.length ? (
+          <div>
+            <p className="mb-2 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
+              Interne Druckdateien
+            </p>
+            <div className="space-y-2">
+              {printFiles.map((asset) => (
+                <article
+                  key={string(asset.id)}
+                  className="flex items-center gap-3 rounded-xl border bg-white p-3"
+                >
+                  <FileArchive className="size-5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {string(asset.filename)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatBytes(asset.sizeBytes)} · geschützt
+                    </p>
+                  </div>
+                  <a
+                    href={string(asset.url)}
+                    className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-white hover:bg-muted"
+                    aria-label={string(asset.filename) + ' herunterladen'}
+                  >
+                    <Download className="size-4" />
+                  </a>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="text-red-700"
+                    aria-label={string(asset.filename) + ' löschen'}
+                    onClick={() => void remove(asset)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {message ? (
+          <p className="text-xs text-muted-foreground">{message}</p>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

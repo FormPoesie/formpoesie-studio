@@ -1,5 +1,4 @@
 import { env } from 'cloudflare:workers';
-import { requireInventoryAdmin } from '@/lib/inventory-bridge';
 
 const CALENDAR_DATA_URL =
   'https://formpoesie.github.io/formpoesie-themen-kalender/data.json';
@@ -260,8 +259,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const denied = await requireInventoryAdmin(request);
-  if (denied) return denied;
   const body = (await request.json()) as { entry?: CalendarEntry };
   if (!body.entry?.thema || !body.entry.kategorie || !body.entry.ereignisDatum)
     return Response.json(

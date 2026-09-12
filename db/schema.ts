@@ -452,6 +452,8 @@ export const pricingRecommendations = sqliteTable(
     recommendedPriceCents: integer('recommended_price_cents'),
     inputJson: text('input_json').notNull(),
     resultJson: text('result_json').notNull(),
+    status: text('status').notNull().default('CURRENT'),
+    marketChangeId: text('market_change_id'),
     createdBy: text('created_by'),
     createdAt: text('created_at').notNull(),
   },
@@ -463,6 +465,10 @@ export const pricingRecommendations = sqliteTable(
     ),
     index('idx_pricing_recommendations_channel').on(
       table.channel,
+      table.createdAt,
+    ),
+    index('idx_pricing_recommendations_status').on(
+      table.status,
       table.createdAt,
     ),
   ],
@@ -513,6 +519,255 @@ export const pricingConfigValues = sqliteTable('pricing_config_values', {
   updatedBy: text('updated_by'),
   updatedAt: text('updated_at').notNull(),
 });
+
+export const marketClusters = sqliteTable(
+  'market_clusters',
+  {
+    id: text('id').primaryKey(),
+    parentId: text('parent_id'),
+    level: integer('level').notNull(),
+    dimension: text('dimension').notNull(),
+    label: text('label').notNull(),
+    normalizedKey: text('normalized_key').notNull(),
+    searchTermsJson: text('search_terms_json').notNull().default('[]'),
+    status: text('status').notNull().default('NEW'),
+    researchPriority: real('research_priority').notNull().default(0.5),
+    researchFrequency: text('research_frequency').notNull().default('NEW'),
+    lastResearchedAt: text('last_researched_at'),
+    lastValidSnapshotId: text('last_valid_snapshot_id'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('idx_market_clusters_key').on(table.normalizedKey),
+    index('idx_market_clusters_priority').on(
+      table.researchFrequency,
+      table.researchPriority,
+    ),
+  ],
+);
+
+export const marketClusterProducts = sqliteTable(
+  'market_cluster_products',
+  {
+    clusterId: text('cluster_id')
+      .notNull()
+      .references(() => marketClusters.id, { onDelete: 'cascade' }),
+    productId: text('product_id').notNull(),
+    variantId: text('variant_id'),
+    relevance: real('relevance').notNull().default(1),
+    reasonsJson: text('reasons_json').notNull().default('[]'),
+    catalogUpdatedAt: text('catalog_updated_at'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('idx_market_cluster_products_unique').on(
+      table.clusterId,
+      table.productId,
+      table.variantId,
+    ),
+    index('idx_market_cluster_products_product').on(table.productId),
+  ],
+);
+
+export const marketResearchQueries = sqliteTable(
+  'market_research_queries',
+  {
+    id: text('id').primaryKey(),
+    clusterId: text('cluster_id')
+      .notNull()
+      .references(() => marketClusters.id, { onDelete: 'cascade' }),
+    query: text('query').notNull(),
+    language: text('language').notNull(),
+    intent: text('intent').notNull().default('buy'),
+    status: text('status').notNull().default('ACTIVE'),
+    yieldScore: real('yield_score'),
+    lastUsedAt: text('last_used_at'),
+    discoveredFrom: text('discovered_from'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('idx_market_queries_cluster_query').on(
+      table.clusterId,
+      table.query,
+    ),
+    index('idx_market_queries_status').on(table.clusterId, table.status),
+  ],
+);
+
+export const marketResearchRuns = sqliteTable(
+  'market_research_runs',
+  {
+    id: text('id').primaryKey(),
+    runKind: text('run_kind').notNull(),
+    status: text('status').notNull(),
+    startedAt: text('started_at').notNull(),
+    finishedAt: text('finished_at'),
+    catalogFingerprint: text('catalog_fingerprint'),
+    clusterCount: integer('cluster_count').notNull().default(0),
+    queryCount: integer('query_count').notNull().default(0),
+    foundCount: integer('found_count').notNull().default(0),
+    rejectedCount: integer('rejected_count').notNull().default(0),
+    comparableCount: integer('comparable_count').notNull().default(0),
+    snapshotCount: integer('snapshot_count').notNull().default(0),
+    changeCount: integer('change_count').notNull().default(0),
+    pricingImpactCount: integer('pricing_impact_count').notNull().default(0),
+    errorJson: text('error_json').notNull().default('[]'),
+    auditJson: text('audit_json').notNull().default('{}'),
+  },
+  (table) => [index('idx_market_runs_started').on(table.startedAt)],
+);
+
+export const marketObservations = sqliteTable(
+  'market_observations',
+  {
+    id: text('id').primaryKey(),
+    runId: text('run_id')
+      .notNull()
+      .references(() => marketResearchRuns.id, { onDelete: 'cascade' }),
+    clusterId: text('cluster_id')
+      .notNull()
+      .references(() => marketClusters.id, { onDelete: 'cascade' }),
+    source: text('source').notNull(),
+    sourceUrl: text('source_url').notNull(),
+    platform: text('platform'),
+    listingKey: text('listing_key').notNull(),
+    researchedAt: text('researched_at').notNull(),
+    title: text('title').notNull(),
+    seller: text('seller'),
+    physicalOrDigital: text('physical_or_digital').notNull(),
+    currency: text('currency'),
+    regularPriceCents: integer('regular_price_cents'),
+    salePriceCents: integer('sale_price_cents'),
+    shippingPriceCents: integer('shipping_price_cents'),
+    visibleCustomerPriceCents: integer('visible_customer_price_cents'),
+    productType: text('product_type'),
+    functionLabel: text('function_label'),
+    style: text('style'),
+    motif: text('motif'),
+    person: text('person'),
+    dimensionsJson: text('dimensions_json').notNull().default('{}'),
+    variantsJson: text('variants_json').notNull().default('[]'),
+    material: text('material'),
+    finish: text('finish'),
+    personalization: integer('personalization', { mode: 'boolean' }),
+    bundleSize: integer('bundle_size'),
+    reviewCount: integer('review_count'),
+    rating: real('rating'),
+    popularityJson: text('popularity_json').notNull().default('{}'),
+    comparabilityScore: real('comparability_score').notNull(),
+    sourceQualityScore: real('source_quality_score').notNull(),
+    rawMetadataJson: text('raw_metadata_json').notNull().default('{}'),
+  },
+  (table) => [
+    uniqueIndex('idx_market_observations_run_listing').on(
+      table.runId,
+      table.clusterId,
+      table.listingKey,
+    ),
+    index('idx_market_observations_cluster').on(
+      table.clusterId,
+      table.researchedAt,
+    ),
+    index('idx_market_observations_seller').on(table.clusterId, table.seller),
+  ],
+);
+
+export const marketSnapshots = sqliteTable(
+  'market_snapshots',
+  {
+    id: text('id').primaryKey(),
+    runId: text('run_id')
+      .notNull()
+      .references(() => marketResearchRuns.id, { onDelete: 'cascade' }),
+    clusterId: text('cluster_id')
+      .notNull()
+      .references(() => marketClusters.id, { onDelete: 'cascade' }),
+    timestamp: text('timestamp').notNull(),
+    status: text('status').notNull().default('VALID'),
+    demandScore: real('demand_score'),
+    externalDemandScore: real('external_demand_score'),
+    internalSalesScore: real('internal_sales_score'),
+    internalSalesTrend: real('internal_sales_trend'),
+    competitionScore: real('competition_score'),
+    observedTrend: real('observed_trend'),
+    seasonalitySignal: real('seasonality_signal'),
+    adjustedTrend: real('adjusted_trend'),
+    trendState: text('trend_state').notNull().default('BASELINE'),
+    p25Cents: integer('p25_cents'),
+    medianCents: integer('median_cents'),
+    p75Cents: integer('p75_cents'),
+    p90Cents: integer('p90_cents'),
+    sampleSize: integer('sample_size').notNull().default(0),
+    effectiveSampleSize: real('effective_sample_size').notNull().default(0),
+    averageComparability: real('average_comparability'),
+    sourceDiversity: integer('source_diversity').notNull().default(0),
+    sellerDiversity: integer('seller_diversity').notNull().default(0),
+    confidence: text('confidence').notNull(),
+    sourceDistributionJson: text('source_distribution_json')
+      .notNull()
+      .default('{}'),
+    diagnosticsJson: text('diagnostics_json').notNull().default('{}'),
+  },
+  (table) => [
+    index('idx_market_snapshots_cluster').on(table.clusterId, table.timestamp),
+  ],
+);
+
+export const marketChanges = sqliteTable(
+  'market_changes',
+  {
+    id: text('id').primaryKey(),
+    clusterId: text('cluster_id').notNull(),
+    previousSnapshotId: text('previous_snapshot_id'),
+    currentSnapshotId: text('current_snapshot_id').notNull(),
+    changeType: text('change_type').notNull(),
+    confidence: text('confidence').notNull(),
+    beforeJson: text('before_json'),
+    afterJson: text('after_json').notNull(),
+    affectedProductIdsJson: text('affected_product_ids_json')
+      .notNull()
+      .default('[]'),
+    affectedVariantIdsJson: text('affected_variant_ids_json')
+      .notNull()
+      .default('[]'),
+    sourcesJson: text('sources_json').notNull().default('[]'),
+    explanationJson: text('explanation_json').notNull().default('[]'),
+    detectedAt: text('detected_at').notNull(),
+  },
+  (table) => [
+    index('idx_market_changes_cluster').on(table.clusterId, table.detectedAt),
+    index('idx_market_changes_type').on(table.changeType, table.detectedAt),
+  ],
+);
+
+export const pricingImpacts = sqliteTable(
+  'pricing_impacts',
+  {
+    id: text('id').primaryKey(),
+    marketChangeId: text('market_change_id')
+      .notNull()
+      .references(() => marketChanges.id, { onDelete: 'cascade' }),
+    productId: text('product_id').notNull(),
+    variantId: text('variant_id'),
+    channel: text('channel').notNull(),
+    previousRecommendationCents: integer('previous_recommendation_cents'),
+    newRecommendationCents: integer('new_recommendation_cents'),
+    absoluteDifferenceCents: integer('absolute_difference_cents'),
+    percentageDifference: real('percentage_difference'),
+    status: text('status').notNull().default('STALE_MARKET_DATA'),
+    recommendationId: text('recommendation_id'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_pricing_impacts_change_variant_channel').on(
+      table.marketChangeId,
+      table.productId,
+      table.variantId,
+      table.channel,
+    ),
+    index('idx_pricing_impacts_product').on(table.productId, table.createdAt),
+  ],
+);
 
 export const generationJobs = sqliteTable('generation_jobs', {
   id: text('id').primaryKey(),
@@ -578,9 +833,13 @@ export const mindMapNodes = sqliteTable(
     id: text('id').primaryKey(),
     title: text('title').notNull(),
     note: text('note').notNull().default(''),
+    status: text('status').notNull().default('waiting_review'),
     color: text('color').notNull().default('#4a5c58'),
+    textColor: text('text_color').notNull().default('#ffffff'),
     positionX: real('position_x').notNull(),
     positionY: real('position_y').notNull(),
+    width: real('width').notNull().default(240),
+    height: real('height').notNull().default(150),
     createdBy: text('created_by'),
     updatedBy: text('updated_by'),
     ...timestamps,
@@ -598,6 +857,7 @@ export const mindMapEdges = sqliteTable(
     targetNodeId: text('target_node_id')
       .notNull()
       .references(() => mindMapNodes.id, { onDelete: 'cascade' }),
+    color: text('color'),
     createdBy: text('created_by'),
     createdAt: text('created_at').notNull(),
   },
@@ -737,46 +997,183 @@ export const monthlyProductHighlights = sqliteTable(
   (table) => [index('idx_monthly_product_month').on(table.month)],
 );
 
-export const etsyWorkflows = sqliteTable('etsy_workflows', {
-  id: text('id').primaryKey(), inventoryProductId: text('inventory_product_id').notNull(),
-  productSnapshotJson: text('product_snapshot_json').notNull(), currentState: text('current_state').notNull().default('IMAGE_UPLOAD'),
-  status: text('status').notNull().default('IN_PROGRESS'), revision: integer('revision').notNull().default(1),
-  completedAt: text('completed_at'), createdBy: text('created_by'), ...timestamps,
-}, (table) => [index('idx_etsy_workflows_product').on(table.inventoryProductId, table.completedAt)]);
+export const etsyWorkflows = sqliteTable(
+  'etsy_workflows',
+  {
+    id: text('id').primaryKey(),
+    inventoryProductId: text('inventory_product_id').notNull(),
+    productSnapshotJson: text('product_snapshot_json').notNull(),
+    currentState: text('current_state').notNull().default('IMAGE_UPLOAD'),
+    status: text('status').notNull().default('IN_PROGRESS'),
+    revision: integer('revision').notNull().default(1),
+    completedAt: text('completed_at'),
+    createdBy: text('created_by'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_etsy_workflows_product').on(
+      table.inventoryProductId,
+      table.completedAt,
+    ),
+  ],
+);
 
-export const etsyWorkflowSteps = sqliteTable('etsy_workflow_steps', {
-  id: text('id').primaryKey(), workflowId: text('workflow_id').notNull().references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
-  state: text('state').notNull(), status: text('status').notNull().default('NOT_STARTED'), activeVersion: integer('active_version'),
-  resultJson: text('result_json').notNull().default('{}'), userEditsJson: text('user_edits_json').notNull().default('{}'),
-  approvedAt: text('approved_at'), ...timestamps,
-}, (table) => [uniqueIndex('idx_etsy_steps_workflow_state').on(table.workflowId, table.state)]);
+export const etsyWorkflowSteps = sqliteTable(
+  'etsy_workflow_steps',
+  {
+    id: text('id').primaryKey(),
+    workflowId: text('workflow_id')
+      .notNull()
+      .references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+    state: text('state').notNull(),
+    status: text('status').notNull().default('NOT_STARTED'),
+    activeVersion: integer('active_version'),
+    resultJson: text('result_json').notNull().default('{}'),
+    userEditsJson: text('user_edits_json').notNull().default('{}'),
+    approvedAt: text('approved_at'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('idx_etsy_steps_workflow_state').on(
+      table.workflowId,
+      table.state,
+    ),
+  ],
+);
 
-export const etsyWorkflowVersions = sqliteTable('etsy_workflow_versions', {
-  id: text('id').primaryKey(), workflowId: text('workflow_id').notNull().references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
-  state: text('state').notNull(), version: integer('version').notNull(), resultJson: text('result_json').notNull(),
-  sourceRevision: integer('source_revision').notNull(), approved: integer('approved', { mode: 'boolean' }).notNull().default(false),
-  createdBy: text('created_by'), createdAt: text('created_at').notNull(),
-}, (table) => [uniqueIndex('idx_etsy_versions_state_version').on(table.workflowId, table.state, table.version)]);
+export const etsyWorkflowVersions = sqliteTable(
+  'etsy_workflow_versions',
+  {
+    id: text('id').primaryKey(),
+    workflowId: text('workflow_id')
+      .notNull()
+      .references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+    state: text('state').notNull(),
+    version: integer('version').notNull(),
+    resultJson: text('result_json').notNull(),
+    sourceRevision: integer('source_revision').notNull(),
+    approved: integer('approved', { mode: 'boolean' }).notNull().default(false),
+    createdBy: text('created_by'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_etsy_versions_state_version').on(
+      table.workflowId,
+      table.state,
+      table.version,
+    ),
+  ],
+);
 
-export const etsyWorkflowImages = sqliteTable('etsy_workflow_images', {
-  id: text('id').primaryKey(), workflowId: text('workflow_id').notNull().references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
-  originalObjectKey: text('original_object_key').notNull(), originalFilename: text('original_filename').notNull(),
-  originalContentType: text('original_content_type').notNull(), status: text('status').notNull().default('UPLOADED'),
-  position: integer('position').notNull(), activeVersionId: text('active_version_id'), ...timestamps,
-}, (table) => [index('idx_etsy_images_workflow_position').on(table.workflowId, table.position)]);
+export const etsyWorkflowImages = sqliteTable(
+  'etsy_workflow_images',
+  {
+    id: text('id').primaryKey(),
+    workflowId: text('workflow_id')
+      .notNull()
+      .references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+    originalObjectKey: text('original_object_key').notNull(),
+    originalFilename: text('original_filename').notNull(),
+    originalContentType: text('original_content_type').notNull(),
+    referenceKind: text('reference_kind').notNull().default('PRODUCT'),
+    status: text('status').notNull().default('UPLOADED'),
+    position: integer('position').notNull(),
+    activeVersionId: text('active_version_id'),
+    ...timestamps,
+  },
+  (table) => [
+    index('idx_etsy_images_workflow_position').on(
+      table.workflowId,
+      table.position,
+    ),
+  ],
+);
 
-export const etsyWorkflowImageVersions = sqliteTable('etsy_workflow_image_versions', {
-  id: text('id').primaryKey(), imageId: text('image_id').notNull().references(() => etsyWorkflowImages.id, { onDelete: 'cascade' }),
-  version: integer('version').notNull(), objectKey: text('object_key'), generationPrompt: text('generation_prompt').notNull(),
-  userInstruction: text('user_instruction'), status: text('status').notNull().default('GENERATING'), errorCode: text('error_code'),
-  approved: integer('approved', { mode: 'boolean' }).notNull().default(false), createdAt: text('created_at').notNull(),
-}, (table) => [uniqueIndex('idx_etsy_image_versions').on(table.imageId, table.version)]);
+export const etsyListingImageSlots = sqliteTable(
+  'etsy_listing_image_slots',
+  {
+    id: text('id').primaryKey(),
+    workflowId: text('workflow_id')
+      .notNull()
+      .references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    title: text('title').notNull(),
+    perspective: text('perspective').notNull(),
+    instruction: text('instruction').notNull(),
+    imageFormat: text('image_format').notNull().default('4:5'),
+    status: text('status').notNull().default('DRAFT'),
+    activeVersionId: text('active_version_id'),
+    approvedAt: text('approved_at'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('idx_etsy_slots_workflow_position').on(
+      table.workflowId,
+      table.position,
+    ),
+  ],
+);
 
-export const etsyWorkflowVariantPrices = sqliteTable('etsy_workflow_variant_prices', {
-  workflowId: text('workflow_id').notNull().references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
-  inventoryVariantId: text('inventory_variant_id').notNull(), etsyPriceCents: integer('etsy_price_cents'), updatedAt: text('updated_at').notNull(),
-}, (table) => [uniqueIndex('idx_etsy_variant_prices').on(table.workflowId, table.inventoryVariantId)]);
+export const etsyListingImageSlotVersions = sqliteTable(
+  'etsy_listing_image_slot_versions',
+  {
+    id: text('id').primaryKey(),
+    slotId: text('slot_id')
+      .notNull()
+      .references(() => etsyListingImageSlots.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    taskPrompt: text('task_prompt').notNull(),
+    objectKey: text('object_key'),
+    contentType: text('content_type'),
+    status: text('status').notNull().default('GENERATED'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_etsy_slot_versions').on(table.slotId, table.version),
+  ],
+);
+
+export const etsyWorkflowImageVersions = sqliteTable(
+  'etsy_workflow_image_versions',
+  {
+    id: text('id').primaryKey(),
+    imageId: text('image_id')
+      .notNull()
+      .references(() => etsyWorkflowImages.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    objectKey: text('object_key'),
+    generationPrompt: text('generation_prompt').notNull(),
+    userInstruction: text('user_instruction'),
+    status: text('status').notNull().default('GENERATING'),
+    errorCode: text('error_code'),
+    approved: integer('approved', { mode: 'boolean' }).notNull().default(false),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_etsy_image_versions').on(table.imageId, table.version),
+  ],
+);
+
+export const etsyWorkflowVariantPrices = sqliteTable(
+  'etsy_workflow_variant_prices',
+  {
+    workflowId: text('workflow_id')
+      .notNull()
+      .references(() => etsyWorkflows.id, { onDelete: 'cascade' }),
+    inventoryVariantId: text('inventory_variant_id').notNull(),
+    etsyPriceCents: integer('etsy_price_cents'),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_etsy_variant_prices').on(
+      table.workflowId,
+      table.inventoryVariantId,
+    ),
+  ],
+);
 
 export const etsyWorkflowConfig = sqliteTable('etsy_workflow_config', {
-  key: text('key').primaryKey(), valueJson: text('value_json').notNull(), updatedAt: text('updated_at').notNull(),
+  key: text('key').primaryKey(),
+  valueJson: text('value_json').notNull(),
+  updatedAt: text('updated_at').notNull(),
 });

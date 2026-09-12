@@ -255,7 +255,7 @@ const navGroups = [
     label: 'Social Media',
     items: [
       ['News-Kalender', CalendarDays],
-      ['Mindmap', Network],
+      ['Board', Network],
     ],
   },
   {
@@ -421,7 +421,7 @@ export default function Home() {
       setDraftModule('workflow');
     } else if (label === 'News-Kalender') {
       openCalendar();
-    } else if (label === 'Mindmap') {
+    } else if (label === 'Board') {
       setActiveProduct(null);
       closeModules();
       setMindMapOpen(true);
@@ -472,7 +472,7 @@ export default function Home() {
       return inventoryOpen && inventoryArea === inventoryTarget[label];
     if (label === 'Etsy Workflow') return draftModule === 'workflow';
     if (label === 'News-Kalender') return calendarOpen;
-    if (label === 'Mindmap') return mindMapOpen;
+    if (label === 'Board') return mindMapOpen;
     if (label === 'Konten & Abos') return accountsOpen;
     if (label === 'Kataloge') return catalogsOpen;
     if (label === 'Bestellformular') return orderFormOpen;
@@ -1403,22 +1403,22 @@ export default function Home() {
                       : inventoryArea === 'pricing'
                         ? 'Preiskalkulator'
                         : inventoryArea === 'shelves'
-                        ? 'Regalflächen'
-                        : inventoryArea === 'cash'
-                          ? 'Kasse'
-                          : inventoryArea === 'sales'
-                            ? 'Verkaufshistorie'
-                            : inventoryArea === 'expenses'
-                              ? 'Einkäufe & Ausgaben'
-                              : inventoryArea === 'months'
-                                ? 'Monatsübersicht'
-                                : inventoryArea === 'online'
-                                  ? 'Druck & Versand'
-                                  : 'Inventar'
+                          ? 'Regalflächen'
+                          : inventoryArea === 'cash'
+                            ? 'Kasse'
+                            : inventoryArea === 'sales'
+                              ? 'Verkaufshistorie'
+                              : inventoryArea === 'expenses'
+                                ? 'Einkäufe & Ausgaben'
+                                : inventoryArea === 'months'
+                                  ? 'Monatsübersicht'
+                                  : inventoryArea === 'online'
+                                    ? 'Druck & Versand'
+                                    : 'Inventar'
                     : draftModule === 'workflow'
                       ? 'Etsy Workflow'
                       : mindMapOpen
-                        ? 'Mindmap'
+                        ? 'Board'
                         : accountsOpen
                           ? 'Konten & Abos'
                           : catalogsOpen

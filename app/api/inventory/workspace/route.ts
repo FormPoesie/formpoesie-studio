@@ -18,6 +18,7 @@ type JsonRecord = Record<string, unknown>;
 const entityFields: Record<string, Set<string>> = {
   products: new Set([
     'name',
+    'sku',
     'family_id',
     'designer_id',
     'size',
@@ -213,14 +214,93 @@ function scalarText(value: unknown, fallback = '') {
     : fallback;
 }
 
+const variantCollator = new Intl.Collator('de', {
+  numeric: true,
+  sensitivity: 'base',
+});
+
+function compareProductVariants(left: JsonRecord, right: JsonRecord) {
+  const leftPosition =
+    left.position == null || left.position === ''
+      ? null
+      : Number(left.position);
+  const rightPosition =
+    right.position == null || right.position === ''
+      ? null
+      : Number(right.position);
+  if (
+    leftPosition != null &&
+    rightPosition != null &&
+    Number.isFinite(leftPosition) &&
+    Number.isFinite(rightPosition) &&
+    leftPosition !== rightPosition
+  )
+    return leftPosition - rightPosition;
+  const label = (row: JsonRecord) =>
+    [row.name, row.size, row.appearance]
+      .map((value) => scalarText(value).trim())
+      .filter(Boolean)
+      .join(' ');
+  return variantCollator.compare(label(left), label(right));
+}
+
 function safeValues(entity: string, values: JsonRecord) {
   const allowed = entityFields[entity];
   if (!allowed) return null;
+  const integerWeightTable = ['product_variants', 'product_filaments'].includes(
+    entity,
+  );
   return Object.fromEntries(
     Object.entries(values)
-      .map(([key, value]) => [toSnake(key), value] as const)
+      .map(([key, value]) => {
+        const snakeKey = toSnake(key);
+        const compatibleValue =
+          integerWeightTable && ['grams', 'waste_grams'].includes(snakeKey)
+            ? Math.max(0, Math.round(Number(value) || 0))
+            : value;
+        return [snakeKey, compatibleValue] as const;
+      })
       .filter(([key, value]) => allowed.has(key) && value !== undefined),
   );
+}
+
+async function saveMeasurementPrecision(
+  entity: string,
+  rowId: string,
+  values: JsonRecord,
+) {
+  if (!['product_variants', 'product_filaments'].includes(entity)) return;
+  const hasGrams = 'grams' in values;
+  const hasWasteGrams = 'wasteGrams' in values;
+  if (!hasGrams && !hasWasteGrams) return;
+  const current = await env.DB.prepare(
+    `SELECT grams, waste_grams AS wasteGrams
+     FROM inventory_measurement_precision
+     WHERE entity_kind = ? AND row_id = ?`,
+  )
+    .bind(entity, rowId)
+    .first<JsonRecord>();
+  const grams = hasGrams
+    ? Math.max(0, Number(values.grams) || 0)
+    : current?.grams == null
+      ? null
+      : Number(current.grams);
+  const wasteGrams = hasWasteGrams
+    ? Math.max(0, Number(values.wasteGrams) || 0)
+    : current?.wasteGrams == null
+      ? null
+      : Number(current.wasteGrams);
+  await env.DB.prepare(
+    `INSERT INTO inventory_measurement_precision
+       (entity_kind, row_id, grams, waste_grams, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(entity_kind, row_id) DO UPDATE SET
+       grams = excluded.grams,
+       waste_grams = excluded.waste_grams,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(entity, rowId, grams, wasteGrams, new Date().toISOString())
+    .run();
 }
 
 async function inventoryFetch(
@@ -228,7 +308,13 @@ async function inventoryFetch(
   path: string,
   init?: RequestInit,
 ) {
-  const headers = new Headers(inventoryHeaders(accessToken));
+  const method = (init?.method || 'GET').toUpperCase();
+  const serviceKey = env.INVENTORY_SUPABASE_SERVICE_ROLE_KEY;
+  const usePrivilegedWrite = method !== 'GET' && Boolean(serviceKey);
+  const headers = new Headers(
+    inventoryHeaders(usePrivilegedWrite ? serviceKey : accessToken),
+  );
+  if (usePrivilegedWrite && serviceKey) headers.set('apikey', serviceKey);
   headers.set('Prefer', 'return=representation');
   if (init?.headers) {
     for (const [key, value] of new Headers(init.headers))
@@ -280,6 +366,7 @@ async function decorateProducts(value: unknown) {
   const products = Array.isArray(value) ? (value as JsonRecord[]) : [];
   let metadataRows: JsonRecord[] = [];
   let assetRows: JsonRecord[] = [];
+  let measurementRows: JsonRecord[] = [];
   try {
     const metadataResult = await env.DB.prepare(
       `SELECT product_id AS productId, review_status AS studioStatus,
@@ -304,9 +391,37 @@ async function decorateProducts(value: unknown) {
   } catch {
     // Legacy Supabase images remain the fallback until this migration exists.
   }
+  try {
+    const measurementResult = await env.DB.prepare(
+      `SELECT entity_kind AS entityKind, row_id AS rowId, grams,
+              waste_grams AS wasteGrams
+       FROM inventory_measurement_precision`,
+    ).all<JsonRecord>();
+    measurementRows = measurementResult.results || [];
+  } catch {
+    // Whole-gram inventory values remain available before the precision table exists.
+  }
   const metadata = new Map(
     metadataRows.map((row) => [scalarText(row.productId), row]),
   );
+  const measurements = new Map(
+    measurementRows.map((row) => [
+      `${scalarText(row.entityKind)}:${scalarText(row.rowId)}`,
+      row,
+    ]),
+  );
+  const withPreciseMeasurements = (entity: string, items: unknown) =>
+    (Array.isArray(items) ? (items as JsonRecord[]) : []).map((item) => {
+      const precise = measurements.get(`${entity}:${scalarText(item.id)}`);
+      if (!precise) return item;
+      return {
+        ...item,
+        ...(precise.grams == null ? {} : { grams: precise.grams }),
+        ...(precise.wasteGrams == null
+          ? {}
+          : { wasteGrams: precise.wasteGrams }),
+      };
+    });
   return products.map((product) => {
     const productAssets: JsonRecord[] = assetRows
       .filter((asset) => scalarText(asset.productId) === scalarText(product.id))
@@ -322,6 +437,14 @@ async function decorateProducts(value: unknown) {
     );
     return {
       ...product,
+      variants: withPreciseMeasurements(
+        'product_variants',
+        product.variants,
+      ).sort(compareProductVariants),
+      filaments: withPreciseMeasurements(
+        'product_filaments',
+        product.filaments,
+      ),
       studioStatus: inventoryReviewStatus(
         metadata.get(scalarText(product.id))?.studioStatus,
       ),
@@ -1290,6 +1413,17 @@ export async function POST(request: Request) {
       method: 'POST',
       body: JSON.stringify(createValues),
     });
+    if (['product_variants', 'product_filaments'].includes(body.entity)) {
+      const created = Array.isArray(result)
+        ? (result[0] as JsonRecord | undefined)
+        : undefined;
+      if (created?.id != null)
+        await saveMeasurementPrecision(
+          body.entity,
+          scalarText(created.id),
+          body.values,
+        );
+    }
     if (body.entity === 'products') {
       const created = Array.isArray(result)
         ? (result[0] as JsonRecord | undefined)
@@ -1421,6 +1555,7 @@ export async function PATCH(request: Request) {
           },
         )
       : [];
+    await saveMeasurementPrecision(body.entity, String(body.id), body.values);
     if (hasProductMetadata)
       await saveProductMetadata(String(body.id), body.values, user.id || null);
     if (hasExpenseMetadata)
