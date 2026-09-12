@@ -465,42 +465,46 @@ function DurationField({
     <fieldset className="grid gap-1.5 text-sm font-medium text-foreground">
       <legend>{label}</legend>
       <div className="grid grid-cols-2 gap-2">
-        <label className="relative">
-          <span className="sr-only">Stunden</span>
-          <Input
-            type="number"
-            min="0"
-            value={hours}
-            aria-label={`${label} Stunden`}
-            onChange={(event) =>
-              onChange(
-                Math.max(0, Number(event.target.value) || 0) * 60 + minutes,
-              )
-            }
-            className="bg-white pr-7 text-foreground"
-          />
-          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
-            h
+        <label className="grid gap-1 text-xs font-normal text-muted-foreground">
+          <span>Stunden</span>
+          <span className="relative">
+            <Input
+              type="number"
+              min="0"
+              value={hours}
+              aria-label={`${label} Stunden`}
+              onChange={(event) =>
+                onChange(
+                  Math.max(0, Number(event.target.value) || 0) * 60 + minutes,
+                )
+              }
+              className="bg-white pr-7 text-foreground"
+            />
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+              h
+            </span>
           </span>
         </label>
-        <label className="relative">
-          <span className="sr-only">Minuten</span>
-          <Input
-            type="number"
-            min="0"
-            max="59"
-            value={minutes}
-            aria-label={`${label} Minuten`}
-            onChange={(event) =>
-              onChange(
-                hours * 60 +
-                  Math.max(0, Math.min(59, Number(event.target.value) || 0)),
-              )
-            }
-            className="bg-white pr-9 text-foreground"
-          />
-          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
-            min
+        <label className="grid gap-1 text-xs font-normal text-muted-foreground">
+          <span>Minuten</span>
+          <span className="relative">
+            <Input
+              type="number"
+              min="0"
+              max="59"
+              value={minutes}
+              aria-label={`${label} Minuten`}
+              onChange={(event) =>
+                onChange(
+                  hours * 60 +
+                    Math.max(0, Math.min(59, Number(event.target.value) || 0)),
+                )
+              }
+              className="bg-white pr-9 text-foreground"
+            />
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+              min
+            </span>
           </span>
         </label>
       </div>

@@ -213,6 +213,7 @@ const initialForm = {
   setSize: '1',
   weightGrams: '',
   printHours: '',
+  printMinutes: '',
   activeMinutes: '',
   failureRate: '8',
   recordedProductionCost: '',
@@ -697,7 +698,11 @@ export default function Home() {
       printHours:
         item.printHours == null
           ? ''
-          : String(Math.round(item.printHours * 100) / 100),
+          : String(Math.floor(Math.round(item.printHours * 60) / 60)),
+      printMinutes:
+        item.printHours == null
+          ? ''
+          : String(Math.round(item.printHours * 60) % 60),
       recordedProductionCost:
         item.productionCost == null ? '' : String(item.productionCost),
     }));
@@ -839,7 +844,12 @@ export default function Home() {
         color: form.color || undefined,
         setSize: parseNumber(form.setSize) || 1,
         weightGrams: parseNumber(form.weightGrams),
-        printHours: parseNumber(form.printHours),
+        printHours:
+          parseNumber(form.printHours) == null &&
+          parseNumber(form.printMinutes) == null
+            ? null
+            : (parseNumber(form.printHours) || 0) +
+              (parseNumber(form.printMinutes) || 0) / 60,
         activeMinutes: parseNumber(form.activeMinutes),
         failureRate: (parseNumber(form.failureRate) || 0) / 100,
       },
@@ -4785,7 +4795,52 @@ function ProductForm({
                 '280',
                 'number',
               )}
-              {field('Druckzeit (h)', 'printHours', '14', 'number')}
+              <fieldset className="grid gap-1.5 sm:col-span-2">
+                <legend className="text-sm">Druckzeit</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <label
+                    htmlFor="new-product-print-hours"
+                    className="grid gap-1 text-xs text-muted-foreground"
+                  >
+                    Stunden
+                    <Input
+                      id="new-product-print-hours"
+                      type="number"
+                      min="0"
+                      value={form.printHours}
+                      onChange={(event) =>
+                        setField('printHours', event.target.value)
+                      }
+                      placeholder="14"
+                    />
+                  </label>
+                  <label
+                    htmlFor="new-product-print-minutes"
+                    className="grid gap-1 text-xs text-muted-foreground"
+                  >
+                    Minuten
+                    <Input
+                      id="new-product-print-minutes"
+                      type="number"
+                      min="0"
+                      max="59"
+                      value={form.printMinutes}
+                      onChange={(event) =>
+                        setField(
+                          'printMinutes',
+                          String(
+                            Math.max(
+                              0,
+                              Math.min(59, Number(event.target.value) || 0),
+                            ),
+                          ),
+                        )
+                      }
+                      placeholder="0"
+                    />
+                  </label>
+                </div>
+              </fieldset>
               {field('Aktive Arbeit (min)', 'activeMinutes', '25', 'number')}
               {field(
                 'Materialpreis (€/kg)',
