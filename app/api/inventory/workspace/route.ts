@@ -192,6 +192,13 @@ const trashableEntities = new Set([
   'other_expenses',
 ]);
 
+const removableRelationEntities = new Set([
+  'product_components',
+  'product_accessories',
+  'product_filaments',
+  'product_variants',
+]);
+
 function toCamel(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(toCamel);
   if (!value || typeof value !== 'object') return value;
@@ -1922,13 +1929,26 @@ export async function DELETE(request: Request) {
     id?: number | string;
     restore?: boolean;
   };
-  if (!body.entity || body.id == null || !trashableEntities.has(body.entity))
+  if (
+    !body.entity ||
+    body.id == null ||
+    (!trashableEntities.has(body.entity) &&
+      !removableRelationEntities.has(body.entity))
+  )
     return Response.json({ error: 'Datensatz fehlt.' }, { status: 400 });
   if (body.entity === 'other_expenses') {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
   try {
+    if (removableRelationEntities.has(body.entity)) {
+      const result = await inventoryFetch(
+        accessToken,
+        `${body.entity}?id=eq.${encodeURIComponent(String(body.id))}`,
+        { method: 'DELETE' },
+      );
+      return Response.json({ deleted: true, result });
+    }
     const result = await inventoryFetch(
       accessToken,
       `${body.entity}?id=eq.${encodeURIComponent(String(body.id))}`,

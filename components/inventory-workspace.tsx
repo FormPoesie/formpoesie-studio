@@ -4874,6 +4874,7 @@ function EntityEditor({
                   <RelationsSummary
                     product={editor.row}
                     data={data.products || {}}
+                    onChanged={() => onProductChanged(editor.row.id)}
                   />
                 </>
               ) : (
@@ -6439,7 +6440,15 @@ function ProductEditorSidebar({
   );
 }
 
-function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
+function RelationsSummary({
+  product,
+  data,
+  onChanged,
+}: {
+  product: Row;
+  data: AreaData;
+  onChanged: () => void | Promise<void>;
+}) {
   const allProducts = rows(data.products);
   const variants = rows(product.variants);
   const allComponents = rows(data.components);
@@ -6452,6 +6461,17 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
   const accessories = rows(data.accessories).filter(
     (item) => string(item.productId) === string(product.id),
   );
+  const selectableProducts = allProducts.filter(
+    (item) =>
+      string(item.id) !== string(product.id) && !string(item.archivedAt),
+  );
+  const [componentDraft, setComponentDraft] = useState<Row>({ quantity: 1 });
+  const [accessoryDraft, setAccessoryDraft] = useState<Row>({});
+  const [relationMessage, setRelationMessage] = useState('');
+  const [relationSaving, setRelationSaving] = useState(false);
+  const selectedComponent = selectableProducts.find(
+    (item) => string(item.id) === string(componentDraft.componentProductId),
+  );
   const productName = (id: unknown) =>
     string(
       allProducts.find((item) => string(item.id) === string(id))?.name,
@@ -6459,6 +6479,69 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
     );
   const variantName = (id: unknown) =>
     string(variants.find((item) => string(item.id) === string(id))?.name);
+
+  async function saveRelation(
+    entity: 'product_components' | 'product_accessories',
+    values: Row,
+  ) {
+    setRelationSaving(true);
+    setRelationMessage('');
+    try {
+      const response = await fetch('/api/inventory/workspace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity, values }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Zuordnung nicht gespeichert.');
+      if (entity === 'product_components') setComponentDraft({ quantity: 1 });
+      else setAccessoryDraft({});
+      setRelationMessage('Zuordnung gespeichert.');
+      await onChanged();
+    } catch (reason) {
+      setRelationMessage(
+        reason instanceof Error
+          ? reason.message
+          : 'Zuordnung nicht gespeichert.',
+      );
+    } finally {
+      setRelationSaving(false);
+    }
+  }
+
+  async function removeRelation(
+    entity: 'product_components' | 'product_accessories',
+    id: unknown,
+    label: string,
+  ) {
+    if (!window.confirm(`„${label}“ wirklich aus diesem Artikel entfernen?`))
+      return;
+    setRelationSaving(true);
+    setRelationMessage('');
+    try {
+      const response = await fetch('/api/inventory/workspace', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity, id }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Zuordnung nicht entfernt.');
+      setRelationMessage('Zuordnung entfernt.');
+      await onChanged();
+    } catch (reason) {
+      setRelationMessage(
+        reason instanceof Error ? reason.message : 'Zuordnung nicht entfernt.',
+      );
+    } finally {
+      setRelationSaving(false);
+    }
+  }
   return (
     <div className="sm:col-span-2 grid gap-3 lg:grid-cols-2">
       <details className="group rounded-2xl border bg-white/55 lg:col-span-2">
@@ -6501,22 +6584,41 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
           {components.map((item) => (
             <div
               key={string(item.id)}
-              className="rounded-xl border p-3 text-sm"
+              className="flex items-start justify-between gap-3 rounded-xl border p-3 text-sm"
             >
-              <div className="font-medium">
-                {number(item.quantity, 1)} ×{' '}
-                {productName(item.componentProductId)}
+              <div>
+                <div className="font-medium">
+                  {number(item.quantity, 1)} ×{' '}
+                  {productName(item.componentProductId)}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {[
+                    string(item.slot),
+                    string(item.inventoryTrackingMode),
+                    string(item.colorRequirement),
+                    variantName(item.parentVariantId),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </div>
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {[
-                  string(item.slot),
-                  string(item.inventoryTrackingMode),
-                  string(item.consumedAt),
-                  variantName(item.parentVariantId),
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0 text-red-700"
+                disabled={relationSaving}
+                aria-label={`${productName(item.componentProductId)} entfernen`}
+                onClick={() =>
+                  void removeRelation(
+                    'product_components',
+                    item.id,
+                    productName(item.componentProductId),
+                  )
+                }
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
             </div>
           ))}
           {!components.length ? (
@@ -6524,15 +6626,159 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
               Keine Bauteile zugeordnet.
             </p>
           ) : null}
+          <details className="group rounded-xl border border-dashed bg-white/60">
+            <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
+              <span>+ Lagerartikel als Bauteil</span>
+              <span className="transition group-open:rotate-180">⌄</span>
+            </summary>
+            <div className="grid gap-3 border-t p-3 sm:grid-cols-2">
+              <label className="grid gap-1.5 text-sm font-medium sm:col-span-2">
+                Lagerartikel
+                <select
+                  className="h-9 rounded-lg border bg-white px-3 text-sm"
+                  value={string(componentDraft.componentProductId)}
+                  onChange={(event) =>
+                    setComponentDraft((current) => ({
+                      ...current,
+                      componentProductId: event.target.value
+                        ? Number(event.target.value)
+                        : null,
+                      componentVariantId: null,
+                    }))
+                  }
+                >
+                  <option value="">Artikel wählen</option>
+                  {selectableProducts.map((item) => (
+                    <option key={string(item.id)} value={string(item.id)}>
+                      {string(item.name)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {rows(selectedComponent?.variants).length ? (
+                <label className="grid gap-1.5 text-sm font-medium sm:col-span-2">
+                  Ausführung des Lagerartikels
+                  <select
+                    className="h-9 rounded-lg border bg-white px-3 text-sm"
+                    value={string(componentDraft.componentVariantId)}
+                    onChange={(event) =>
+                      setComponentDraft((current) => ({
+                        ...current,
+                        componentVariantId: event.target.value
+                          ? Number(event.target.value)
+                          : null,
+                      }))
+                    }
+                  >
+                    <option value="">Standard / günstigste Ausführung</option>
+                    {rows(selectedComponent?.variants).map((variant, index) => (
+                      <option
+                        key={string(variant.id)}
+                        value={string(variant.id)}
+                      >
+                        {string(variant.name, `Variante ${index + 1}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <Field
+                label="Bauteil / Position"
+                value={string(componentDraft.slot)}
+                onChange={(value) =>
+                  setComponentDraft((current) => ({
+                    ...current,
+                    slot: value,
+                  }))
+                }
+              />
+              <Field
+                label="Menge"
+                type="number"
+                value={string(componentDraft.quantity, '1')}
+                onChange={(value) =>
+                  setComponentDraft((current) => ({
+                    ...current,
+                    quantity: Math.max(1, Number(value) || 1),
+                  }))
+                }
+              />
+              <label className="grid gap-1.5 text-sm font-medium">
+                Gilt für
+                <select
+                  className="h-9 rounded-lg border bg-white px-3 text-sm"
+                  value={string(componentDraft.parentVariantId)}
+                  onChange={(event) =>
+                    setComponentDraft((current) => ({
+                      ...current,
+                      parentVariantId: event.target.value
+                        ? Number(event.target.value)
+                        : null,
+                    }))
+                  }
+                >
+                  <option value="">Alle Varianten</option>
+                  {variants.map((variant, index) => (
+                    <option key={string(variant.id)} value={string(variant.id)}>
+                      {string(variant.name, `Variante ${index + 1}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Field
+                label="Farbvorgabe (optional)"
+                value={string(componentDraft.colorRequirement)}
+                onChange={(value) =>
+                  setComponentDraft((current) => ({
+                    ...current,
+                    colorRequirement: value,
+                  }))
+                }
+              />
+              <Button
+                type="button"
+                className="sm:col-span-2"
+                disabled={relationSaving || !componentDraft.componentProductId}
+                onClick={() =>
+                  void saveRelation('product_components', {
+                    ...componentDraft,
+                    parentProductId: number(product.id),
+                  })
+                }
+              >
+                <Plus className="size-4" /> Bauteil zuordnen
+              </Button>
+            </div>
+          </details>
         </div>
       </section>
       <section className="rounded-2xl border bg-white/55 p-4">
         <h3 className="font-medium">Passendes Zubehör</h3>
         <div className="mt-3 flex flex-wrap gap-2">
           {accessories.map((item) => (
-            <Badge key={string(item.id)} variant="outline">
+            <span
+              key={string(item.id)}
+              className="inline-flex items-center gap-1 rounded-full border bg-white pl-3 text-xs"
+            >
               {productName(item.accessoryProductId)}
-            </Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7 rounded-full text-red-700"
+                disabled={relationSaving}
+                aria-label={`${productName(item.accessoryProductId)} entfernen`}
+                onClick={() =>
+                  void removeRelation(
+                    'product_accessories',
+                    item.id,
+                    productName(item.accessoryProductId),
+                  )
+                }
+              >
+                <X className="size-3" />
+              </Button>
+            </span>
           ))}
           {!accessories.length ? (
             <p className="text-sm text-muted-foreground">
@@ -6540,7 +6786,67 @@ function RelationsSummary({ product, data }: { product: Row; data: AreaData }) {
             </p>
           ) : null}
         </div>
+        <div className="mt-3 grid gap-2">
+          <select
+            aria-label="Zubehörartikel"
+            className="h-9 rounded-lg border bg-white px-3 text-sm"
+            value={string(accessoryDraft.accessoryProductId)}
+            onChange={(event) =>
+              setAccessoryDraft((current) => ({
+                ...current,
+                accessoryProductId: event.target.value
+                  ? Number(event.target.value)
+                  : null,
+              }))
+            }
+          >
+            <option value="">Zubehörartikel wählen</option>
+            {selectableProducts.map((item) => (
+              <option key={string(item.id)} value={string(item.id)}>
+                {string(item.name)}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Zubehör gilt für"
+            className="h-9 rounded-lg border bg-white px-3 text-sm"
+            value={string(accessoryDraft.productVariantId)}
+            onChange={(event) =>
+              setAccessoryDraft((current) => ({
+                ...current,
+                productVariantId: event.target.value
+                  ? Number(event.target.value)
+                  : null,
+              }))
+            }
+          >
+            <option value="">Für alle Varianten</option>
+            {variants.map((variant, index) => (
+              <option key={string(variant.id)} value={string(variant.id)}>
+                Nur {string(variant.name, `Variante ${index + 1}`)}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={relationSaving || !accessoryDraft.accessoryProductId}
+            onClick={() =>
+              void saveRelation('product_accessories', {
+                ...accessoryDraft,
+                productId: number(product.id),
+              })
+            }
+          >
+            <Plus className="size-4" /> Zubehör zuordnen
+          </Button>
+        </div>
       </section>
+      {relationMessage ? (
+        <p className="text-sm text-muted-foreground lg:col-span-2">
+          {relationMessage}
+        </p>
+      ) : null}
       <details className="group rounded-2xl border bg-white/55 lg:col-span-2">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
           <span>
