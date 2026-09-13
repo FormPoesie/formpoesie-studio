@@ -21,6 +21,12 @@ function list(value: unknown): UnknownRow[] {
   return Array.isArray(value) ? (value as UnknownRow[]) : [];
 }
 
+export function isDigitalInventoryProduct(product: UnknownRow) {
+  return /\b(stl|3mf|obj|digital|download|druckdatei)\b/i.test(
+    `${textual(product.category)} ${textual(product.name)}`,
+  );
+}
+
 export function machineCostCents(printMinutes: number) {
   if (!Number.isFinite(printMinutes) || printMinutes <= 0) return 0;
   return Math.round((printMinutes / 60) * MACHINE_COST_CENTS_PER_HOUR);
@@ -94,7 +100,8 @@ export function variantProductionIssues(
   const priceCents = Math.max(0, Math.round(numeric(variant.priceCents)));
   const category = textual(product.category);
   const doesNotRequirePrinting =
-    /stl|digital|zubehör|zubehoer|zukauf|einkauf|handelsware/i.test(category);
+    isDigitalInventoryProduct(product) ||
+    /zubehör|zubehoer|zukauf|einkauf|handelsware/i.test(category);
   const issues: string[] = [];
   if (priceCents <= 0) issues.push('Verkaufspreis fehlt');
   if (doesNotRequirePrinting) return issues;
@@ -187,6 +194,23 @@ export function variantCostBreakdown(
   products: UnknownRow[] = [],
   components: UnknownRow[] = [],
 ): VariantCostBreakdown {
+  if (isDigitalInventoryProduct(product)) {
+    const priceCents = Math.max(0, Math.round(numeric(variant.priceCents)));
+    return {
+      netGrams: 0,
+      wasteGrams: 0,
+      filamentCents: 0,
+      wasteCents: 0,
+      machineCents: 0,
+      electricityCents: 0,
+      extraCents: 0,
+      componentsCents: 0,
+      totalCents: 0,
+      printMinutes: 0,
+      marginCents: priceCents,
+      marginPercent: 100,
+    };
+  }
   const filaments = effectiveFilaments(product, variant);
   const ownMaterial = materialOf(variant);
   const ownNet = numeric(variant.grams);

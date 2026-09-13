@@ -72,6 +72,7 @@ import {
 } from '@/lib/inventory-bridge';
 import {
   PRINTERS,
+  isDigitalInventoryProduct,
   variantCostBreakdown,
   variantProductionIssues,
 } from '@/lib/inventory-production';
@@ -255,6 +256,13 @@ function productionDataMissing(
   _components: Row[],
 ) {
   const variants = rows(product.variants);
+  if (isDigitalInventoryProduct(product)) {
+    return variants.length
+      ? variants.some(
+          (variant) => variantProductionIssues(product, variant).length > 0,
+        )
+      : number(product.defaultPriceCents) <= 0;
+  }
   return (
     !variants.length ||
     variants.some(
@@ -1424,9 +1432,20 @@ function Products({
   const source = rows(data.products);
   const components = rows(data.components);
   const metrics = (product: Row) =>
-    rows(product.variants).map((variant) =>
-      variantCostBreakdown(product, variant, source, components),
-    );
+    rows(product.variants).length
+      ? rows(product.variants).map((variant) =>
+          variantCostBreakdown(product, variant, source, components),
+        )
+      : isDigitalInventoryProduct(product)
+        ? [
+            variantCostBreakdown(
+              product,
+              { priceCents: product.defaultPriceCents },
+              source,
+              components,
+            ),
+          ]
+        : [];
   const averageMargin = (product: Row) => {
     if (productMissing(product)) return null;
     const values = metrics(product)
@@ -1994,9 +2013,10 @@ function Products({
       <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {products.map((product) => {
           const variants = rows(product.variants);
+          const isDigital = isDigitalInventoryProduct(product);
           const price = variants.length
             ? Math.min(...variants.map((item) => number(item.priceCents)))
-            : 0;
+            : number(product.defaultPriceCents);
           const stock = variants.reduce(
             (sum, item) => sum + number(item.quantity),
             0,
@@ -2095,8 +2115,14 @@ function Products({
                   <div>
                     <dt className="text-muted-foreground">Bestand</dt>
                     <dd className="mt-1 font-medium">
-                      {stock}
-                      {marketStock ? ` + ${marketStock} vor Ort` : ''}
+                      {isDigital ? (
+                        'Unbegrenzt'
+                      ) : (
+                        <>
+                          {stock}
+                          {marketStock ? ` + ${marketStock} vor Ort` : ''}
+                        </>
+                      )}
                     </dd>
                   </div>
                   <div>
@@ -2111,9 +2137,19 @@ function Products({
                   </div>
                 </dl>
                 <p className="mt-3 text-[11px] text-muted-foreground">
-                  {variants.length}{' '}
-                  {variants.length === 1 ? 'Variante' : 'Varianten'} ·{' '}
-                  {duration(printMinutes)} · {decimalInputValue(grams)} g
+                  {isDigital ? (
+                    <>
+                      {variants.length || 1}{' '}
+                      {(variants.length || 1) === 1 ? 'Variante' : 'Varianten'}{' '}
+                      · digitale Datei · kein Stücklimit
+                    </>
+                  ) : (
+                    <>
+                      {variants.length}{' '}
+                      {variants.length === 1 ? 'Variante' : 'Varianten'} ·{' '}
+                      {duration(printMinutes)} · {decimalInputValue(grams)} g
+                    </>
+                  )}
                 </p>
                 <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
                   <Button
@@ -4926,9 +4962,15 @@ function EntityEditor({
               {!productHasVariants ? (
                 <section className="rounded-2xl border border-[var(--fp-primary)]/25 bg-white/80 p-4 sm:col-span-2">
                   <div className="mb-3">
-                    <h3 className="font-heading text-xl">Preis und Bestand</h3>
+                    <h3 className="font-heading text-xl">
+                      {isDigitalInventoryProduct(form)
+                        ? 'Preise'
+                        : 'Preis und Bestand'}
+                    </h3>
                     <p className="text-sm text-muted-foreground">
-                      Preis in Euro und aktuelle fertige Stückzahl.
+                      {isDigitalInventoryProduct(form)
+                        ? 'Digitale Dateien sind nach dem Kauf unbegrenzt verfügbar.'
+                        : 'Preis in Euro und aktuelle fertige Stückzahl.'}
                     </p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -4938,16 +4980,26 @@ function EntityEditor({
                       className="sm:col-span-2"
                       onChange={setValue}
                     />
-                    <Field
-                      label="Fertigbestand"
-                      type="number"
-                      value={string(form.stockQuantity)}
-                      onChange={(value) => {
-                        const quantity = Math.max(0, Number(value) || 0);
-                        setValue('stockQuantity', quantity);
-                        setValue('baseStockQuantity', quantity);
-                      }}
-                    />
+                    {!isDigitalInventoryProduct(form) ? (
+                      <Field
+                        label="Fertigbestand"
+                        type="number"
+                        value={string(form.stockQuantity)}
+                        onChange={(value) => {
+                          const quantity = Math.max(0, Number(value) || 0);
+                          setValue('stockQuantity', quantity);
+                          setValue('baseStockQuantity', quantity);
+                        }}
+                      />
+                    ) : (
+                      <div className="rounded-xl border bg-[var(--fp-mist)]/60 p-3 text-sm sm:col-span-2">
+                        <strong>Unbegrenzter Bestand</strong>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          Für diesen digitalen Artikel wird keine Stückzahl
+                          geführt.
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </section>
               ) : null}
@@ -5272,6 +5324,7 @@ const ManufacturingEditor = forwardRef<
 ) {
   const variants = rows(product.variants);
   const filaments = rows(product.filaments);
+  const isDigital = isDigitalInventoryProduct(product);
   const hasSharedProduction = filaments.some(
     (item) => !string(item.productVariantId),
   );
@@ -5674,20 +5727,23 @@ const ManufacturingEditor = forwardRef<
         <div>
           <h3 className="font-heading text-xl">Varianten</h3>
           <p className="text-sm text-muted-foreground">
-            Jede Ausführung mit eigenem Preis, eigener Größe, eigenem Bestand
-            und eigener Produktion.
+            {isDigital
+              ? 'Jede digitale Ausführung mit eigenem Preis und ohne Stückbegrenzung.'
+              : 'Jede Ausführung mit eigenem Preis, eigener Größe, eigenem Bestand und eigener Produktion.'}
           </p>
         </div>
         <Badge variant="outline">
-          {variants.reduce(
-            (sum, variant) =>
-              sum +
-              number(
-                quickValues[string(variant.id)]?.quantity ?? variant.quantity,
-              ),
-            0,
-          )}{' '}
-          fertig
+          {isDigital
+            ? 'Unbegrenzt verfügbar'
+            : `${variants.reduce(
+                (sum, variant) =>
+                  sum +
+                  number(
+                    quickValues[string(variant.id)]?.quantity ??
+                      variant.quantity,
+                  ),
+                0,
+              )} fertig`}
         </Badge>
       </div>
       <div className="mt-4 space-y-4">
@@ -5751,13 +5807,15 @@ const ManufacturingEditor = forwardRef<
           const isMultipart = partNames.size > 1;
           const simpleColorCount =
             (string(draft.materialId) ? 1 : 0) + additionalColors.length;
-          const productionLabel = isMultipart
-            ? `Mehrteilig · ${partNames.size} Bauteile`
-            : usesPartProduction
-              ? `Einfach · ${structuralParts.length} Materialien`
-              : simpleColorCount > 1
-                ? `Einfach · ${simpleColorCount} Farben`
-                : 'Einfach';
+          const productionLabel = isDigital
+            ? 'Digital · unbegrenzt'
+            : isMultipart
+              ? `Mehrteilig · ${partNames.size} Bauteile`
+              : usesPartProduction
+                ? `Einfach · ${structuralParts.length} Materialien`
+                : simpleColorCount > 1
+                  ? `Einfach · ${simpleColorCount} Farben`
+                  : 'Einfach';
           const imagePath = string(draft.imageUrl || productImagePath(product));
           const printMinutes = number(draft.printMinutes);
           return (
@@ -5797,13 +5855,19 @@ const ManufacturingEditor = forwardRef<
                       .join(' · ') || 'Größe und Ausprägung noch offen'}
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
-                    {productionLabel} ·{' '}
-                    {decimalInputValue(cost.netGrams + cost.wasteGrams)} g ·{' '}
-                    {duration(cost.printMinutes)} · Herstellungskosten{' '}
-                    {cents(cost.totalCents)} ·{' '}
-                    {cost.marginPercent == null
-                      ? 'Marge offen'
-                      : `${cost.marginPercent.toFixed(1)} % Marge`}
+                    {isDigital ? (
+                      <>Digitale Datei · kein Stücklimit · 100 % Marge</>
+                    ) : (
+                      <>
+                        {productionLabel} ·{' '}
+                        {decimalInputValue(cost.netGrams + cost.wasteGrams)} g ·{' '}
+                        {duration(cost.printMinutes)} · Herstellungskosten{' '}
+                        {cents(cost.totalCents)} ·{' '}
+                        {cost.marginPercent == null
+                          ? 'Marge offen'
+                          : `${cost.marginPercent.toFixed(1)} % Marge`}
+                      </>
+                    )}
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
                     Markt{' '}
@@ -5878,7 +5942,11 @@ const ManufacturingEditor = forwardRef<
                   >
                     <ChevronDown className="size-4" />
                   </Button>
-                  <span>{number(draft.quantity)} Stück</span>
+                  <span>
+                    {isDigital
+                      ? 'Unbegrenzt'
+                      : `${number(draft.quantity)} Stück`}
+                  </span>
                   <strong className="text-foreground">
                     {cents(number(draft.priceCents))}
                   </strong>
@@ -5948,7 +6016,7 @@ const ManufacturingEditor = forwardRef<
                       value={string(draft.name)}
                       onChange={(value) => updateVariant(id, 'name', value)}
                     />
-                    {!usesPartProduction ? (
+                    {!isDigital && !usesPartProduction ? (
                       <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
                         Filament / Material
                         <select
@@ -5980,7 +6048,7 @@ const ManufacturingEditor = forwardRef<
                           </span>
                         ) : null}
                       </label>
-                    ) : (
+                    ) : !isDigital ? (
                       <div className="rounded-xl border bg-white p-3 text-sm">
                         <span className="font-medium">
                           Mehrteilige Produktion
@@ -5989,7 +6057,7 @@ const ManufacturingEditor = forwardRef<
                           Materialien werden unten je Bauteil gepflegt.
                         </span>
                       </div>
-                    )}
+                    ) : null}
                     <Field
                       label="Einheit / Größe"
                       value={string(draft.size)}
@@ -6007,19 +6075,30 @@ const ManufacturingEditor = forwardRef<
                         </p>
                       ) : null}
                     </div>
-                    <Field
-                      label="Fertigbestand"
-                      type="number"
-                      value={string(number(draft.quantity))}
-                      onChange={(value) =>
-                        updateVariant(
-                          id,
-                          'quantity',
-                          Math.max(0, Number(value) || 0),
-                        )
-                      }
-                    />
-                    <div className="hidden sm:block" />
+                    {isDigital ? (
+                      <div className="rounded-xl border bg-[var(--fp-mist)]/60 p-3 text-sm sm:col-span-2">
+                        <strong>Unbegrenzt verfügbar</strong>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          Digitale Varianten benötigen keinen Fertigbestand.
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <Field
+                          label="Fertigbestand"
+                          type="number"
+                          value={string(number(draft.quantity))}
+                          onChange={(value) =>
+                            updateVariant(
+                              id,
+                              'quantity',
+                              Math.max(0, Number(value) || 0),
+                            )
+                          }
+                        />
+                        <div className="hidden sm:block" />
+                      </>
+                    )}
                     <h4 className="border-t pt-4 text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase sm:col-span-2">
                       Produktion
                     </h4>
@@ -6469,7 +6548,7 @@ const ManufacturingEditor = forwardRef<
               <>
                 <section className="rounded-xl border bg-white/70 p-4">
                   <h5 className="text-xs font-semibold tracking-[.08em] text-muted-foreground uppercase">
-                    Verkauf &amp; Bestand
+                    {isDigital ? 'Verkauf' : 'Verkauf & Bestand'}
                   </h5>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     <Field
@@ -6486,43 +6565,59 @@ const ManufacturingEditor = forwardRef<
                         setValues((current) => ({ ...current, size: value }))
                       }
                     />
-                    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                      Filament / Material
-                      <select
-                        className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                        value={string(values.materialId)}
-                        onChange={(event) => {
-                          const material = materials.find(
-                            (item) => string(item.id) === event.target.value,
-                          );
-                          setValues((current) => ({
-                            ...current,
-                            materialId: event.target.value
-                              ? Number(event.target.value)
-                              : null,
-                            material: material || null,
-                          }));
-                        }}
-                      >
-                        <option value="">Filament wählen</option>
-                        {materials.map((item) => (
-                          <option key={string(item.id)} value={string(item.id)}>
-                            {materialChoiceOption(item)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <Field
-                      label="Fertigbestand"
-                      type="number"
-                      value={string(values.quantity)}
-                      onChange={(value) =>
-                        setValues((current) => ({
-                          ...current,
-                          quantity: Math.max(0, Number(value) || 0),
-                        }))
-                      }
-                    />
+                    {!isDigital ? (
+                      <>
+                        <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                          Filament / Material
+                          <select
+                            className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                            value={string(values.materialId)}
+                            onChange={(event) => {
+                              const material = materials.find(
+                                (item) =>
+                                  string(item.id) === event.target.value,
+                              );
+                              setValues((current) => ({
+                                ...current,
+                                materialId: event.target.value
+                                  ? Number(event.target.value)
+                                  : null,
+                                material: material || null,
+                              }));
+                            }}
+                          >
+                            <option value="">Filament wählen</option>
+                            {materials.map((item) => (
+                              <option
+                                key={string(item.id)}
+                                value={string(item.id)}
+                              >
+                                {materialChoiceOption(item)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <Field
+                          label="Fertigbestand"
+                          type="number"
+                          value={string(values.quantity)}
+                          onChange={(value) =>
+                            setValues((current) => ({
+                              ...current,
+                              quantity: Math.max(0, Number(value) || 0),
+                            }))
+                          }
+                        />
+                      </>
+                    ) : (
+                      <div className="rounded-xl border bg-[var(--fp-mist)]/60 p-3 text-sm sm:col-span-2">
+                        <strong>Unbegrenzt verfügbar · 100 % Marge</strong>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          Für selbst erstellte digitale Dateien entstehen keine
+                          Stück- oder Produktionskosten.
+                        </span>
+                      </div>
+                    )}
                     <SalesPriceFields
                       values={values}
                       standardKey="priceCents"
@@ -6863,6 +6958,7 @@ function ProductEditorSidebar({
   onSave: () => void;
 }) {
   const variants = rows(product.variants);
+  const isDigital = isDigitalInventoryProduct(product);
   const costs = variants.map((variant) =>
     variantCostBreakdown(product, variant, products, components),
   );
@@ -6876,8 +6972,9 @@ function ProductEditorSidebar({
   const marginValues = costs
     .map((item) => item.marginPercent)
     .filter((value): value is number => value != null);
-  const margin =
-    marginValues.length === costs.length && costs.length
+  const margin = isDigital
+    ? 100
+    : marginValues.length === costs.length && costs.length
       ? marginValues.reduce((sum, value) => sum + value, 0) /
         marginValues.length
       : null;
@@ -6919,7 +7016,9 @@ function ProductEditorSidebar({
             </div>
             <div className="rounded-xl bg-white/70 p-3">
               <div className="text-xs text-muted-foreground">Bestand</div>
-              <strong className="mt-1 block">{stock} fertig</strong>
+              <strong className="mt-1 block">
+                {isDigital ? 'Unbegrenzt' : `${stock} fertig`}
+              </strong>
             </div>
             <div className="rounded-xl bg-white/70 p-3">
               <div className="text-xs text-muted-foreground">Standard</div>

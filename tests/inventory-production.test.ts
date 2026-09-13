@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   electricityCostCents,
   filamentCostCents,
+  isDigitalInventoryProduct,
   machineCostCents,
+  variantProductionIssues,
   variantCostBreakdown,
 } from '../lib/inventory-production';
 
@@ -77,6 +79,30 @@ void test('zeigt bei fehlendem Filament keine erfundene Marge', () => {
   );
   assert.equal(result.filamentCents, 0);
   assert.equal(result.marginPercent, null);
+});
+
+void test('digitale STL-Varianten sind unbegrenzt und haben keine Stückkosten', () => {
+  const product = {
+    id: 1,
+    name: 'Meditierendes Huhn STL & 3MF',
+    category: 'STL Datei',
+    filaments: [],
+  };
+  const result = variantCostBreakdown(product, {
+    id: 2,
+    grams: 250,
+    printMinutes: 600,
+    printer: 'X2D',
+    extraCostCents: 100,
+    priceCents: 490,
+  });
+  assert.equal(isDigitalInventoryProduct(product), true);
+  assert.deepEqual(variantProductionIssues(product, { priceCents: 490 }), []);
+  assert.equal(result.totalCents, 0);
+  assert.equal(result.marginCents, 490);
+  assert.equal(result.marginPercent, 100);
+  assert.equal(result.netGrams, 0);
+  assert.equal(result.printMinutes, 0);
 });
 
 void test('rechnet mehrere Farben innerhalb derselben Variante zusammen', () => {
