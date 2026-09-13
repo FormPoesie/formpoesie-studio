@@ -8276,6 +8276,7 @@ function ProductAssetManager({
   const existingImage = string(product.imageUri);
   const hasUploadedPrimary = images.some((asset) => boolean(asset.isPrimary));
   const [savingPrimary, setSavingPrimary] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState('');
 
   async function upload(files: File[], kind: 'image' | 'print') {
     if (!files.length) return;
@@ -8382,18 +8383,25 @@ function ProductAssetManager({
   }
 
   async function remove(asset: Row) {
-    if (!window.confirm(`„${string(asset.filename)}“ wirklich löschen?`))
-      return;
-    const response = await inventoryRequest('/api/inventory/product-assets', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: asset.id }),
-    });
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok) setMessage(result.error || 'Datei nicht gelöscht.');
-    else {
+    setPendingDelete('');
+    setMessage('');
+    try {
+      const response = await inventoryRequest('/api/inventory/product-assets', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: asset.id }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || 'Datei nicht gelöscht.');
       setMessage('Datei gelöscht.');
       onChanged();
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error ? reason.message : 'Datei nicht gelöscht.',
+      );
     }
   }
 
@@ -8425,7 +8433,7 @@ function ProductAssetManager({
   }
 
   async function removeExistingImage() {
-    if (!window.confirm('Vorhandenes Artikelbild wirklich löschen?')) return;
+    setPendingDelete('');
     setMessage('');
     try {
       const response = await inventoryRequest('/api/inventory/image', {
@@ -8606,82 +8614,160 @@ function ProductAssetManager({
                         </Button>
                       ) : null}
                       <Button
-                        size="icon"
-                        variant="ghost"
-                        className="size-8 text-red-700"
-                        aria-label="Vorhandenes Artikelbild löschen"
-                        onClick={() => void removeExistingImage()}
+                        size={pendingDelete === 'existing' ? 'sm' : 'icon'}
+                        variant={
+                          pendingDelete === 'existing' ? 'destructive' : 'ghost'
+                        }
+                        className={
+                          pendingDelete === 'existing'
+                            ? 'h-8 flex-1 px-2 text-xs'
+                            : 'size-8 text-red-700'
+                        }
+                        aria-label={
+                          pendingDelete === 'existing'
+                            ? 'Löschen bestätigen'
+                            : 'Vorhandenes Artikelbild löschen'
+                        }
+                        onClick={() => {
+                          if (pendingDelete === 'existing') {
+                            void removeExistingImage();
+                            return;
+                          }
+                          setPendingDelete('existing');
+                          setMessage(
+                            'Zum endgültigen Löschen bitte noch einmal bestätigen.',
+                          );
+                        }}
                       >
                         <Trash2 className="size-3.5" />
+                        {pendingDelete === 'existing'
+                          ? ' Löschen bestätigen'
+                          : null}
                       </Button>
+                      {pendingDelete === 'existing' ? (
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="size-8"
+                          aria-label="Löschen abbrechen"
+                          onClick={() => {
+                            setPendingDelete('');
+                            setMessage('');
+                          }}
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 </article>
               ) : null}
-              {images.map((asset) => (
-                <article
-                  key={string(asset.id)}
-                  className="overflow-hidden rounded-xl border bg-white"
-                >
-                  <label className="group/image relative block aspect-square cursor-pointer bg-[#ebe5db]">
-                    <Image
-                      src={string(asset.url)}
-                      alt={string(asset.filename, 'Artikelbild')}
-                      fill
-                      unoptimized
-                      sizes="160px"
-                      className="object-cover"
-                    />
-                    {boolean(asset.isPrimary) ? (
-                      <Badge className="absolute top-2 left-2">Hauptbild</Badge>
-                    ) : null}
-                    <span className="absolute inset-x-2 bottom-2 flex items-center justify-center gap-1 rounded-lg bg-black/65 px-2 py-1.5 text-xs text-white opacity-0 transition group-hover/image:opacity-100">
-                      <Pencil className="size-3" /> Bild ersetzen
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      className="sr-only"
-                      disabled={Boolean(uploading)}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) void replaceAsset(asset, file);
-                        event.target.value = '';
-                      }}
-                    />
-                  </label>
-                  <div className="p-2">
-                    <p
-                      className="truncate text-xs"
-                      title={string(asset.filename)}
-                    >
-                      {string(asset.filename)}
-                    </p>
-                    <div className="mt-2 flex gap-1">
-                      {!boolean(asset.isPrimary) ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 flex-1 px-2 text-xs"
-                          disabled={savingPrimary}
-                          onClick={() => void setPrimary(string(asset.id))}
-                        >
-                          <Star className="size-3" /> Als Hauptbild
-                        </Button>
+              {images.map((asset) => {
+                const deleteKey = `asset:${string(asset.id)}`;
+                const awaitsDeleteConfirmation = pendingDelete === deleteKey;
+                return (
+                  <article
+                    key={string(asset.id)}
+                    className="overflow-hidden rounded-xl border bg-white"
+                  >
+                    <label className="group/image relative block aspect-square cursor-pointer bg-[#ebe5db]">
+                      <Image
+                        src={string(asset.url)}
+                        alt={string(asset.filename, 'Artikelbild')}
+                        fill
+                        unoptimized
+                        sizes="160px"
+                        className="object-cover"
+                      />
+                      {boolean(asset.isPrimary) ? (
+                        <Badge className="absolute top-2 left-2">
+                          Hauptbild
+                        </Badge>
                       ) : null}
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="size-8 text-red-700"
-                        aria-label={string(asset.filename) + ' löschen'}
-                        onClick={() => void remove(asset)}
+                      <span className="absolute inset-x-2 bottom-2 flex items-center justify-center gap-1 rounded-lg bg-black/65 px-2 py-1.5 text-xs text-white opacity-0 transition group-hover/image:opacity-100">
+                        <Pencil className="size-3" /> Bild ersetzen
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="sr-only"
+                        disabled={Boolean(uploading)}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void replaceAsset(asset, file);
+                          event.target.value = '';
+                        }}
+                      />
+                    </label>
+                    <div className="p-2">
+                      <p
+                        className="truncate text-xs"
+                        title={string(asset.filename)}
                       >
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                        {string(asset.filename)}
+                      </p>
+                      <div className="mt-2 flex gap-1">
+                        {!boolean(asset.isPrimary) ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 flex-1 px-2 text-xs"
+                            disabled={savingPrimary}
+                            onClick={() => void setPrimary(string(asset.id))}
+                          >
+                            <Star className="size-3" /> Als Hauptbild
+                          </Button>
+                        ) : null}
+                        <Button
+                          size={awaitsDeleteConfirmation ? 'sm' : 'icon'}
+                          variant={
+                            awaitsDeleteConfirmation ? 'destructive' : 'ghost'
+                          }
+                          className={
+                            awaitsDeleteConfirmation
+                              ? 'h-8 flex-1 px-2 text-xs'
+                              : 'size-8 text-red-700'
+                          }
+                          aria-label={
+                            awaitsDeleteConfirmation
+                              ? `${string(asset.filename)} löschen bestätigen`
+                              : `${string(asset.filename)} löschen`
+                          }
+                          onClick={() => {
+                            if (awaitsDeleteConfirmation) {
+                              void remove(asset);
+                              return;
+                            }
+                            setPendingDelete(deleteKey);
+                            setMessage(
+                              'Zum endgültigen Löschen bitte noch einmal bestätigen.',
+                            );
+                          }}
+                        >
+                          <Trash2 className="size-3.5" />
+                          {awaitsDeleteConfirmation
+                            ? ' Löschen bestätigen'
+                            : null}
+                        </Button>
+                        {awaitsDeleteConfirmation ? (
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            className="size-8"
+                            aria-label="Löschen abbrechen"
+                            onClick={() => {
+                              setPendingDelete('');
+                              setMessage('');
+                            }}
+                          >
+                            <X className="size-3.5" />
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           </div>
         ) : null}
