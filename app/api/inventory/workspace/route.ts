@@ -19,7 +19,6 @@ type JsonRecord = Record<string, unknown>;
 const entityFields: Record<string, Set<string>> = {
   products: new Set([
     'name',
-    'sku',
     'family_id',
     'designer_id',
     'size',
@@ -1377,7 +1376,6 @@ async function duplicateProduct(
   const productValues = safeValues('products', {
     ...source,
     name: `${scalarText(source.name, 'Artikel')} – Kopie`,
-    sku: null,
     stockQuantity: 0,
     baseStockQuantity: 0,
     archivedAt: null,
