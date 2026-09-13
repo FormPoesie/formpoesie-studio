@@ -4859,7 +4859,7 @@ function EntityEditor({
                 </div>
               </section>
               <section className="order-first rounded-2xl border border-[var(--fp-primary)]/30 bg-[var(--fp-mist)]/65 p-4 sm:col-span-2">
-                <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] sm:items-end">
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(150px,210px)_minmax(170px,230px)] sm:items-end">
                   <div>
                     <h3 className="font-heading text-xl">
                       {string(form.name, 'Neuer Artikel')}
@@ -4892,6 +4892,19 @@ function EntityEditor({
                     >
                       <option value="draft">Entwurf</option>
                       <option value="final">Final</option>
+                    </select>
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                    Etsy
+                    <select
+                      className="h-10 rounded-lg border bg-white px-3 text-sm text-foreground"
+                      value={boolean(form.etsyListed) ? 'online' : 'offline'}
+                      onChange={(event) =>
+                        setValue('etsyListed', event.target.value === 'online')
+                      }
+                    >
+                      <option value="offline">Nicht auf Etsy</option>
+                      <option value="online">Auf Etsy online</option>
                     </select>
                   </label>
                 </div>
@@ -4993,16 +5006,6 @@ function EntityEditor({
                       onChange={(value) => setValue('finalizedAt', value)}
                     />
                   ) : null}
-                  <label className="flex items-center gap-2 rounded-xl border bg-white p-3 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={boolean(form.etsyListed)}
-                      onChange={(event) =>
-                        setValue('etsyListed', event.target.checked)
-                      }
-                    />
-                    Auf Etsy inseriert
-                  </label>
                   <label className="grid gap-1.5 text-sm font-medium text-foreground sm:col-span-2">
                     Notiz
                     <Textarea
