@@ -2112,13 +2112,26 @@ function Products({
                   {variants.length === 1 ? 'Variante' : 'Varianten'} ·{' '}
                   {duration(printMinutes)} · {decimalInputValue(grams)} g
                 </p>
-                <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
+                <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
                   <Button
                     variant="outline"
                     className="justify-start"
                     onClick={() => onEdit(product)}
                   >
                     <Pencil className="size-4" /> Bearbeiten
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start"
+                    disabled={Boolean(duplicatingProductId)}
+                    onClick={() => onDuplicate(product)}
+                  >
+                    {duplicatingProductId === string(product.id) ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Copy className="size-4" />
+                    )}
+                    Duplizieren
                   </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger
@@ -2130,17 +2143,6 @@ function Products({
                     <DropdownMenuContent align="end" className="w-44">
                       <DropdownMenuItem onClick={() => onListing(product)}>
                         <Sparkles /> Für Etsy öffnen
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={Boolean(duplicatingProductId)}
-                        onClick={() => onDuplicate(product)}
-                      >
-                        {duplicatingProductId === string(product.id) ? (
-                          <Loader2 className="animate-spin" />
-                        ) : (
-                          <Copy />
-                        )}
-                        Artikel duplizieren
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => onArchive(product)}>
                         <Archive />
