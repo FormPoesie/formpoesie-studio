@@ -1713,7 +1713,7 @@ export async function POST(request: Request) {
             scalarText(item.printer || body.order?.printer).trim() || null,
           print_minutes: Math.max(
             0,
-            Math.trunc(Number(item.printMinutes) || 0),
+            Math.round(Number(item.printMinutes) || 0),
           ),
           print_deadline: printDeadline || null,
           filament_material_id:
@@ -1722,23 +1722,23 @@ export async function POST(request: Request) {
               : null,
           filament_grams: Math.max(
             0,
-            Math.trunc(Number(item.filamentGrams) || 0),
+            Math.round(Number(item.filamentGrams) || 0),
           ),
           filament_cost_cents: Math.max(
             0,
-            Math.trunc(Number(item.filamentCostCents) || 0),
+            Math.round(Number(item.filamentCostCents) || 0),
           ),
           electricity_cost_cents: Math.max(
             0,
-            Math.trunc(Number(item.electricityCostCents) || 0),
+            Math.round(Number(item.electricityCostCents) || 0),
           ),
           machine_cost_cents: Math.max(
             0,
-            Math.trunc(Number(item.machineCostCents) || 0),
+            Math.round(Number(item.machineCostCents) || 0),
           ),
           accessory_cost_cents: Math.max(
             0,
-            Math.trunc(Number(item.accessoryCostCents) || 0),
+            Math.round(Number(item.accessoryCostCents) || 0),
           ),
           license_cost_cents: 0,
           depreciation_cost_cents: 0,

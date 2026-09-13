@@ -2934,6 +2934,10 @@ function GeneralCashRegister({
     Math.max(0, Math.trunc(Number(combinedPrintHours) || 0)) * 60 +
     Math.min(59, Math.max(0, Math.trunc(Number(combinedPrintMinutes) || 0)));
   const combinedGrams = Math.max(0, decimalInputNumber(combinedWeight) || 0);
+  const shippingCostCents = Math.max(
+    0,
+    Math.round(Number(shippingCost.replace(',', '.')) * 100) || 0,
+  );
 
   function cashVariantLabel(product: Row, variant: Row) {
     const breakdown = variantCostBreakdown(
@@ -2975,7 +2979,7 @@ function GeneralCashRegister({
       products,
       components,
     );
-    if (!combinedPrint)
+    if (!combinedPrint || combinedMinutes <= 0 || combinedGrams <= 0)
       return {
         printMinutes: breakdown.printMinutes,
         filamentGrams: breakdown.netGrams + breakdown.wasteGrams,
@@ -3022,6 +3026,31 @@ function GeneralCashRegister({
       machineCostCents: breakdown.machineCents * timeScale,
     };
   }
+
+  function adjustedUnitCost(item: GeneralCartItem) {
+    const production = productionForCartItem(item);
+    const breakdown = variantCostBreakdown(
+      item.product,
+      item.variant,
+      products,
+      components,
+    );
+    return (
+      production.filamentCostCents +
+      production.electricityCostCents +
+      production.machineCostCents +
+      breakdown.extraCents +
+      breakdown.componentsCents
+    );
+  }
+
+  const adjustedProductionTotal = cart.reduce(
+    (sum, item) => sum + adjustedUnitCost(item) * item.quantity,
+    0,
+  );
+  const adjustedMargin =
+    total - adjustedProductionTotal - shippingCostCents;
+  const adjustedMarginPercent = total > 0 ? (adjustedMargin / total) * 100 : 0;
 
   function itemKey(product: Row, variant: Row) {
     return `${string(product.id)}:${string(variant.id, 'standard')}`;
@@ -3077,10 +3106,6 @@ function GeneralCashRegister({
     if (!cart.length || saving) return;
     setSaving(true);
     setMessage('');
-    const combinedSummary = combinedPrint
-      ? `Gemeinsamer Druck: ${duration(combinedMinutes)} · Gesamtgewicht ${decimalInputValue(combinedGrams)} g.`
-      : '';
-    const orderNote = [note.trim(), combinedSummary].filter(Boolean).join('\n');
     const response = await fetch('/api/inventory/workspace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3090,13 +3115,10 @@ function GeneralCashRegister({
           channel,
           date: saleDate,
           shippingRecipient: recipient,
-          shippingCostCents: Math.max(
-            0,
-            Math.round(Number(shippingCost.replace(',', '.')) * 100) || 0,
-          ),
+          shippingCostCents,
           printDeadline: plannedFor,
           shippingDeadline: channel === 'Abholung' ? '' : shippingDeadline,
-          note: orderNote,
+          note: note.trim(),
           issueInvoice,
           customerId,
           saveCustomer: saveCustomer && !customerId,
@@ -3312,6 +3334,9 @@ function GeneralCashRegister({
           <div className="mt-5 space-y-3">
             {cart.map((item) => {
               const key = itemKey(item.product, item.variant);
+              const unitCost = adjustedUnitCost(item);
+              const itemMargin =
+                (item.salePriceCents - unitCost) * item.quantity;
               return (
                 <div
                   key={key}
@@ -3365,6 +3390,10 @@ function GeneralCashRegister({
                         })
                       }
                     />
+                  </div>
+                  <div className="mt-2 text-xs text-white/65">
+                    Herstellung {cents(unitCost * item.quantity)} · Marge{' '}
+                    {cents(itemMargin)}
                   </div>
                 </div>
               );
@@ -3434,6 +3463,35 @@ function GeneralCashRegister({
               <span className="text-sm text-white/65">Gesamtsumme</span>
               <span className="font-heading text-4xl">{cents(total)}</span>
             </div>
+            {cart.length ? (
+              <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl border border-white/15 p-3 text-sm">
+                <div>
+                  <span className="block text-xs text-white/60">
+                    Herstellung gesamt
+                  </span>
+                  <strong>{cents(adjustedProductionTotal)}</strong>
+                </div>
+                <div>
+                  <span className="block text-xs text-white/60">
+                    Marge des Verkaufs
+                  </span>
+                  <strong>
+                    {cents(adjustedMargin)} ·{' '}
+                    {adjustedMarginPercent.toLocaleString('de-DE', {
+                      maximumFractionDigits: 1,
+                    })}{' '}
+                    %
+                  </strong>
+                </div>
+                {combinedPrint && combinedMinutes > 0 && combinedGrams > 0 ? (
+                  <p className="col-span-2 text-xs text-white/65">
+                    Mit {duration(combinedMinutes)} gemeinsamer Druckzeit und{' '}
+                    {decimalInputValue(combinedGrams)} g Gesamtgewicht neu
+                    berechnet.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <label className="mt-5 grid gap-1.5 text-xs text-white/65">
               Notiz (optional)
               <Textarea
