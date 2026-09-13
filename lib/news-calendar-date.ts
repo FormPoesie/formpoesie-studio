@@ -1,6 +1,7 @@
 type DatedNewsEntry = {
   ereignisDatum?: unknown;
   veroeffentlichungsDatum?: unknown;
+  erfasstAm?: unknown;
 };
 
 function dateText(value: unknown) {
@@ -17,5 +18,14 @@ export function newsCalendarDate(entry: DatedNewsEntry) {
 
 export function newsCalendarInstant(entry: DatedNewsEntry) {
   const date = newsCalendarDate(entry);
+  return date ? `${date}T12:00:00.000Z` : new Date().toISOString();
+}
+
+export function newsActivityDate(entry: DatedNewsEntry) {
+  return dateText(entry.erfasstAm) || newsCalendarDate(entry);
+}
+
+export function newsActivityInstant(entry: DatedNewsEntry) {
+  const date = newsActivityDate(entry);
   return date ? `${date}T12:00:00.000Z` : new Date().toISOString();
 }

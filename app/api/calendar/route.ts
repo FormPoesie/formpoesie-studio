@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
 import {
+  newsActivityDate,
+  newsActivityInstant,
   newsCalendarDate,
-  newsCalendarInstant,
 } from '@/lib/news-calendar-date';
 
 const CALENDAR_DATA_URL =
@@ -94,7 +95,7 @@ async function syncCalendar() {
   const instant = new Date().toISOString();
   const today = berlinDate();
   const todayCount = archive.eintraege.filter(
-    (entry) => newsCalendarDate(entry) === today,
+    (entry) => newsActivityDate(entry) === today,
   ).length;
   const newEntries: CalendarEntry[] = [];
   const statements = archive.eintraege.map((entry) => {
@@ -157,7 +158,7 @@ async function syncCalendar() {
         .filter(Boolean)
         .join(' · ') || null,
       text(entry.quelleUrl) || null,
-      newsCalendarInstant(entry),
+      newsActivityInstant(entry),
       JSON.stringify(entry),
     ),
   );
