@@ -6394,114 +6394,117 @@ const ManufacturingEditor = forwardRef<
       >
         <Plus className="size-3.5" /> Weitere Variante
       </Button>
-      <details
-        open={filaments.length > 0}
-        className="group mt-4 rounded-xl border bg-white/45"
-      >
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium">
-          <span>
-            Herstellung
-            <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-              Woraus ein Stück entsteht – Druckteile, Lagerartikel und Zubehör.
+      {!isDigital ? (
+        <details
+          open={filaments.length > 0}
+          className="group mt-4 rounded-xl border bg-white/45"
+        >
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium">
+            <span>
+              Herstellung
+              <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                Woraus ein Stück entsteht – Druckteile, Lagerartikel und
+                Zubehör.
+              </span>
             </span>
-          </span>
-          <span className="text-sm transition group-open:rotate-180">⌄</span>
-        </summary>
-        <div className="border-t p-3">
-          <div className="space-y-3">
-            {filamentGroups.map(([part, partFilaments]) => (
-              <div key={part} className="rounded-xl border bg-white/70 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <strong className="text-sm">{part}</strong>
-                    <p className="text-xs text-muted-foreground">
-                      {partFilaments.length}{' '}
-                      {partFilaments.length === 1
-                        ? 'Farbe / Material'
-                        : 'Farben / Materialien'}
-                    </p>
+            <span className="text-sm transition group-open:rotate-180">⌄</span>
+          </summary>
+          <div className="border-t p-3">
+            <div className="space-y-3">
+              {filamentGroups.map(([part, partFilaments]) => (
+                <div key={part} className="rounded-xl border bg-white/70 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <strong className="text-sm">{part}</strong>
+                      <p className="text-xs text-muted-foreground">
+                        {partFilaments.length}{' '}
+                        {partFilaments.length === 1
+                          ? 'Farbe / Material'
+                          : 'Farben / Materialien'}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => addMaterialToPart(partFilaments[0])}
+                    >
+                      <Plus className="size-3.5" /> Farbe / Material
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => addMaterialToPart(partFilaments[0])}
-                  >
-                    <Plus className="size-3.5" /> Farbe / Material
-                  </Button>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {partFilaments.map((item) => {
-                    const assignedVariant = variants.find(
-                      (variant) =>
-                        string(variant.id) === string(item.productVariantId),
-                    );
-                    const label =
-                      materialChoiceLabel(object(item.material)) ||
-                      'Material offen';
-                    return (
-                      <span
-                        key={string(item.id)}
-                        className="inline-flex overflow-hidden rounded-xl border bg-white"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => open('product_filaments', item)}
-                          className="px-3 py-2 text-left text-xs hover:bg-[var(--fp-mist)]"
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {partFilaments.map((item) => {
+                      const assignedVariant = variants.find(
+                        (variant) =>
+                          string(variant.id) === string(item.productVariantId),
+                      );
+                      const label =
+                        materialChoiceLabel(object(item.material)) ||
+                        'Material offen';
+                      return (
+                        <span
+                          key={string(item.id)}
+                          className="inline-flex overflow-hidden rounded-xl border bg-white"
                         >
-                          <span className="block font-medium">{label}</span>
-                          <span className="mt-1 block text-muted-foreground">
-                            {decimalInputValue(item.grams)} g
-                            {number(item.printMinutes) > 0
-                              ? ` · ${duration(number(item.printMinutes))}`
-                              : ''}
-                            {' · '}
-                            {assignedVariant
-                              ? string(assignedVariant.name, 'Variante')
-                              : 'alle Varianten'}
-                          </span>
-                        </button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-auto w-9 rounded-none border-l text-red-700"
-                          disabled={detailSaving}
-                          aria-label={`${label} entfernen`}
-                          onClick={() =>
-                            void removeManufacturingRow(
-                              'product_filaments',
-                              item,
-                              `${part} · ${label}`,
-                            )
-                          }
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </span>
-                    );
-                  })}
+                          <button
+                            type="button"
+                            onClick={() => open('product_filaments', item)}
+                            className="px-3 py-2 text-left text-xs hover:bg-[var(--fp-mist)]"
+                          >
+                            <span className="block font-medium">{label}</span>
+                            <span className="mt-1 block text-muted-foreground">
+                              {decimalInputValue(item.grams)} g
+                              {number(item.printMinutes) > 0
+                                ? ` · ${duration(number(item.printMinutes))}`
+                                : ''}
+                              {' · '}
+                              {assignedVariant
+                                ? string(assignedVariant.name, 'Variante')
+                                : 'alle Varianten'}
+                            </span>
+                          </button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-auto w-9 rounded-none border-l text-red-700"
+                            disabled={detailSaving}
+                            aria-label={`${label} entfernen`}
+                            onClick={() =>
+                              void removeManufacturingRow(
+                                'product_filaments',
+                                item,
+                                `${part} · ${label}`,
+                              )
+                            }
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+            {!filaments.length ? (
+              <p className="text-sm text-muted-foreground">
+                Noch keine eigenen Druckteile hinterlegt.
+              </p>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => open('product_filaments')}
+            >
+              <Plus className="size-3.5" /> Neues Bauteil
+            </Button>
           </div>
-          {!filaments.length ? (
-            <p className="text-sm text-muted-foreground">
-              Noch keine eigenen Druckteile hinterlegt.
-            </p>
-          ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            onClick={() => open('product_filaments')}
-          >
-            <Plus className="size-3.5" /> Neues Bauteil
-          </Button>
-        </div>
-      </details>
-      {!variants.length && !filaments.length ? (
+        </details>
+      ) : null}
+      {!isDigital && !variants.length && !filaments.length ? (
         <p className="mt-2 text-sm text-muted-foreground">
           Noch keine Ausführungen oder Filamente hinterlegt.
         </p>
@@ -7105,6 +7108,7 @@ function RelationsSummary({
   data: AreaData;
   onChanged: () => void | Promise<void>;
 }) {
+  const isDigital = isDigitalInventoryProduct(product);
   const allProducts = rows(data.products);
   const variants = rows(product.variants);
   const allComponents = rows(data.components);
@@ -7200,40 +7204,42 @@ function RelationsSummary({
   }
   return (
     <div className="sm:col-span-2 grid gap-3 lg:grid-cols-2">
-      <details className="group rounded-2xl border bg-white/55 lg:col-span-2">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
-          <span>
-            <span className="block font-medium">Bestand</span>
-            <span className="text-xs text-muted-foreground">
-              Was fertig ist, was daneben liegt und was daraus wird.
-            </span>
-          </span>
-          <span className="flex items-center gap-3 text-sm">
-            {variants.reduce(
-              (sum, variant) => sum + number(variant.quantity),
-              0,
-            )}{' '}
-            fertig
-            <span className="transition group-open:rotate-180">⌄</span>
-          </span>
-        </summary>
-        <div className="space-y-2 border-t p-4">
-          {variants.map((variant, index) => (
-            <div
-              key={string(variant.id, String(index))}
-              className="flex justify-between rounded-xl border bg-white p-3 text-sm"
-            >
-              <span>
-                {string(
-                  variant.name || variant.appearance || variant.size,
-                  `Variante ${index + 1}`,
-                )}
+      {!isDigital ? (
+        <details className="group rounded-2xl border bg-white/55 lg:col-span-2">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+            <span>
+              <span className="block font-medium">Bestand</span>
+              <span className="text-xs text-muted-foreground">
+                Was fertig ist, was daneben liegt und was daraus wird.
               </span>
-              <strong>{number(variant.quantity)} Stück</strong>
-            </div>
-          ))}
-        </div>
-      </details>
+            </span>
+            <span className="flex items-center gap-3 text-sm">
+              {variants.reduce(
+                (sum, variant) => sum + number(variant.quantity),
+                0,
+              )}{' '}
+              fertig
+              <span className="transition group-open:rotate-180">⌄</span>
+            </span>
+          </summary>
+          <div className="space-y-2 border-t p-4">
+            {variants.map((variant, index) => (
+              <div
+                key={string(variant.id, String(index))}
+                className="flex justify-between rounded-xl border bg-white p-3 text-sm"
+              >
+                <span>
+                  {string(
+                    variant.name || variant.appearance || variant.size,
+                    `Variante ${index + 1}`,
+                  )}
+                </span>
+                <strong>{number(variant.quantity)} Stück</strong>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
       <section className="rounded-2xl border bg-white/55 p-4">
         <h3 className="font-medium">Bauteile & Stückliste</h3>
         <div className="mt-3 space-y-2">
