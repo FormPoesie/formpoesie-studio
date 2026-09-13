@@ -58,10 +58,13 @@ function stringValue(value: unknown, fallback = '') {
     : fallback;
 }
 
-export function inventoryReviewStatus(value: unknown): 'draft' | 'final' {
-  return stringValue(value).trim().toLocaleLowerCase('de') === 'final'
-    ? 'final'
-    : 'draft';
+export type InventoryReviewStatus = 'draft' | 'final' | 'customer_order';
+
+export function inventoryReviewStatus(value: unknown): InventoryReviewStatus {
+  const normalized = stringValue(value).trim().toLocaleLowerCase('de');
+  if (normalized === 'final') return 'final';
+  if (normalized === 'customer_order') return 'customer_order';
+  return 'draft';
 }
 
 function rows(value: unknown) {

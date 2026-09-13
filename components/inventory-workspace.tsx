@@ -1409,9 +1409,9 @@ function Products({
   const [category, setCategory] = useState('');
   const [familyId, setFamilyId] = useState('');
   const [designerId, setDesignerId] = useState('');
-  const [reviewFilter, setReviewFilter] = useState<'final' | 'draft' | 'all'>(
-    'final',
-  );
+  const [reviewFilter, setReviewFilter] = useState<
+    'final' | 'draft' | 'customer_order' | 'all'
+  >('final');
   const [sort, setSort] = useState<
     'name' | 'margin' | 'cost' | 'printTime' | 'updated'
   >('name');
@@ -1470,19 +1470,19 @@ function Products({
       .toLocaleLowerCase('de')
       .includes(query);
     if (!matches) return false;
+    const studioStatus = inventoryReviewStatus(product.studioStatus);
+    if (filter === 'archive' && !product.archivedAt) return false;
+    if (filter === 'active' && product.archivedAt) return false;
     if (
-      filter !== 'all' &&
-      (filter === 'archive' ? !product.archivedAt : Boolean(product.archivedAt))
+      filter === 'active' &&
+      studioStatus === 'customer_order' &&
+      reviewFilter !== 'customer_order'
     )
       return false;
     if (category && string(product.category) !== category) return false;
     if (familyId && string(product.familyId) !== familyId) return false;
     if (designerId && string(product.designerId) !== designerId) return false;
-    if (
-      reviewFilter !== 'all' &&
-      inventoryReviewStatus(product.studioStatus) !== reviewFilter
-    )
-      return false;
+    if (reviewFilter !== 'all' && studioStatus !== reviewFilter) return false;
     return true;
   });
   products.sort((a, b) => {
@@ -1580,7 +1580,14 @@ function Products({
       : []),
     ...(bulkStudioStatus !== 'keep'
       ? ([
-          ['Studio-Status', bulkStudioStatus === 'final' ? 'Final' : 'Entwurf'],
+          [
+            'Studio-Status',
+            bulkStudioStatus === 'final'
+              ? 'Final'
+              : bulkStudioStatus === 'customer_order'
+                ? 'Kundenauftrag'
+                : 'Entwurf',
+          ],
         ] as Array<[string, string]>)
       : []),
     ...(bulkEtsyListed !== 'keep'
@@ -1700,6 +1707,17 @@ function Products({
         </Button>
         <Button
           size="sm"
+          variant={reviewFilter === 'customer_order' ? 'default' : 'outline'}
+          onClick={() =>
+            setReviewFilter((current) =>
+              current === 'customer_order' ? 'all' : 'customer_order',
+            )
+          }
+        >
+          Kundenauftrag
+        </Button>
+        <Button
+          size="sm"
           variant={moreFilters ? 'default' : 'outline'}
           onClick={() => setMoreFilters((value) => !value)}
         >
@@ -1797,6 +1815,7 @@ function Products({
               options={[
                 { value: 'final', label: 'Final' },
                 { value: 'draft', label: 'Entwurf' },
+                { value: 'customer_order', label: 'Kundenauftrag' },
               ]}
             />
             <BulkSelect
@@ -2031,8 +2050,8 @@ function Products({
             0,
             ...productMetrics.map((item) => item.netGrams + item.wasteGrams),
           );
-          const isFinal =
-            inventoryReviewStatus(product.studioStatus) === 'final';
+          const studioStatus = inventoryReviewStatus(product.studioStatus);
+          const isFinal = studioStatus === 'final';
           const marketStock = rows(data.marketArticles)
             .filter(
               (article) => string(article.productId) === string(product.id),
@@ -2096,7 +2115,11 @@ function Products({
                       <Badge variant="outline">Archiv</Badge>
                     ) : (
                       <Badge variant={isFinal ? 'default' : 'outline'}>
-                        {isFinal ? 'Final' : 'Offen'}
+                        {isFinal
+                          ? 'Final'
+                          : studioStatus === 'customer_order'
+                            ? 'Kundenauftrag'
+                            : 'Entwurf'}
                       </Badge>
                     )}
                     {boolean(product.etsyListed) ? (
@@ -4922,7 +4945,10 @@ function EntityEditor({
                       className="h-10 rounded-lg border bg-white px-3 text-sm text-foreground"
                       value={inventoryReviewStatus(form.studioStatus)}
                       onChange={(event) => {
-                        const status = event.target.value as 'draft' | 'final';
+                        const status = event.target.value as
+                          | 'draft'
+                          | 'final'
+                          | 'customer_order';
                         setValue('studioStatus', status);
                         if (status === 'final' && !form.finalizedAt)
                           setValue(
@@ -4933,6 +4959,7 @@ function EntityEditor({
                     >
                       <option value="draft">Entwurf</option>
                       <option value="final">Final</option>
+                      <option value="customer_order">Kundenauftrag</option>
                     </select>
                   </label>
                   <label className="grid gap-1.5 text-sm font-medium text-foreground">

@@ -16,3 +16,9 @@ void test('nur ausdrücklich gespeichertes final gilt als final', () => {
   assert.equal(inventoryReviewStatus('Final bearbeitet'), 'draft');
   assert.equal(inventoryReviewStatus(true), 'draft');
 });
+
+void test('Kundenaufträge erhalten einen eigenen, ausdrücklich gespeicherten Status', () => {
+  assert.equal(inventoryReviewStatus('customer_order'), 'customer_order');
+  assert.equal(inventoryReviewStatus('CUSTOMER_ORDER'), 'customer_order');
+  assert.equal(inventoryReviewStatus('Kundenauftrag'), 'draft');
+});
