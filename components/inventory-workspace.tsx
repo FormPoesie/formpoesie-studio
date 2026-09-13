@@ -4354,6 +4354,28 @@ function expenseTotal(expense: Row) {
   return expenseAmountCents(expense);
 }
 
+function expenseDateValue(expense: Row) {
+  return string(expense.invoiceDate || expense.date);
+}
+
+function expenseDateTimestamp(expense: Row) {
+  const value = expenseDateValue(expense);
+  if (!value) return 0;
+  const parsed = new Date(value.includes('T') ? value : `${value}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function expenseMonthLabel(key: string) {
+  if (key === 'without-date') return 'Ohne Datum';
+  const parsed = new Date(`${key}-01T12:00:00Z`);
+  return Number.isNaN(parsed.getTime())
+    ? key
+    : new Intl.DateTimeFormat('de-DE', {
+        month: 'long',
+        year: 'numeric',
+      }).format(parsed);
+}
+
 function ReceiptUpload({
   expenseId,
   onChanged,
@@ -4430,6 +4452,9 @@ function Expenses({
   const [expenseSource, setExpenseSource] = useState<
     'all' | 'market' | 'other'
   >('all');
+  const [expandedExpenseMonths, setExpandedExpenseMonths] = useState<
+    Record<string, boolean>
+  >({});
   const expenses = rows(data.expenses);
   const markets = rows(data.markets);
   const marketExpenses: Row[] = rows(data.marketExpenses).map((expense) => ({
@@ -4467,6 +4492,23 @@ function Expenses({
       .join(' ')
       .toLocaleLowerCase('de')
       .includes(search.trim().toLocaleLowerCase('de'));
+  });
+  const expenseGroups = Object.entries(
+    [...visible]
+      .sort((left, right) => {
+        const dateDifference =
+          expenseDateTimestamp(right) - expenseDateTimestamp(left);
+        return dateDifference || string(right.id).localeCompare(string(left.id));
+      })
+      .reduce<Record<string, Row[]>>((groups, expense) => {
+        const key = monthKey(expenseDateValue(expense)) || 'without-date';
+        (groups[key] ||= []).push(expense);
+        return groups;
+      }, {}),
+  ).sort(([left], [right]) => {
+    if (left === 'without-date') return 1;
+    if (right === 'without-date') return -1;
+    return right.localeCompare(left);
   });
   const thisMonth = new Intl.DateTimeFormat('sv-SE', {
     year: 'numeric',
@@ -4549,92 +4591,135 @@ function Expenses({
           label="Marktkosten gesamt"
         />
       </div>
-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        {visible.map((expense) => (
-          <article
-            key={`${string(expense.expenseSource, 'other')}-${string(expense.id)}`}
-            className="rounded-2xl border bg-white/65 p-4"
+      <div className="mt-4 grid gap-3">
+        {expenseGroups.map(([key, monthExpenses], groupIndex) => (
+          <details
+            key={key}
+            className="group overflow-hidden rounded-2xl border bg-white/45"
+            open={expandedExpenseMonths[key] ?? groupIndex === 0}
+            onToggle={(event) => {
+              const isOpen = event.currentTarget.open;
+              setExpandedExpenseMonths((current) =>
+                current[key] === isOpen
+                  ? current
+                  : { ...current, [key]: isOpen },
+              );
+            }}
           >
-            <div className="flex items-start justify-between gap-3">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 marker:hidden">
               <div>
-                <h2 className="font-medium">
-                  {string(expense.articleName || expense.label, 'Ausgabe')}
-                </h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {[
-                    string(expense.vendor || expense.marketName),
-                    string(expense.category),
-                    date(expense.invoiceDate || expense.date),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
+                <h3 className="font-heading text-xl capitalize">
+                  {expenseMonthLabel(key)}
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  {monthExpenses.length}{' '}
+                  {monthExpenses.length === 1 ? 'Eintrag' : 'Einträge'}
                 </p>
               </div>
-              <div className="text-right">
-                <div className="font-semibold">
-                  {cents(expenseTotal(expense))}
-                </div>
-                <Badge variant="outline" className="mt-1">
-                  {string(expense.expenseSource) === 'market'
-                    ? 'automatisch aus Markt'
-                    : string(expense.recurrence, 'none') === 'monthly'
-                      ? 'monatlich'
-                      : string(expense.recurrence, 'none') === 'yearly'
-                        ? 'jährlich'
-                        : 'einmalig'}
-                </Badge>
+              <div className="flex items-center gap-3">
+                <strong>
+                  {cents(
+                    monthExpenses.reduce(
+                      (sum, expense) => sum + expenseTotal(expense),
+                      0,
+                    ),
+                  )}
+                </strong>
+                <ChevronDown className="size-5 transition-transform group-open:rotate-180" />
               </div>
+            </summary>
+            <div className="grid gap-3 border-t p-3 lg:grid-cols-2">
+              {monthExpenses.map((expense) => (
+                <article
+                  key={`${string(expense.expenseSource, 'other')}-${string(expense.id)}`}
+                  className="rounded-2xl border bg-white/65 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-medium">
+                        {string(
+                          expense.articleName || expense.label,
+                          'Ausgabe',
+                        )}
+                      </h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {[
+                          string(expense.vendor || expense.marketName),
+                          string(expense.category),
+                          date(expenseDateValue(expense)),
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-semibold">
+                        {cents(expenseTotal(expense))}
+                      </div>
+                      <Badge variant="outline" className="mt-1">
+                        {string(expense.expenseSource) === 'market'
+                          ? 'automatisch aus Markt'
+                          : string(expense.recurrence, 'none') === 'monthly'
+                            ? 'monatlich'
+                            : string(expense.recurrence, 'none') === 'yearly'
+                              ? 'jährlich'
+                              : 'einmalig'}
+                      </Badge>
+                    </div>
+                  </div>
+                  {expense.note ? (
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      {string(expense.note)}
+                    </p>
+                  ) : null}
+                  {string(expense.expenseSource) === 'market' ? (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Diese Ausgabe wird automatisch aus den Kosten des
+                      Verkaufsorts übernommen.
+                    </p>
+                  ) : null}
+                  {string(expense.expenseSource) !== 'market' ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onEdit(expense)}
+                      >
+                        <Pencil className="size-3.5" /> Bearbeiten
+                      </Button>
+                      <ReceiptUpload
+                        expenseId={string(expense.id)}
+                        onChanged={onChanged}
+                      />
+                      {rows(expense.documents).map((document) => (
+                        <a
+                          key={string(document.id)}
+                          href={string(document.url)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+                        >
+                          <Download className="size-3.5" />
+                          <span className="max-w-32 truncate">
+                            {string(document.filename)}
+                          </span>
+                        </a>
+                      ))}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="ml-auto text-red-700"
+                        aria-label={
+                          string(expense.articleName, 'Ausgabe') + ' löschen'
+                        }
+                        onClick={() => onTrash(expense)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  ) : null}
+                </article>
+              ))}
             </div>
-            {expense.note ? (
-              <p className="mt-3 text-sm text-muted-foreground">
-                {string(expense.note)}
-              </p>
-            ) : null}
-            {string(expense.expenseSource) === 'market' ? (
-              <p className="mt-3 text-xs text-muted-foreground">
-                Diese Ausgabe wird automatisch aus den Kosten des Verkaufsorts
-                übernommen.
-              </p>
-            ) : null}
-            {string(expense.expenseSource) !== 'market' ? (
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onEdit(expense)}
-                >
-                  <Pencil className="size-3.5" /> Bearbeiten
-                </Button>
-                <ReceiptUpload
-                  expenseId={string(expense.id)}
-                  onChanged={onChanged}
-                />
-                {rows(expense.documents).map((document) => (
-                  <a
-                    key={string(document.id)}
-                    href={string(document.url)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
-                  >
-                    <Download className="size-3.5" />
-                    <span className="max-w-32 truncate">
-                      {string(document.filename)}
-                    </span>
-                  </a>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="ml-auto text-red-700"
-                  aria-label={
-                    string(expense.articleName, 'Ausgabe') + ' löschen'
-                  }
-                  onClick={() => onTrash(expense)}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            ) : null}
-          </article>
+          </details>
         ))}
       </div>
       {!visible.length ? (
