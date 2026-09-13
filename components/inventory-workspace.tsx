@@ -16,6 +16,8 @@ import {
   CalendarDays,
   Calculator,
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleDollarSign,
   ClipboardList,
   Copy,
@@ -25,6 +27,7 @@ import {
   FileArchive,
   FileText,
   ImagePlus,
+  GripVertical,
   Loader2,
   MapPin,
   MoreHorizontal,
@@ -5287,10 +5290,13 @@ const ManufacturingEditor = forwardRef<
   const [message, setMessage] = useState('');
   const [quickValues, setQuickValues] = useState<Record<string, Row>>({});
   const [openVariants, setOpenVariants] = useState<Record<string, boolean>>({});
+  const [variantOrder, setVariantOrder] = useState<string[]>([]);
+  const [draggedVariantId, setDraggedVariantId] = useState('');
   const [quickSaving, setQuickSaving] = useState(false);
   const [detailSaving, setDetailSaving] = useState(false);
 
   useEffect(() => {
+    setVariantOrder(variants.map((variant) => string(variant.id)));
     setQuickValues((current) =>
       Object.fromEntries(
         variants.map((variant) => [
@@ -5300,6 +5306,51 @@ const ManufacturingEditor = forwardRef<
       ),
     );
   }, [product.id, product.variants]);
+
+  const orderedVariants = [
+    ...variantOrder
+      .map((id) => variants.find((variant) => string(variant.id) === id))
+      .filter((variant): variant is Row => Boolean(variant)),
+    ...variants.filter((variant) => !variantOrder.includes(string(variant.id))),
+  ];
+
+  function setOrderedVariants(ids: string[]) {
+    setVariantOrder(ids);
+    setQuickValues((current) => {
+      const next = { ...current };
+      ids.forEach((id, position) => {
+        const source =
+          next[id] ||
+          variants.find((variant) => string(variant.id) === id) ||
+          {};
+        next[id] = { ...source, position };
+      });
+      return next;
+    });
+    setMessage(
+      'Neue Variantenreihenfolge vorbereitet. Mit „Alle Änderungen speichern“ übernehmen.',
+    );
+  }
+
+  function moveVariant(id: string, direction: -1 | 1) {
+    const ids = orderedVariants.map((variant) => string(variant.id));
+    const currentIndex = ids.indexOf(id);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= ids.length) return;
+    [ids[currentIndex], ids[nextIndex]] = [ids[nextIndex], ids[currentIndex]];
+    setOrderedVariants(ids);
+  }
+
+  function dropVariant(sourceId: string, targetId: string) {
+    if (!sourceId || sourceId === targetId) return;
+    const ids = orderedVariants.map((variant) => string(variant.id));
+    const sourceIndex = ids.indexOf(sourceId);
+    const targetIndex = ids.indexOf(targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    ids.splice(sourceIndex, 1);
+    ids.splice(targetIndex, 0, sourceId);
+    setOrderedVariants(ids);
+  }
 
   function updateVariant(id: unknown, key: string, value: unknown) {
     setQuickValues((current) => ({
@@ -5542,6 +5593,7 @@ const ManufacturingEditor = forwardRef<
         'etsyPriceCents',
         'printer',
         'printMinutes',
+        'position',
       ];
       return fields.some((field) => next[field] !== variant[field]);
     });
@@ -5639,7 +5691,7 @@ const ManufacturingEditor = forwardRef<
         </Badge>
       </div>
       <div className="mt-4 space-y-4">
-        {variants.map((variant, index) => {
+        {orderedVariants.map((variant, index) => {
           const id = string(variant.id);
           const draft = quickValues[id] || variant;
           const draftProduct = {
@@ -5719,7 +5771,20 @@ const ManufacturingEditor = forwardRef<
                   [id]: isOpen,
                 }));
               }}
-              className="group min-w-0 max-w-full overflow-hidden rounded-2xl border bg-[var(--fp-paper)]/55"
+              onDragOver={(event) => {
+                if (draggedVariantId) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                dropVariant(
+                  event.dataTransfer.getData('text/plain') || draggedVariantId,
+                  id,
+                );
+                setDraggedVariantId('');
+              }}
+              className={`group min-w-0 max-w-full overflow-hidden rounded-2xl border bg-[var(--fp-paper)]/55 transition ${
+                draggedVariantId === id ? 'opacity-55' : ''
+              }`}
             >
               <summary className="grid cursor-pointer list-none gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                 <span className="min-w-0">
@@ -5754,7 +5819,65 @@ const ManufacturingEditor = forwardRef<
                     </span>
                   ) : null}
                 </span>
-                <span className="flex shrink-0 items-center justify-between gap-3 text-xs text-muted-foreground sm:justify-end">
+                <span className="flex shrink-0 items-center justify-between gap-2 text-xs text-muted-foreground sm:justify-end">
+                  <span
+                    draggable
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${string(draft.name, `Variante ${index + 1}`)} verschieben`}
+                    title="Ziehen, um die Variante zu verschieben"
+                    className="grid size-8 cursor-grab place-items-center rounded-lg border bg-white active:cursor-grabbing"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onDragStart={(event) => {
+                      event.stopPropagation();
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', id);
+                      setDraggedVariantId(id);
+                    }}
+                    onDragEnd={() => setDraggedVariantId('')}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')
+                        return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      moveVariant(id, event.key === 'ArrowUp' ? -1 : 1);
+                    }}
+                  >
+                    <GripVertical className="size-4" />
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    disabled={index === 0}
+                    aria-label={`${string(draft.name, `Variante ${index + 1}`)} nach oben`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      moveVariant(id, -1);
+                    }}
+                  >
+                    <ChevronUp className="size-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    disabled={index === orderedVariants.length - 1}
+                    aria-label={`${string(draft.name, `Variante ${index + 1}`)} nach unten`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      moveVariant(id, 1);
+                    }}
+                  >
+                    <ChevronDown className="size-4" />
+                  </Button>
                   <span>{number(draft.quantity)} Stück</span>
                   <strong className="text-foreground">
                     {cents(number(draft.priceCents))}
