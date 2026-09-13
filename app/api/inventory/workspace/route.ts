@@ -486,34 +486,35 @@ async function decorateProducts(value: unknown) {
     const primaryImage = productAssets.find(
       (asset) => asset.assetKind === 'image' && asset.isPrimary === true,
     );
-    return withChannelPrices('products', {
-      ...product,
-      variants: withPreciseMeasurements(
-        'product_variants',
-        product.variants,
-      )
-        .map((variant) =>
-          withChannelPrices('product_variants', variant, 'priceCents'),
-        )
-        .sort(compareProductVariants),
-      filaments: withPreciseMeasurements(
-        'product_filaments',
-        product.filaments,
-      ),
-      studioStatus: inventoryReviewStatus(
-        metadata.get(scalarText(product.id))?.studioStatus,
-      ),
-      finalizedAt: metadata.get(scalarText(product.id))?.finalizedAt || null,
-      etsyListed: [1, true].includes(
-        metadata.get(scalarText(product.id))?.etsyListed as boolean | number,
-      ),
-      studioUpdatedBy:
-        metadata.get(scalarText(product.id))?.studioUpdatedBy || null,
-      studioUpdatedAt:
-        metadata.get(scalarText(product.id))?.studioUpdatedAt || null,
-      studioAssets: productAssets,
-      studioPrimaryImageUrl: primaryImage?.url || null,
-    }, 'defaultPriceCents');
+    return withChannelPrices(
+      'products',
+      {
+        ...product,
+        variants: withPreciseMeasurements('product_variants', product.variants)
+          .map((variant) =>
+            withChannelPrices('product_variants', variant, 'priceCents'),
+          )
+          .sort(compareProductVariants),
+        filaments: withPreciseMeasurements(
+          'product_filaments',
+          product.filaments,
+        ),
+        studioStatus: inventoryReviewStatus(
+          metadata.get(scalarText(product.id))?.studioStatus,
+        ),
+        finalizedAt: metadata.get(scalarText(product.id))?.finalizedAt || null,
+        etsyListed: [1, true].includes(
+          metadata.get(scalarText(product.id))?.etsyListed as boolean | number,
+        ),
+        studioUpdatedBy:
+          metadata.get(scalarText(product.id))?.studioUpdatedBy || null,
+        studioUpdatedAt:
+          metadata.get(scalarText(product.id))?.studioUpdatedAt || null,
+        studioAssets: productAssets,
+        studioPrimaryImageUrl: primaryImage?.url || null,
+      },
+      'defaultPriceCents',
+    );
   });
 }
 
@@ -1607,6 +1608,8 @@ export async function POST(request: Request) {
       ]);
       const channel = scalarText(body.order?.channel).trim();
       const saleDate = scalarText(body.order?.date).trim();
+      const printDeadline = scalarText(body.order?.printDeadline).trim();
+      const shippingDeadline = scalarText(body.order?.shippingDeadline).trim();
       const submitted = Array.isArray(body.items) ? body.items : [];
       if (!allowedChannels.has(channel))
         return Response.json(
@@ -1622,6 +1625,14 @@ export async function POST(request: Request) {
             error:
               'Verkaufsdatum und mindestens ein Artikel sind erforderlich.',
           },
+          { status: 400 },
+        );
+      if (
+        (printDeadline && !/^\d{4}-\d{2}-\d{2}$/.test(printDeadline)) ||
+        (shippingDeadline && !/^\d{4}-\d{2}-\d{2}$/.test(shippingDeadline))
+      )
+        return Response.json(
+          { error: 'Planungs- und Versandtermin müssen gültige Daten sein.' },
           { status: 400 },
         );
       if (
@@ -1660,6 +1671,7 @@ export async function POST(request: Request) {
             0,
             Math.trunc(Number(item.printMinutes) || 0),
           ),
+          print_deadline: printDeadline || null,
           filament_material_id:
             Number(item.filamentMaterialId) > 0
               ? Number(item.filamentMaterialId)
@@ -1698,6 +1710,8 @@ export async function POST(request: Request) {
                 )
               : 0,
           shipping_method: shippingMethodForChannel(channel),
+          shipping_deadline:
+            channel === 'Abholung' ? null : shippingDeadline || null,
           shipping_recipient:
             scalarText(body.order?.shippingRecipient).trim() || null,
           is_printed: false,

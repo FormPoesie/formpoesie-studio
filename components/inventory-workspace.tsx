@@ -2632,10 +2632,15 @@ function OnlineSales({
               <p className="mt-2 text-sm">
                 {number(item.quantity, 1)} × {cents(item.salePriceCents)}
               </p>
+              {item.note ? (
+                <p className="mt-2 whitespace-pre-line text-xs text-muted-foreground">
+                  {string(item.note)}
+                </p>
+              ) : null}
             </div>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div>
-                <div className="text-muted-foreground">Druckfrist</div>
+                <div className="text-muted-foreground">Geplant für</div>
                 {date(item.printDeadline)}
               </div>
               <div>
@@ -2879,6 +2884,12 @@ function GeneralCashRegister({
   const [search, setSearch] = useState('');
   const [recipient, setRecipient] = useState('');
   const [shippingCost, setShippingCost] = useState('');
+  const [plannedFor, setPlannedFor] = useState('');
+  const [shippingDeadline, setShippingDeadline] = useState('');
+  const [combinedPrint, setCombinedPrint] = useState(false);
+  const [combinedPrintHours, setCombinedPrintHours] = useState('');
+  const [combinedPrintMinutes, setCombinedPrintMinutes] = useState('');
+  const [combinedWeight, setCombinedWeight] = useState('');
   const [note, setNote] = useState('');
   const [issueInvoice, setIssueInvoice] = useState(false);
   const [customerId, setCustomerId] = useState('');
@@ -2913,6 +2924,99 @@ function GeneralCashRegister({
     (sum, item) => sum + item.quantity * item.salePriceCents,
     0,
   );
+  const totalUnits = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const combinedMinutes =
+    Math.max(0, Math.trunc(Number(combinedPrintHours) || 0)) * 60 +
+    Math.min(59, Math.max(0, Math.trunc(Number(combinedPrintMinutes) || 0)));
+  const combinedGrams = Math.max(0, decimalInputNumber(combinedWeight) || 0);
+
+  function cashVariantLabel(product: Row, variant: Row) {
+    const breakdown = variantCostBreakdown(
+      product,
+      variant,
+      products,
+      components,
+    );
+    const grams = breakdown.netGrams;
+    const explicitSize = [variant.name, variant.size]
+      .map(
+        (value) => string(value).match(/\b(klein|mittel|groß|gross)\b/i)?.[0],
+      )
+      .find(Boolean);
+    const productVariants = rows(product.variants);
+    const variantIndex = productVariants.findIndex(
+      (item) => string(item.id) === string(variant.id),
+    );
+    const inferredSize =
+      !explicitSize && productVariants.length >= 6 && variantIndex >= 0
+        ? ['Klein', 'Mittel', 'Groß'][Math.floor(variantIndex / 3)] || ''
+        : '';
+    const sizeLabel = explicitSize
+      ? explicitSize.toLocaleLowerCase('de') === 'gross'
+        ? 'Groß'
+        : explicitSize[0].toLocaleUpperCase('de') + explicitSize.slice(1)
+      : inferredSize;
+    if (grams > 0)
+      return `${sizeLabel ? `${sizeLabel} ` : ''}${decimalInputValue(grams)} g`;
+    return isDigitalInventoryProduct(product)
+      ? 'Digitale Datei'
+      : 'Gewicht fehlt';
+  }
+
+  function productionForCartItem(item: GeneralCartItem) {
+    const breakdown = variantCostBreakdown(
+      item.product,
+      item.variant,
+      products,
+      components,
+    );
+    if (!combinedPrint)
+      return {
+        printMinutes: breakdown.printMinutes,
+        filamentGrams: breakdown.netGrams + breakdown.wasteGrams,
+        filamentCostCents: breakdown.filamentCents + breakdown.wasteCents,
+        electricityCostCents: breakdown.electricityCents,
+        machineCostCents: breakdown.machineCents,
+      };
+    const expectedMinutes = cart.reduce((sum, entry) => {
+      const value = variantCostBreakdown(
+        entry.product,
+        entry.variant,
+        products,
+        components,
+      );
+      return sum + value.printMinutes * entry.quantity;
+    }, 0);
+    const expectedGrams = cart.reduce((sum, entry) => {
+      const value = variantCostBreakdown(
+        entry.product,
+        entry.variant,
+        products,
+        components,
+      );
+      return sum + (value.netGrams + value.wasteGrams) * entry.quantity;
+    }, 0);
+    const originalGrams = breakdown.netGrams + breakdown.wasteGrams;
+    const printMinutes =
+      expectedMinutes > 0
+        ? (combinedMinutes * breakdown.printMinutes) / expectedMinutes
+        : combinedMinutes / Math.max(1, totalUnits);
+    const filamentGrams =
+      expectedGrams > 0
+        ? (combinedGrams * originalGrams) / expectedGrams
+        : combinedGrams / Math.max(1, totalUnits);
+    const timeScale =
+      breakdown.printMinutes > 0 ? printMinutes / breakdown.printMinutes : 0;
+    const weightScale = originalGrams > 0 ? filamentGrams / originalGrams : 0;
+    return {
+      printMinutes,
+      filamentGrams,
+      filamentCostCents:
+        (breakdown.filamentCents + breakdown.wasteCents) * weightScale,
+      electricityCostCents: breakdown.electricityCents * timeScale,
+      machineCostCents: breakdown.machineCents * timeScale,
+    };
+  }
 
   function itemKey(product: Row, variant: Row) {
     return `${string(product.id)}:${string(variant.id, 'standard')}`;
@@ -2968,6 +3072,10 @@ function GeneralCashRegister({
     if (!cart.length || saving) return;
     setSaving(true);
     setMessage('');
+    const combinedSummary = combinedPrint
+      ? `Gemeinsamer Druck: ${duration(combinedMinutes)} · Gesamtgewicht ${decimalInputValue(combinedGrams)} g.`
+      : '';
+    const orderNote = [note.trim(), combinedSummary].filter(Boolean).join('\n');
     const response = await fetch('/api/inventory/workspace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2981,7 +3089,9 @@ function GeneralCashRegister({
             0,
             Math.round(Number(shippingCost.replace(',', '.')) * 100) || 0,
           ),
-          note,
+          printDeadline: plannedFor,
+          shippingDeadline: channel === 'Abholung' ? '' : shippingDeadline,
+          note: orderNote,
           issueInvoice,
           customerId,
           saveCustomer: saveCustomer && !customerId,
@@ -3004,6 +3114,7 @@ function GeneralCashRegister({
           const primaryFilament = filaments.find(
             (row) => number(row.materialId) > 0,
           );
+          const production = productionForCartItem(item);
           return {
             productId: number(item.product.id),
             articleName: string(item.product.name, 'Artikel'),
@@ -3012,14 +3123,14 @@ function GeneralCashRegister({
             ),
             quantity: item.quantity,
             printer: string(item.variant.printer || item.product.printer),
-            printMinutes: breakdown.printMinutes,
+            printMinutes: production.printMinutes,
             filamentMaterialId: number(
               item.variant.materialId || primaryFilament?.materialId,
             ),
-            filamentGrams: breakdown.netGrams + breakdown.wasteGrams,
-            filamentCostCents: breakdown.filamentCents + breakdown.wasteCents,
-            electricityCostCents: breakdown.electricityCents,
-            machineCostCents: breakdown.machineCents,
+            filamentGrams: production.filamentGrams,
+            filamentCostCents: production.filamentCostCents,
+            electricityCostCents: production.electricityCostCents,
+            machineCostCents: production.machineCostCents,
             accessoryCostCents:
               breakdown.extraCents + breakdown.componentsCents,
             salePriceCents: item.salePriceCents,
@@ -3047,6 +3158,12 @@ function GeneralCashRegister({
     setCart([]);
     setRecipient('');
     setShippingCost('');
+    setPlannedFor('');
+    setShippingDeadline('');
+    setCombinedPrint(false);
+    setCombinedPrintHours('');
+    setCombinedPrintMinutes('');
+    setCombinedWeight('');
     setNote('');
     setCustomerEmail('');
     setCustomerAddress('');
@@ -3104,6 +3221,12 @@ function GeneralCashRegister({
               onChange={setSaleDate}
             />
             <Field
+              label="Auftrag geplant für"
+              type="date"
+              value={plannedFor}
+              onChange={setPlannedFor}
+            />
+            <Field
               label={
                 issueInvoice
                   ? 'Kundenname (erforderlich)'
@@ -3115,11 +3238,19 @@ function GeneralCashRegister({
               onChange={setRecipient}
             />
             {channel !== 'Abholung' ? (
-              <Field
-                label="Versandkosten in €"
-                value={shippingCost}
-                onChange={setShippingCost}
-              />
+              <>
+                <Field
+                  label="Versand spätestens bis"
+                  type="date"
+                  value={shippingDeadline}
+                  onChange={setShippingDeadline}
+                />
+                <Field
+                  label="Versandkosten in €"
+                  value={shippingCost}
+                  onChange={setShippingCost}
+                />
+              </>
             ) : (
               <div />
             )}
@@ -3135,12 +3266,6 @@ function GeneralCashRegister({
           </div>
           <div className="mt-3 grid max-h-[500px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
             {choices.map(({ product, variant }) => {
-              const breakdown = variantCostBreakdown(
-                product,
-                variant,
-                products,
-                components,
-              );
               const price = priceForSalesChannel(product, variant, channel);
               return (
                 <button
@@ -3163,11 +3288,7 @@ function GeneralCashRegister({
                       {string(product.name)}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {string(
-                        variant.name || variant.appearance || variant.size,
-                        'Standard',
-                      )}{' '}
-                      · Kosten {cents(breakdown.totalCents)}
+                      {cashVariantLabel(product, variant)}
                     </span>
                   </span>
                   <span className="shrink-0 font-semibold">{cents(price)}</span>
@@ -3195,7 +3316,7 @@ function GeneralCashRegister({
                     {string(item.product.name)}
                   </div>
                   <div className="text-xs text-white/60">
-                    {string(item.variant.name || item.variant.size, 'Standard')}
+                    {cashVariantLabel(item.product, item.variant)}
                   </div>
                   <div className="mt-3 grid grid-cols-[auto_1fr] gap-2">
                     <div className="flex items-center gap-2">
@@ -3250,6 +3371,60 @@ function GeneralCashRegister({
             ) : null}
           </div>
           <div className="mt-6 border-t border-white/15 pt-5">
+            <label className="mb-4 flex cursor-pointer items-center gap-3 rounded-xl border border-white/15 p-3 text-sm">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={combinedPrint}
+                onChange={(event) => setCombinedPrint(event.target.checked)}
+              />
+              Artikel werden zusammen gedruckt
+            </label>
+            {combinedPrint ? (
+              <div className="mb-5 grid grid-cols-2 gap-3 rounded-xl border border-white/15 p-3">
+                <label className="grid gap-1.5 text-xs text-white/65">
+                  Druckzeit Stunden
+                  <Input
+                    type="number"
+                    min="0"
+                    className="bg-white text-black"
+                    value={combinedPrintHours}
+                    onChange={(event) =>
+                      setCombinedPrintHours(event.target.value)
+                    }
+                  />
+                </label>
+                <label className="grid gap-1.5 text-xs text-white/65">
+                  Minuten
+                  <Input
+                    type="number"
+                    min="0"
+                    max="59"
+                    className="bg-white text-black"
+                    value={combinedPrintMinutes}
+                    onChange={(event) =>
+                      setCombinedPrintMinutes(event.target.value)
+                    }
+                  />
+                </label>
+                <label className="col-span-2 grid gap-1.5 text-xs text-white/65">
+                  Gesamtgewicht in g
+                  <Input
+                    inputMode="decimal"
+                    className="bg-white text-black"
+                    value={combinedWeight}
+                    onChange={(event) => setCombinedWeight(event.target.value)}
+                    placeholder="z. B. 228,5"
+                  />
+                </label>
+                {combinedMinutes <= 0 || combinedGrams <= 0 ? (
+                  <p className="col-span-2 text-xs text-amber-200">
+                    Für einen gemeinsamen Druck werden Druckzeit und
+                    Gesamtgewicht benötigt.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="flex items-end justify-between">
               <span className="text-sm text-white/65">Gesamtsumme</span>
               <span className="font-heading text-4xl">{cents(total)}</span>
@@ -3341,6 +3516,8 @@ function GeneralCashRegister({
               disabled={
                 !cart.length ||
                 saving ||
+                (combinedPrint &&
+                  (combinedMinutes <= 0 || combinedGrams <= 0)) ||
                 (issueInvoice && (!recipient.trim() || !customerAddress.trim()))
               }
             >
