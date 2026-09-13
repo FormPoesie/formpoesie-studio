@@ -113,6 +113,20 @@ const entityFields: Record<string, Set<string>> = {
     'note',
   ]),
   markets: new Set(['name', 'location', 'date', 'end_date', 'status']),
+  sales: new Set([
+    'date',
+    'payment_method',
+    'pricing_mode',
+    'total_price_cents',
+    'discount_cents',
+    'note',
+    'is_cancelled',
+  ]),
+  sale_items: new Set([
+    'quantity',
+    'unit_sale_price_cents',
+    'unit_cost_price_cents',
+  ]),
   online_sales: new Set([
     'product_id',
     'article_name',
@@ -190,6 +204,8 @@ const trashableEntities = new Set([
   'materials',
   'markets',
   'other_expenses',
+  'sales',
+  'online_sales',
 ]);
 
 const removableRelationEntities = new Set([
@@ -1106,7 +1122,31 @@ async function loadArea(accessToken: string, area: string, request: Request) {
          ORDER BY sale_date DESC, created_at DESC`,
       ).all(),
     ]);
-    return { onlineSales, fulfillmentTasks: fulfillmentTasks.results || [] };
+    const taskRows = (fulfillmentTasks.results || []) as JsonRecord[];
+    const taskVariantIds = taskRows
+      .map((item) => item.articleVariantId)
+      .filter((id) => id != null);
+    const taskVariants = taskVariantIds.length
+      ? ((await query(
+          accessToken,
+          'article_variants',
+          'select=' +
+            encodeURIComponent('id,article:articles(product_id)') +
+            `&id=in.(${taskVariantIds
+              .map((id) => encodeURIComponent(scalarText(id)))
+              .join(',')})`,
+        )) as JsonRecord[])
+      : [];
+    const decoratedTasks = taskRows.map((task) => {
+      const variant = taskVariants.find(
+        (item) => scalarText(item.id) === scalarText(task.articleVariantId),
+      );
+      return {
+        ...task,
+        productId: (variant?.article as JsonRecord | undefined)?.productId,
+      };
+    });
+    return { onlineSales, fulfillmentTasks: decoratedTasks };
   }
   if (area === 'expenses') {
     const [expenses, marketExpenses, markets] = await Promise.all([
@@ -1585,6 +1625,10 @@ export async function POST(request: Request) {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
+  if (body.entity === 'sales') {
+    const denied = await requireInventoryManager(request);
+    if (denied) return denied;
+  }
   try {
     if (body.action === 'duplicateProduct') {
       const sourceProductId = scalarText(body.id).trim();
@@ -1950,6 +1994,10 @@ export async function PATCH(request: Request) {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
+  if (body.entity === 'sales') {
+    const denied = await requireInventoryManager(request);
+    if (denied) return denied;
+  }
   if (body.entity === 'fulfillment_tasks') {
     const allowed = Object.fromEntries(
       Object.entries(body.values).filter(([key]) =>
@@ -1972,6 +2020,10 @@ export async function PATCH(request: Request) {
       .run();
     return Response.json({ saved: true });
   }
+  const submittedSaleItems =
+    body.entity === 'sales' && Array.isArray(body.values.items)
+      ? (body.values.items as JsonRecord[])
+      : null;
   const values = safeValues(body.entity, body.values);
   const hasProductMetadata =
     body.entity === 'products' &&
@@ -1988,22 +2040,117 @@ export async function PATCH(request: Request) {
     );
   if (
     (!values || !Object.keys(values).length) &&
+    !submittedSaleItems?.length &&
     !hasProductMetadata &&
     !hasExpenseMetadata &&
     !hasChannelPrices
   )
     return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });
   try {
+    if (body.entity === 'sales' && submittedSaleItems?.length) {
+      const existing = await query(
+        accessToken,
+        'sale_items',
+        `select=id,sale_id,article_variant_id,quantity&id=in.(${submittedSaleItems
+          .map((item) => encodeURIComponent(scalarText(item.id)))
+          .join(',')})`,
+      );
+      const existingRows = Array.isArray(existing)
+        ? (existing as JsonRecord[])
+        : [];
+      if (
+        existingRows.length !== submittedSaleItems.length ||
+        existingRows.some(
+          (item) => scalarText(item.saleId) !== scalarText(body.id),
+        )
+      )
+        throw new Error('Mindestens eine Verkaufsposition ist ungültig.');
+      const variantIds = existingRows
+        .map((item) => item.articleVariantId)
+        .filter((id) => id != null);
+      const variants = variantIds.length
+        ? ((await query(
+            accessToken,
+            'article_variants',
+            `select=id,quantity_in_stock&id=in.(${variantIds
+              .map((id) => encodeURIComponent(scalarText(id)))
+              .join(',')})`,
+          )) as JsonRecord[])
+        : [];
+      for (const submitted of submittedSaleItems) {
+        const oldItem = existingRows.find(
+          (item) => scalarText(item.id) === scalarText(submitted.id),
+        );
+        if (!oldItem) continue;
+        const oldQuantity = Math.max(1, Math.trunc(Number(oldItem.quantity)));
+        const newQuantity = Math.max(
+          1,
+          Math.trunc(Number(submitted.quantity) || 1),
+        );
+        const difference = oldQuantity - newQuantity;
+        const variant = variants.find(
+          (item) =>
+            scalarText(item.id) === scalarText(oldItem.articleVariantId),
+        );
+        if (variant && difference) {
+          const nextStock = Number(variant.quantityInStock) + difference;
+          if (nextStock < 0)
+            throw new Error(
+              'Der Verkauf kann nicht erhöht werden: Der Marktbestand reicht nicht aus.',
+            );
+          await inventoryFetch(
+            accessToken,
+            `article_variants?id=eq.${encodeURIComponent(scalarText(variant.id))}`,
+            {
+              method: 'PATCH',
+              body: JSON.stringify({ quantity_in_stock: nextStock }),
+            },
+          );
+          variant.quantityInStock = nextStock;
+        }
+        const itemValues = safeValues('sale_items', submitted) || {};
+        await inventoryFetch(
+          accessToken,
+          `sale_items?id=eq.${encodeURIComponent(scalarText(submitted.id))}`,
+          { method: 'PATCH', body: JSON.stringify(itemValues) },
+        );
+        await env.DB.prepare(
+          `UPDATE inventory_fulfillment_tasks
+           SET quantity = ?, sale_date = COALESCE(?, sale_date), updated_at = ?
+           WHERE sale_id = ? AND article_variant_id = ?`,
+        )
+          .bind(
+            newQuantity,
+            scalarText(body.values.date) || null,
+            new Date().toISOString(),
+            scalarText(body.id),
+            scalarText(oldItem.articleVariantId),
+          )
+          .run();
+      }
+    }
     let previousOnlineSale: JsonRecord | null = null;
-    if (body.entity === 'online_sales' && 'isShipped' in body.values) {
+    if (
+      body.entity === 'online_sales' &&
+      ('isShipped' in body.values || 'quantity' in body.values)
+    ) {
       const previous = await query(
         accessToken,
         'online_sales',
-        `select=id,is_shipped,product_id&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
+        `select=id,is_shipped,product_id,quantity&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
       );
       previousOnlineSale = Array.isArray(previous)
         ? ((previous[0] as JsonRecord | undefined) ?? null)
         : null;
+      if (
+        previousOnlineSale?.isShipped === true &&
+        'quantity' in body.values &&
+        Math.max(1, Math.trunc(Number(body.values.quantity) || 1)) !==
+          Math.max(1, Math.trunc(Number(previousOnlineSale.quantity) || 1))
+      )
+        throw new Error(
+          'Die Menge eines bereits versendeten Verkaufs kann erst geändert werden, nachdem der Versandstatus zurückgenommen wurde.',
+        );
     }
     const updateValues = entitiesWithUpdatedBy.has(body.entity)
       ? { ...values, updated_by: user.id || null }
@@ -2094,6 +2241,8 @@ export async function PATCH(request: Request) {
         )
         .run();
     }
+    if (body.entity === 'sales' || body.entity === 'online_sales')
+      await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
     return Response.json({ saved: true, result });
   } catch (error) {
     return Response.json(
@@ -2127,7 +2276,125 @@ export async function DELETE(request: Request) {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
+  if (body.entity === 'sales' || body.entity === 'online_sales') {
+    const denied = await requireInventoryManager(request);
+    if (denied) return denied;
+  }
   try {
+    if (body.entity === 'sales') {
+      if (body.restore)
+        return Response.json(
+          {
+            error:
+              'Gelöschte Verkäufe werden nicht automatisch wiederhergestellt.',
+          },
+          { status: 400 },
+        );
+      const found = await query(
+        accessToken,
+        'sales',
+        `select=id,is_cancelled,items:sale_items(id,article_variant_id,quantity)&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
+      );
+      const sale = Array.isArray(found)
+        ? ((found[0] as JsonRecord | undefined) ?? null)
+        : null;
+      if (!sale) throw new Error('Verkauf wurde nicht gefunden.');
+      if (sale.isCancelled !== true) {
+        for (const item of Array.isArray(sale.items)
+          ? (sale.items as JsonRecord[])
+          : []) {
+          const variants = await query(
+            accessToken,
+            'article_variants',
+            `select=id,quantity_in_stock&id=eq.${encodeURIComponent(scalarText(item.articleVariantId))}&limit=1`,
+          );
+          const variant = Array.isArray(variants)
+            ? (variants[0] as JsonRecord | undefined)
+            : undefined;
+          if (variant)
+            await inventoryFetch(
+              accessToken,
+              `article_variants?id=eq.${encodeURIComponent(scalarText(variant.id))}`,
+              {
+                method: 'PATCH',
+                body: JSON.stringify({
+                  quantity_in_stock:
+                    Number(variant.quantityInStock) +
+                    Math.max(1, Math.trunc(Number(item.quantity) || 1)),
+                }),
+              },
+            );
+        }
+      }
+      const result = await inventoryFetch(
+        accessToken,
+        `sales?id=eq.${encodeURIComponent(String(body.id))}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            is_cancelled: true,
+            deleted_at: new Date().toISOString(),
+          }),
+        },
+      );
+      await env.DB.prepare(
+        `DELETE FROM inventory_fulfillment_tasks WHERE sale_id = ?`,
+      )
+        .bind(String(body.id))
+        .run();
+      await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
+      return Response.json({ deleted: true, result });
+    }
+    if (body.entity === 'online_sales') {
+      if (body.restore)
+        return Response.json(
+          {
+            error:
+              'Gelöschte Verkäufe werden nicht automatisch wiederhergestellt.',
+          },
+          { status: 400 },
+        );
+      const found = await query(
+        accessToken,
+        'online_sales',
+        `select=id,is_shipped,product_id&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
+      );
+      const sale = Array.isArray(found)
+        ? ((found[0] as JsonRecord | undefined) ?? null)
+        : null;
+      if (!sale) throw new Error('Verkauf wurde nicht gefunden.');
+      if (sale.isShipped === true && sale.productId != null) {
+        const products = await query(
+          accessToken,
+          'products',
+          `select=category&id=eq.${encodeURIComponent(scalarText(sale.productId))}&limit=1`,
+        );
+        const category = Array.isArray(products)
+          ? scalarText((products[0] as JsonRecord | undefined)?.category)
+          : '';
+        if (!/stl|digital/i.test(category))
+          await inventoryFetch(accessToken, 'rpc/versand_zuruecknehmen', {
+            method: 'POST',
+            body: JSON.stringify({
+              p_operation_id: crypto.randomUUID(),
+              p_sale_id: Number(body.id),
+            }),
+          });
+      }
+      const result = await inventoryFetch(
+        accessToken,
+        `online_sales?id=eq.${encodeURIComponent(String(body.id))}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            deleted_at: new Date().toISOString(),
+            updated_by: user.id || null,
+          }),
+        },
+      );
+      await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
+      return Response.json({ deleted: true, result });
+    }
     if (removableRelationEntities.has(body.entity)) {
       const result = await inventoryFetch(
         accessToken,

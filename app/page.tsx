@@ -3996,7 +3996,11 @@ function dashboardText(value: unknown, fallback = '') {
     : fallback;
 }
 
-function DashboardFulfillment() {
+function DashboardFulfillment({
+  onProduct,
+}: {
+  onProduct: (productId: string) => void;
+}) {
   const [items, setItems] = useState<DashboardFulfillmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -4091,7 +4095,17 @@ function DashboardFulfillment() {
               className="flex flex-col gap-3 rounded-xl border bg-white/65 p-3 sm:flex-row sm:items-center"
             >
               <div className="min-w-0 flex-1">
-                <div className="font-medium">{name}</div>
+                {item.productId ? (
+                  <button
+                    type="button"
+                    className="font-medium underline-offset-4 hover:text-[var(--fp-primary)] hover:underline"
+                    onClick={() => onProduct(String(item.productId))}
+                  >
+                    {name}
+                  </button>
+                ) : (
+                  <div className="font-medium">{name}</div>
+                )}
                 <div className="mt-1 text-xs text-muted-foreground">
                   {[item.variantName, item.shippingRecipient, item.saleDate]
                     .map((value) => dashboardText(value))
@@ -4284,12 +4298,19 @@ function _EtsyWorkflowHub({
   );
 }
 
-function WeeklySuccesses({ enabled }: { enabled: boolean }) {
+function WeeklySuccesses({
+  enabled,
+  onProduct,
+}: {
+  enabled: boolean;
+  onProduct: (productId: string) => void;
+}) {
   const [stats, setStats] = useState<{
     pieces: number;
     revenue: number;
     top: string;
     topCount: number;
+    topProductId: string;
   } | null>(null);
 
   useEffect(() => {
@@ -4323,6 +4344,7 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
         let pieces = 0;
         let revenue = 0;
         const counts = new Map<string, number>();
+        const productIds = new Map<string, string>();
         for (const sale of sales) {
           const items = Array.isArray(sale.items)
             ? (sale.items as Record<string, unknown>[])
@@ -4339,6 +4361,8 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
             const article = (variant.article || {}) as Record<string, unknown>;
             const name = dashboardText(article.name, 'Artikel');
             counts.set(name, (counts.get(name) || 0) + quantity);
+            if (article.productId)
+              productIds.set(name, String(article.productId));
           }
           revenue +=
             sale.pricingMode === 'TOTAL'
@@ -4351,6 +4375,7 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
           pieces += quantity;
           revenue += quantity * Number(sale.salePriceCents || 0);
           counts.set(name, (counts.get(name) || 0) + quantity);
+          if (sale.productId) productIds.set(name, String(sale.productId));
         }
         const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
         setStats({
@@ -4358,12 +4383,13 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
           revenue,
           top: top?.[0] || 'Noch kein Verkauf',
           topCount: top?.[1] || 0,
+          topProductId: top ? productIds.get(top[0]) || '' : '',
         });
       });
   }, [enabled]);
 
   if (!enabled) return null;
-  const cards = [
+  const cards: Array<[string | number, string, string?]> = [
     [stats?.pieces ?? '…', 'verkaufte Artikel diese Woche'],
     [stats ? money(stats.revenue / 100) : '…', 'Umsatz diese Woche'],
     [
@@ -4371,6 +4397,7 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
       stats
         ? `${stats.topCount} Stück · stärkster Artikel`
         : 'stärkster Artikel',
+      stats?.topProductId,
     ],
   ];
   return (
@@ -4380,14 +4407,22 @@ function WeeklySuccesses({ enabled }: { enabled: boolean }) {
       </p>
       <h2 className="mt-1 font-heading text-3xl">Diese Woche</h2>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {cards.map(([value, label]) => (
-          <div
+        {cards.map(([value, label, productId]) => (
+          <button
+            type="button"
             key={String(label)}
-            className="rounded-2xl border bg-white/65 p-5"
+            disabled={!productId}
+            onClick={() => productId && onProduct(productId)}
+            className="rounded-2xl border bg-white/65 p-5 text-left transition enabled:hover:border-[var(--fp-primary)] enabled:hover:bg-white disabled:cursor-default"
           >
             <div className="truncate text-2xl font-semibold">{value}</div>
             <div className="mt-2 text-xs text-muted-foreground">{label}</div>
-          </div>
+            {productId ? (
+              <div className="mt-2 text-xs font-medium text-[var(--fp-primary)]">
+                Artikel öffnen
+              </div>
+            ) : null}
+          </button>
         ))}
       </div>
     </section>
@@ -4412,11 +4447,11 @@ function Dashboard({
         Was läuft heute?
       </h1>
 
-      <WeeklySuccesses enabled={canManage} />
+      <WeeklySuccesses enabled={canManage} onProduct={onInventoryProduct} />
 
       <SocialMediaLinks />
 
-      <DashboardFulfillment />
+      <DashboardFulfillment onProduct={onInventoryProduct} />
 
       <DailyNewsFeed onCalendar={onCalendar} onProduct={onInventoryProduct} />
     </div>

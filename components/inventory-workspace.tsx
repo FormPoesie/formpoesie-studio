@@ -1170,7 +1170,12 @@ export function InventoryWorkspace({
         />
       ) : null}
       {active === 'sales' ? (
-        <Sales data={data.sales || {}} onOpenProduct={openProduct} />
+        <Sales
+          data={data.sales || {}}
+          onOpenProduct={openProduct}
+          onEdit={(entity, row) => openEditor(entity, row)}
+          onDelete={(entity, row) => void moveToTrash(entity, row.id)}
+        />
       ) : null}
       {active === 'months' ? (
         <Months data={data.months || {}} onOpenProduct={openProduct} />
@@ -3925,9 +3930,13 @@ function CashRegister({
 function Sales({
   data,
   onOpenProduct,
+  onEdit,
+  onDelete,
 }: {
   data: AreaData;
   onOpenProduct: (productId: string) => void | Promise<void>;
+  onEdit: (entity: 'sales' | 'online_sales', row: Row) => void;
+  onDelete: (entity: 'sales' | 'online_sales', row: Row) => void;
 }) {
   const items = rows(data.sales).filter((sale) => !boolean(sale.isCancelled));
   const online = rows(data.onlineSales);
@@ -4136,8 +4145,32 @@ function Sales({
                   {string(sale.paymentMethod, 'Zahlungsart nicht erfasst')}
                 </p>
               </div>
-              <div className="text-lg font-semibold">
-                {cents(saleTotal(sale))}
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-semibold">
+                  {cents(saleTotal(sale))}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onEdit('sales', sale)}
+                >
+                  <Pencil className="size-3.5" /> Bearbeiten
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[#9f463d]"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Diesen Verkauf wirklich löschen? Der verkaufte Bestand wird zurückgebucht.',
+                      )
+                    )
+                      onDelete('sales', sale);
+                  }}
+                >
+                  <Trash2 className="size-3.5" /> Löschen
+                </Button>
               </div>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -4198,8 +4231,32 @@ function Sales({
                   {string(sale.shippingRecipient, 'kein Empfänger')}
                 </p>
               </div>
-              <div className="text-lg font-semibold">
-                {cents(onlineSaleRevenue(sale))}
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-semibold">
+                  {cents(onlineSaleRevenue(sale))}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onEdit('online_sales', sale)}
+                >
+                  <Pencil className="size-3.5" /> Bearbeiten
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[#9f463d]"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Diesen Verkauf wirklich löschen? Bereits abgezogener Bestand wird zurückgebucht.',
+                      )
+                    )
+                      onDelete('online_sales', sale);
+                  }}
+                >
+                  <Trash2 className="size-3.5" /> Löschen
+                </Button>
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -4935,6 +4992,7 @@ function EntityEditor({
   const productHasVariants = isProduct && rows(editor.row.variants).length > 0;
   const isMaterial = editor.entity === 'materials';
   const isMarket = editor.entity === 'markets';
+  const isSale = editor.entity === 'sales';
   const isOnline = editor.entity === 'online_sales';
   const isExpense = editor.entity === 'other_expenses';
   async function saveEverything() {
@@ -5123,9 +5181,7 @@ function EntityEditor({
                       value={inventoryReviewStatus(form.studioStatus)}
                       onChange={(event) => {
                         const status = event.target.value as
-                          | 'draft'
-                          | 'final'
-                          | 'customer_order';
+                          'draft' | 'final' | 'customer_order';
                         setValue('studioStatus', status);
                         if (status === 'final' && !form.finalizedAt)
                           setValue(
@@ -5463,11 +5519,172 @@ function EntityEditor({
           ) : null}
           {isOnline ? (
             <>
+              {input('articleName', 'Artikel')}
+              {input('size', 'Variante / Größe')}
+              {input('quantity', 'Menge', 'number')}
+              {input('date', 'Verkaufsdatum', 'date')}
+              <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                Verkaufskanal
+                <select
+                  className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                  value={string(form.channel, 'Abholung')}
+                  onChange={(event) => setValue('channel', event.target.value)}
+                >
+                  {[
+                    'Abholung',
+                    'eBay',
+                    'eBay Kleinanzeigen',
+                    'Vinted',
+                    'Etsy',
+                    'Bestellformular',
+                  ].map((channel) => (
+                    <option key={channel} value={channel}>
+                      {channel}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {input('orderKey', 'Bestellnummer')}
+              <EuroField
+                label="Verkaufspreis je Stück"
+                value={number(form.salePriceCents)}
+                onChange={(value) => setValue('salePriceCents', value)}
+              />
               {input('printer', 'Drucker')}
-              {input('printDeadline', 'Druckfrist', 'date')}
+              <DurationField
+                label="Druckzeit"
+                value={number(form.printMinutes)}
+                onChange={(value) => setValue('printMinutes', value)}
+              />
+              {input('printDeadline', 'Geplant für', 'date')}
               {input('shippingMethod', 'Versandart')}
               {input('shippingDeadline', 'Versandfrist', 'date')}
               {input('shippingRecipient', 'Empfänger')}
+              <EuroField
+                label="Versandkosten"
+                value={number(form.shippingCostCents)}
+                onChange={(value) => setValue('shippingCostCents', value)}
+              />
+              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
+                Notiz
+                <Textarea
+                  value={string(form.note)}
+                  onChange={(event) => setValue('note', event.target.value)}
+                  className="bg-white text-foreground"
+                />
+              </label>
+            </>
+          ) : null}
+          {isSale ? (
+            <>
+              {input('date', 'Verkaufsdatum', 'date')}
+              <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                Zahlungsart
+                <select
+                  className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                  value={string(form.paymentMethod)}
+                  onChange={(event) =>
+                    setValue('paymentMethod', event.target.value || null)
+                  }
+                >
+                  <option value="">Ohne Angabe</option>
+                  <option value="BAR">Bar</option>
+                  <option value="PAYPAL">PayPal</option>
+                  <option value="KARTE">Karte</option>
+                  <option value="SONSTIGES">Überweisung / Sonstiges</option>
+                </select>
+              </label>
+              <EuroField
+                label="Rabatt gesamt"
+                value={number(form.discountCents)}
+                onChange={(value) => setValue('discountCents', value)}
+              />
+              {string(form.pricingMode) === 'TOTAL' ? (
+                <EuroField
+                  label="Gesamtpreis"
+                  value={number(form.totalPriceCents)}
+                  onChange={(value) => setValue('totalPriceCents', value)}
+                />
+              ) : null}
+              <div className="grid gap-3 sm:col-span-2">
+                <div>
+                  <h3 className="font-medium">Verkaufspositionen</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Mengenänderungen korrigieren den zugehörigen Marktbestand.
+                  </p>
+                </div>
+                {rows(form.items).map((item, index) => {
+                  const article = object(object(item.articleVariant).article);
+                  return (
+                    <div
+                      key={string(item.id, String(index))}
+                      className="grid gap-3 rounded-xl border bg-white/65 p-3 sm:grid-cols-3"
+                    >
+                      <div className="sm:col-span-3">
+                        <span className="font-medium">
+                          {string(article.name, 'Artikel')}
+                        </span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {string(
+                            object(item.articleVariant).color ||
+                              object(item.articleVariant).name,
+                            'Standard',
+                          )}
+                        </span>
+                      </div>
+                      <Field
+                        label="Menge"
+                        type="number"
+                        value={string(item.quantity, '1')}
+                        onChange={(value) =>
+                          setValue(
+                            'items',
+                            rows(form.items).map((candidate, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...candidate,
+                                    quantity: Math.max(
+                                      1,
+                                      Math.trunc(Number(value) || 1),
+                                    ),
+                                  }
+                                : candidate,
+                            ),
+                          )
+                        }
+                      />
+                      <EuroField
+                        label="Verkaufspreis je Stück"
+                        value={number(item.unitSalePriceCents)}
+                        onChange={(value) =>
+                          setValue(
+                            'items',
+                            rows(form.items).map((candidate, itemIndex) =>
+                              itemIndex === index
+                                ? { ...candidate, unitSalePriceCents: value }
+                                : candidate,
+                            ),
+                          )
+                        }
+                      />
+                      <EuroField
+                        label="Herstellung je Stück"
+                        value={number(item.unitCostPriceCents)}
+                        onChange={(value) =>
+                          setValue(
+                            'items',
+                            rows(form.items).map((candidate, itemIndex) =>
+                              itemIndex === index
+                                ? { ...candidate, unitCostPriceCents: value }
+                                : candidate,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
+                  );
+                })}
+              </div>
               <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
                 Notiz
                 <Textarea
