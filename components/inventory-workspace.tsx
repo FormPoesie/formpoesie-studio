@@ -178,6 +178,21 @@ function monthKey(value: unknown) {
   return string(value).slice(0, 7);
 }
 
+async function inventoryRequest(input: string, init?: RequestInit) {
+  const response = await fetch(input, init);
+  if (response.status !== 401) return response;
+
+  const sessionResponse = await fetch('/api/inventory/session', {
+    cache: 'no-store',
+  });
+  const session = (await sessionResponse.json().catch(() => ({}))) as {
+    connected?: boolean;
+  };
+  if (!sessionResponse.ok || !session.connected) return response;
+
+  return fetch(input, init);
+}
+
 function productImagePath(product: Row) {
   return string(
     product.studioPrimaryImageUrl || existingProductImagePath(product),
@@ -692,7 +707,7 @@ export function InventoryWorkspace({
 
   const fetchArea = useCallback(
     async (area: Exclude<InventoryArea, 'overview'>) => {
-      const response = await fetch('/api/inventory/workspace?area=' + area);
+      const response = await inventoryRequest('/api/inventory/workspace?area=' + area);
       const result = (await response.json()) as AreaData & { error?: string };
       if (!response.ok)
         throw new Error(result.error || 'Daten konnten nicht geladen werden.');
@@ -759,7 +774,7 @@ export function InventoryWorkspace({
     setError('');
     try {
       const id = editor.row.id;
-      const response = await fetch('/api/inventory/workspace', {
+      const response = await inventoryRequest('/api/inventory/workspace', {
         method: id == null ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entity: editor.entity, id, values: form }),
@@ -807,9 +822,10 @@ export function InventoryWorkspace({
       setEditor(null);
       await refresh();
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : 'Speichern fehlgeschlagen.',
-      );
+      const message =
+        reason instanceof Error ? reason.message : 'Speichern fehlgeschlagen.';
+      setError(message);
+      setEditorMessage(message);
     } finally {
       setSaving(false);
     }
@@ -860,7 +876,7 @@ export function InventoryWorkspace({
   }
 
   async function moveToTrash(entity: string, id: unknown, restore = false) {
-    const response = await fetch('/api/inventory/workspace', {
+    const response = await inventoryRequest('/api/inventory/workspace', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entity, id, restore }),
@@ -871,7 +887,7 @@ export function InventoryWorkspace({
   }
 
   async function toggleOnline(row: Row, key: 'isPrinted' | 'isShipped') {
-    const response = await fetch('/api/inventory/workspace', {
+    const response = await inventoryRequest('/api/inventory/workspace', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -888,7 +904,7 @@ export function InventoryWorkspace({
   }
 
   async function patchEntity(entity: string, id: unknown, values: Row) {
-    const response = await fetch('/api/inventory/workspace', {
+    const response = await inventoryRequest('/api/inventory/workspace', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entity, id, values }),
@@ -901,7 +917,7 @@ export function InventoryWorkspace({
   async function bulkPatchProducts(ids: string[], values: Row) {
     const responses = await Promise.all(
       ids.map((id) =>
-        fetch('/api/inventory/workspace', {
+        inventoryRequest('/api/inventory/workspace', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ entity: 'products', id, values }),
@@ -917,7 +933,7 @@ export function InventoryWorkspace({
   }
 
   async function copyMarket(row: Row) {
-    const response = await fetch('/api/inventory/workspace', {
+    const response = await inventoryRequest('/api/inventory/workspace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -942,7 +958,7 @@ export function InventoryWorkspace({
     setDuplicatingProductId(sourceId);
     setError('');
     try {
-      const response = await fetch('/api/inventory/workspace', {
+      const response = await inventoryRequest('/api/inventory/workspace', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'duplicateProduct', id: sourceId }),
@@ -3106,7 +3122,7 @@ function GeneralCashRegister({
     if (!cart.length || saving) return;
     setSaving(true);
     setMessage('');
-    const response = await fetch('/api/inventory/workspace', {
+    const response = await inventoryRequest('/api/inventory/workspace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3725,7 +3741,7 @@ function CashRegister({
     if (!venueId || !cart.length || saving) return;
     setSaving(true);
     setMessage('');
-    const response = await fetch('/api/inventory/workspace', {
+    const response = await inventoryRequest('/api/inventory/workspace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -4391,7 +4407,7 @@ function ReceiptUpload({
     const body = new FormData();
     body.set('file', file);
     body.set('expenseId', expenseId);
-    const response = await fetch('/api/inventory/expense-documents', {
+    const response = await inventoryRequest('/api/inventory/expense-documents', {
       method: 'POST',
       body,
     });
@@ -4998,7 +5014,7 @@ function Account({ data }: { data: AreaData }) {
   }, [profile.name, user.email]);
 
   async function save() {
-    const response = await fetch('/api/inventory/account', {
+    const response = await inventoryRequest('/api/inventory/account', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, email }),
@@ -6076,7 +6092,7 @@ const ManufacturingEditor = forwardRef<
     setDetailSaving(true);
     setMessage('');
     try {
-      const response = await fetch('/api/inventory/workspace', {
+      const response = await inventoryRequest('/api/inventory/workspace', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entity, id: row.id }),
@@ -6119,7 +6135,7 @@ const ManufacturingEditor = forwardRef<
           }
         : values;
     try {
-      const response = await fetch('/api/inventory/workspace', {
+      const response = await inventoryRequest('/api/inventory/workspace', {
         method: editing.row.id == null ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -6144,7 +6160,7 @@ const ManufacturingEditor = forwardRef<
         const nextProduct = { ...product, filaments: nextFilaments };
         const costResponses = await Promise.all(
           variants.map((variant) =>
-            fetch('/api/inventory/workspace', {
+            inventoryRequest('/api/inventory/workspace', {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -6228,7 +6244,7 @@ const ManufacturingEditor = forwardRef<
             (item) => quickValues[string(item.id)] || item,
           ),
         };
-        const response = await fetch('/api/inventory/workspace', {
+        const response = await inventoryRequest('/api/inventory/workspace', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -7711,7 +7727,7 @@ function RelationsSummary({
     setRelationSaving(true);
     setRelationMessage('');
     try {
-      const response = await fetch('/api/inventory/workspace', {
+      const response = await inventoryRequest('/api/inventory/workspace', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entity, values }),
@@ -7746,7 +7762,7 @@ function RelationsSummary({
     setRelationSaving(true);
     setRelationMessage('');
     try {
-      const response = await fetch('/api/inventory/workspace', {
+      const response = await inventoryRequest('/api/inventory/workspace', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entity, id }),
@@ -8130,7 +8146,7 @@ function MaterialImageManager({
     const body = new FormData();
     body.set('file', file);
     body.set('materialId', string(material.id));
-    const response = await fetch('/api/inventory/material-images', {
+    const response = await inventoryRequest('/api/inventory/material-images', {
       method: 'POST',
       body,
     });
@@ -8147,7 +8163,7 @@ function MaterialImageManager({
   async function remove(image: Row) {
     if (!window.confirm(`„${string(image.filename)}“ wirklich löschen?`))
       return;
-    const response = await fetch('/api/inventory/material-images', {
+    const response = await inventoryRequest('/api/inventory/material-images', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: image.id }),
@@ -8278,7 +8294,7 @@ function ProductAssetManager({
             String(!existingImage && !hasUploadedPrimary && uploaded === 0),
           );
         }
-        const response = await fetch('/api/inventory/product-assets', {
+        const response = await inventoryRequest('/api/inventory/product-assets', {
           method: 'POST',
           body,
         });
@@ -8312,7 +8328,7 @@ function ProductAssetManager({
     setSavingPrimary(true);
     setMessage('');
     try {
-      const response = await fetch('/api/inventory/product-assets', {
+      const response = await inventoryRequest('/api/inventory/product-assets', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, isPrimary: true }),
@@ -8339,7 +8355,7 @@ function ProductAssetManager({
     setSavingPrimary(true);
     setMessage('');
     try {
-      const response = await fetch('/api/inventory/product-assets', {
+      const response = await inventoryRequest('/api/inventory/product-assets', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -8368,7 +8384,7 @@ function ProductAssetManager({
   async function remove(asset: Row) {
     if (!window.confirm(`„${string(asset.filename)}“ wirklich löschen?`))
       return;
-    const response = await fetch('/api/inventory/product-assets', {
+    const response = await inventoryRequest('/api/inventory/product-assets', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: asset.id }),
@@ -8388,7 +8404,7 @@ function ProductAssetManager({
       const body = new FormData();
       body.set('file', file);
       body.set('productId', string(product.id));
-      const response = await fetch('/api/inventory/image', {
+      const response = await inventoryRequest('/api/inventory/image', {
         method: 'POST',
         body,
       });
@@ -8412,7 +8428,7 @@ function ProductAssetManager({
     if (!window.confirm('Vorhandenes Artikelbild wirklich löschen?')) return;
     setMessage('');
     try {
-      const response = await fetch('/api/inventory/image', {
+      const response = await inventoryRequest('/api/inventory/image', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ productId: product.id }),
@@ -8442,7 +8458,7 @@ function ProductAssetManager({
       body.set('productId', string(product.id));
       body.set('kind', 'image');
       body.set('isPrimary', String(boolean(asset.isPrimary)));
-      const uploadResponse = await fetch('/api/inventory/product-assets', {
+      const uploadResponse = await inventoryRequest('/api/inventory/product-assets', {
         method: 'POST',
         body,
       });
@@ -8451,7 +8467,7 @@ function ProductAssetManager({
       };
       if (!uploadResponse.ok)
         throw new Error(uploadResult.error || 'Bild nicht ersetzt.');
-      const deleteResponse = await fetch('/api/inventory/product-assets', {
+      const deleteResponse = await inventoryRequest('/api/inventory/product-assets', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: asset.id }),
@@ -8738,7 +8754,7 @@ function ImageUpload({
     body.append('file', file);
     body.append('productId', productId);
     if (variantId) body.append('variantId', variantId);
-    const response = await fetch('/api/inventory/image', {
+    const response = await inventoryRequest('/api/inventory/image', {
       method: 'POST',
       body,
     });
@@ -8821,7 +8837,7 @@ function MarketDetail({
 
   async function rpc(name: string, args: Row) {
     setActionMessage('');
-    const response = await fetch('/api/inventory/workspace', {
+    const response = await inventoryRequest('/api/inventory/workspace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rpc: name, args }),
