@@ -6961,33 +6961,31 @@ const ManufacturingEditor = forwardRef<
                   >
                     <Plus className="size-3.5" /> Variante duplizieren
                   </Button>
-                  {variants.length > 1 ? (
-                    <Button
-                      type="button"
-                      variant={
-                        pendingRemovalKey ===
-                        `product_variants:${string(variant.id)}`
-                          ? 'destructive'
-                          : 'ghost'
-                      }
-                      size="sm"
-                      className="text-red-700"
-                      disabled={detailSaving}
-                      onClick={() =>
-                        void removeManufacturingRow(
-                          'product_variants',
-                          variant,
-                          string(draft.name, `Variante ${index + 1}`),
-                        )
-                      }
-                    >
-                      <Trash2 className="size-3.5" />{' '}
-                      {pendingRemovalKey ===
+                  <Button
+                    type="button"
+                    variant={
+                      pendingRemovalKey ===
                       `product_variants:${string(variant.id)}`
-                        ? 'Löschen bestätigen'
-                        : 'Variante entfernen'}
-                    </Button>
-                  ) : null}
+                        ? 'destructive'
+                        : 'ghost'
+                    }
+                    size="sm"
+                    className="text-red-700"
+                    disabled={detailSaving}
+                    onClick={() =>
+                      void removeManufacturingRow(
+                        'product_variants',
+                        variant,
+                        string(draft.name, `Variante ${index + 1}`),
+                      )
+                    }
+                  >
+                    <Trash2 className="size-3.5" />{' '}
+                    {pendingRemovalKey ===
+                    `product_variants:${string(variant.id)}`
+                      ? 'Löschen bestätigen'
+                      : 'Variante entfernen'}
+                  </Button>
                 </div>
               </div>
             </details>
