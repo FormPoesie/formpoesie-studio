@@ -5927,6 +5927,7 @@ const ManufacturingEditor = forwardRef<
   const [draggedVariantId, setDraggedVariantId] = useState('');
   const [quickSaving, setQuickSaving] = useState(false);
   const [detailSaving, setDetailSaving] = useState(false);
+  const [pendingRemovalKey, setPendingRemovalKey] = useState('');
 
   useEffect(() => {
     setVariantOrder(variants.map((variant) => string(variant.id)));
@@ -6088,7 +6089,14 @@ const ManufacturingEditor = forwardRef<
     row: Row,
     label: string,
   ) {
-    if (!window.confirm(`„${label}“ wirklich entfernen?`)) return;
+    const removalKey = `${entity}:${string(row.id)}`;
+    if (pendingRemovalKey !== removalKey) {
+      setPendingRemovalKey(removalKey);
+      setMessage(
+        `„${label}“ entfernen? Bitte den rot markierten Knopf noch einmal anklicken.`,
+      );
+      return;
+    }
     setDetailSaving(true);
     setMessage('');
     try {
@@ -6102,6 +6110,7 @@ const ManufacturingEditor = forwardRef<
       };
       if (!response.ok)
         throw new Error(result.error || 'Eintrag nicht entfernt.');
+      setPendingRemovalKey('');
       setMessage(`${label} wurde entfernt.`);
       await onChanged();
     } catch (reason) {
@@ -6819,11 +6828,21 @@ const ManufacturingEditor = forwardRef<
                               </button>
                               <Button
                                 type="button"
-                                variant="ghost"
+                                variant={
+                                  pendingRemovalKey ===
+                                  `product_filaments:${string(item.id)}`
+                                    ? 'destructive'
+                                    : 'ghost'
+                                }
                                 size="icon"
                                 className="h-auto w-9 rounded-none border-l text-red-700"
                                 disabled={detailSaving}
-                                aria-label={`${label} entfernen`}
+                                aria-label={
+                                  pendingRemovalKey ===
+                                  `product_filaments:${string(item.id)}`
+                                    ? `${label} endgültig entfernen`
+                                    : `${label} entfernen`
+                                }
                                 onClick={() =>
                                   void removeManufacturingRow(
                                     'product_filaments',
@@ -6939,7 +6958,12 @@ const ManufacturingEditor = forwardRef<
                   {variants.length > 1 ? (
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant={
+                        pendingRemovalKey ===
+                        `product_variants:${string(variant.id)}`
+                          ? 'destructive'
+                          : 'ghost'
+                      }
                       size="sm"
                       className="text-red-700"
                       disabled={detailSaving}
@@ -6951,7 +6975,11 @@ const ManufacturingEditor = forwardRef<
                         )
                       }
                     >
-                      <Trash2 className="size-3.5" /> Variante entfernen
+                      <Trash2 className="size-3.5" />{' '}
+                      {pendingRemovalKey ===
+                      `product_variants:${string(variant.id)}`
+                        ? 'Löschen bestätigen'
+                        : 'Variante entfernen'}
                     </Button>
                   ) : null}
                 </div>
@@ -7045,11 +7073,21 @@ const ManufacturingEditor = forwardRef<
                           </button>
                           <Button
                             type="button"
-                            variant="ghost"
+                            variant={
+                              pendingRemovalKey ===
+                              `product_filaments:${string(item.id)}`
+                                ? 'destructive'
+                                : 'ghost'
+                            }
                             size="icon"
                             className="h-auto w-9 rounded-none border-l text-red-700"
                             disabled={detailSaving}
-                            aria-label={`${label} entfernen`}
+                            aria-label={
+                              pendingRemovalKey ===
+                              `product_filaments:${string(item.id)}`
+                                ? `${label} endgültig entfernen`
+                                : `${label} entfernen`
+                            }
                             onClick={() =>
                               void removeManufacturingRow(
                                 'product_filaments',
