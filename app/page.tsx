@@ -3997,6 +3997,116 @@ function dashboardText(value: unknown, fallback = '') {
     : fallback;
 }
 
+async function dashboardInventoryRequest(input: string, init?: RequestInit) {
+  const response = await fetch(input, init);
+  if (response.status !== 401) return response;
+  const sessionResponse = await fetch('/api/inventory/session', {
+    cache: 'no-store',
+  });
+  const session = (await sessionResponse.json().catch(() => ({}))) as {
+    connected?: boolean;
+  };
+  if (!sessionResponse.ok || !session.connected) return response;
+  return fetch(input, init);
+}
+
+const dashboardShippingMethods = [
+  ['dhl', 'DHL'],
+  ['hermes', 'Hermes'],
+  ['dpd', 'DPD'],
+  ['gls', 'GLS'],
+  ['ups', 'UPS'],
+  ['post', 'Postversand'],
+] as const;
+
+function DashboardShippingEditor({
+  item,
+  onSaved,
+}: {
+  item: DashboardFulfillmentRow;
+  onSaved: () => void;
+}) {
+  const [method, setMethod] = useState(dashboardText(item.shippingMethod));
+  const [trackingNumber, setTrackingNumber] = useState(
+    dashboardText(item.trackingNumber),
+  );
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+
+  async function save() {
+    if (!method || saving) return;
+    setSaving(true);
+    setMessage('');
+    const response = await dashboardInventoryRequest(
+      '/api/inventory/workspace',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entity: 'shipping_details',
+          id: item.id,
+          values: {
+            sourceType: dashboardText(
+              item.shippingDetailsSourceType,
+              item.sourceType === 'cash-sale'
+                ? 'fulfillment_tasks'
+                : 'online_sales',
+            ),
+            shippingMethod: method,
+            trackingNumber: trackingNumber.trim(),
+          },
+        }),
+      },
+    );
+    const result = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    setSaving(false);
+    if (!response.ok) {
+      setMessage(result.error || 'Versanddaten konnten nicht gespeichert werden.');
+      return;
+    }
+    setMessage('Versanddaten gespeichert.');
+    onSaved();
+  }
+
+  return (
+    <div className="grid w-full gap-2 rounded-lg border bg-[var(--fp-mist)]/35 p-3 sm:grid-cols-[minmax(140px,0.7fr)_minmax(180px,1fr)_auto] sm:items-end">
+      <label className="grid gap-1 text-xs font-medium">
+        Versanddienstleister
+        <select
+          className="h-9 rounded-lg border bg-white px-2 text-sm"
+          value={method}
+          onChange={(event) => setMethod(event.target.value)}
+        >
+          <option value="">Bitte auswählen</option>
+          {dashboardShippingMethods.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="grid gap-1 text-xs font-medium">
+        Sendungsnummer
+        <Input
+          className="h-9 bg-white"
+          value={trackingNumber}
+          onChange={(event) => setTrackingNumber(event.target.value)}
+          placeholder="optional"
+          autoComplete="off"
+        />
+      </label>
+      <Button size="sm" disabled={!method || saving} onClick={() => void save()}>
+        {saving ? 'Speichert …' : 'Versanddaten speichern'}
+      </Button>
+      {message ? (
+        <p className="text-xs text-muted-foreground sm:col-span-3">{message}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function DashboardFulfillment({
   onProduct,
 }: {
@@ -4008,7 +4118,9 @@ function DashboardFulfillment({
 
   async function load() {
     setLoading(true);
-    const response = await fetch('/api/inventory/workspace?area=online');
+    const response = await dashboardInventoryRequest(
+      '/api/inventory/workspace?area=online',
+    );
     const result = (await response.json()) as {
       onlineSales?: DashboardFulfillmentRow[];
       fulfillmentTasks?: DashboardFulfillmentRow[];
@@ -4037,7 +4149,7 @@ function DashboardFulfillment({
     item: DashboardFulfillmentRow,
     key: 'isPrinted' | 'isShipped',
   ) {
-    const response = await fetch('/api/inventory/workspace', {
+    const response = await dashboardInventoryRequest('/api/inventory/workspace', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -4093,7 +4205,7 @@ function DashboardFulfillment({
           return (
             <article
               key={String(item.id)}
-              className="flex flex-col gap-3 rounded-xl border bg-white/65 p-3 sm:flex-row sm:items-center"
+              className="flex flex-col gap-3 rounded-xl border bg-white/65 p-3 sm:flex-row sm:flex-wrap sm:items-center"
             >
               <div className="min-w-0 flex-1">
                 {item.productId ? (
@@ -4136,6 +4248,9 @@ function DashboardFulfillment({
                       : 'Versand offen'}
                 </Button>
               </div>
+              {!pickup ? (
+                <DashboardShippingEditor item={item} onSaved={() => void load()} />
+              ) : null}
             </article>
           );
         })}

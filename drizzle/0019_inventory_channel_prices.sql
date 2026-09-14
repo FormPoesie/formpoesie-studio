@@ -1,4 +1,4 @@
-CREATE TABLE `inventory_channel_prices` (
+CREATE TABLE IF NOT EXISTS `inventory_channel_prices` (
   `entity_kind` text NOT NULL,
   `row_id` text NOT NULL,
   `etsy_price_cents` integer,
@@ -8,7 +8,7 @@ CREATE TABLE `inventory_channel_prices` (
   `updated_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `idx_inventory_channel_prices_entity_row`
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_inventory_channel_prices_entity_row`
   ON `inventory_channel_prices` (`entity_kind`, `row_id`);
 --> statement-breakpoint
 PRAGMA optimize;

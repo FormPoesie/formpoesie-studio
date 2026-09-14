@@ -5,6 +5,7 @@ import {
   text,
   uniqueIndex,
   index,
+  primaryKey,
 } from 'drizzle-orm/sqlite-core';
 
 const timestamps = {
@@ -999,6 +1000,21 @@ export const inventoryFulfillmentTasks = sqliteTable(
       table.isPrinted,
       table.isShipped,
     ),
+  ],
+);
+
+export const inventoryShippingDetails = sqliteTable(
+  'inventory_shipping_details',
+  {
+    sourceType: text('source_type').notNull(),
+    sourceId: text('source_id').notNull(),
+    shippingMethod: text('shipping_method'),
+    trackingNumber: text('tracking_number'),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ columns: [table.sourceType, table.sourceId] }),
+    index('idx_inventory_shipping_tracking').on(table.trackingNumber),
   ],
 );
 

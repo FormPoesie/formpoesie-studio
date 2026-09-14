@@ -16,6 +16,16 @@ import { safeAssetFilename } from '@/lib/product-assets';
 
 type JsonRecord = Record<string, unknown>;
 
+const supportedShippingMethods = new Set([
+  'abholung',
+  'dhl',
+  'hermes',
+  'dpd',
+  'gls',
+  'ups',
+  'post',
+]);
+
 const entityFields: Record<string, Set<string>> = {
   products: new Set([
     'name',
@@ -1098,7 +1108,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     };
   }
   if (area === 'online') {
-    const [onlineSales, fulfillmentTasks] = await Promise.all([
+    const [onlineSales, fulfillmentTasks, shippingDetails] = await Promise.all([
       query(
         accessToken,
         'online_sales',
@@ -1120,7 +1130,29 @@ async function loadArea(accessToken: string, area: string, request: Request) {
          WHERE is_printed = 0 OR is_shipped = 0
          ORDER BY sale_date DESC, created_at DESC`,
       ).all(),
+      env.DB.prepare(
+        `SELECT source_type AS sourceType, source_id AS sourceId,
+                shipping_method AS shippingMethod,
+                tracking_number AS trackingNumber
+         FROM inventory_shipping_details`,
+      ).all<JsonRecord>(),
     ]);
+    const detailRows = shippingDetails.results || [];
+    const shippingDetail = (sourceType: string, sourceId: unknown) =>
+      detailRows.find(
+        (detail) =>
+          scalarText(detail.sourceType) === sourceType &&
+          scalarText(detail.sourceId) === scalarText(sourceId),
+      );
+    const decoratedOnlineSales = (onlineSales as JsonRecord[]).map((sale) => {
+      const detail = shippingDetail('online_sales', sale.id);
+      return {
+        ...sale,
+        shippingMethod: detail?.shippingMethod ?? sale.shippingMethod,
+        trackingNumber: detail?.trackingNumber ?? null,
+        shippingDetailsSourceType: 'online_sales',
+      };
+    });
     const taskRows = (fulfillmentTasks.results || []) as JsonRecord[];
     const taskVariantIds = taskRows
       .map((item) => item.articleVariantId)
@@ -1143,9 +1175,17 @@ async function loadArea(accessToken: string, area: string, request: Request) {
       return {
         ...task,
         productId: (variant?.article as JsonRecord | undefined)?.productId,
+        shippingMethod:
+          shippingDetail('fulfillment_tasks', task.id)?.shippingMethod ?? null,
+        trackingNumber:
+          shippingDetail('fulfillment_tasks', task.id)?.trackingNumber ?? null,
+        shippingDetailsSourceType: 'fulfillment_tasks',
       };
     });
-    return { onlineSales, fulfillmentTasks: decoratedTasks };
+    return {
+      onlineSales: decoratedOnlineSales,
+      fulfillmentTasks: decoratedTasks,
+    };
   }
   if (area === 'expenses') {
     const [expenses, marketExpenses, markets] = await Promise.all([
@@ -1995,6 +2035,59 @@ export async function PATCH(request: Request) {
   if (body.entity === 'sales') {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
+  }
+  if (body.entity === 'shipping_details') {
+    const sourceType = scalarText(body.values.sourceType).trim();
+    const shippingMethod = scalarText(body.values.shippingMethod).trim();
+    const trackingNumber = scalarText(body.values.trackingNumber).trim();
+    if (!['online_sales', 'fulfillment_tasks'].includes(sourceType))
+      return Response.json(
+        { error: 'Verkaufsquelle ist ungültig.' },
+        { status: 400 },
+      );
+    if (!supportedShippingMethods.has(shippingMethod) || shippingMethod === 'abholung')
+      return Response.json(
+        { error: 'Bitte einen gültigen Versanddienstleister auswählen.' },
+        { status: 400 },
+      );
+    if (trackingNumber.length > 120)
+      return Response.json(
+        { error: 'Die Sendungsnummer ist zu lang.' },
+        { status: 400 },
+      );
+    if (sourceType === 'online_sales') {
+      await inventoryFetch(
+        accessToken,
+        `online_sales?id=eq.${encodeURIComponent(String(body.id))}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            shipping_method: shippingMethod,
+            updated_by: user.id || null,
+          }),
+        },
+      );
+    }
+    const instant = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO inventory_shipping_details
+         (source_type, source_id, shipping_method, tracking_number, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(source_type, source_id) DO UPDATE SET
+         shipping_method = excluded.shipping_method,
+         tracking_number = excluded.tracking_number,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(
+        sourceType,
+        String(body.id),
+        shippingMethod,
+        trackingNumber || null,
+        instant,
+        instant,
+      )
+      .run();
+    return Response.json({ saved: true });
   }
   if (body.entity === 'fulfillment_tasks') {
     const allowed = Object.fromEntries(
