@@ -1081,23 +1081,32 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     };
   }
   if (area === 'cash') {
-    const [products, components, invoices, customers] = await Promise.all([
-      query(
-        accessToken,
-        'products',
-        'select=' +
-          encodeURIComponent(
-            '*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))',
-          ) +
-          '&deleted_at=is.null&archived_at=is.null&order=name.asc',
-      ),
-      query(accessToken, 'product_components', 'select=*&order=id.asc'),
-      loadInvoices(),
-      loadCustomers(),
-    ]);
+    const [products, components, materials, invoices, customers] =
+      await Promise.all([
+        query(
+          accessToken,
+          'products',
+          'select=' +
+            encodeURIComponent(
+              '*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))',
+            ) +
+            '&deleted_at=is.null&archived_at=is.null&order=name.asc',
+        ),
+        query(accessToken, 'product_components', 'select=*&order=id.asc'),
+        query(
+          accessToken,
+          'materials',
+          'select=' +
+            encodeURIComponent('*,brand:brands(*)') +
+            '&deleted_at=is.null&order=name.asc',
+        ),
+        loadInvoices(),
+        loadCustomers(),
+      ]);
     return {
       products: await decorateProducts(products),
       components,
+      materials: await decorateMaterials(materials),
       invoices,
       customers,
     };
@@ -1774,11 +1783,63 @@ export async function POST(request: Request) {
 
       let orderKey = '';
       const createdIds: string[] = [];
+      const submittedMaterialIds = [
+        ...new Set(
+          submitted
+            .map((item) => Math.trunc(Number(item.filamentMaterialId)))
+            .filter((id) => Number.isInteger(id) && id > 0),
+        ),
+      ];
+      const selectedMaterials = submittedMaterialIds.length
+        ? ((await query(
+            accessToken,
+            'materials',
+            'select=' +
+              encodeURIComponent('id,price_per_roll_cents,spool_weight_grams') +
+              `&id=in.(${submittedMaterialIds.join(',')})&deleted_at=is.null`,
+          )) as JsonRecord[])
+        : [];
+      for (const [index, item] of submitted.entries()) {
+        const filamentGrams = Math.max(
+          0,
+          Math.round(Number(item.filamentGrams) || 0),
+        );
+        if (!filamentGrams) continue;
+        const filamentMaterialId = Math.trunc(Number(item.filamentMaterialId));
+        const selectedMaterial = selectedMaterials.find(
+          (material) => Number(material.id) === filamentMaterialId,
+        );
+        if (
+          !selectedMaterial ||
+          Number(selectedMaterial.pricePerRollCents) <= 0 ||
+          Number(selectedMaterial.spoolWeightGrams) <= 0
+        )
+          return Response.json(
+            {
+              error: `Für Artikel ${index + 1} muss ein Filament mit Rollenpreis und Rollengewicht ausgewählt werden.`,
+            },
+            { status: 400 },
+          );
+      }
       for (const [index, item] of submitted.entries()) {
         const productId = Number(item.productId);
         const quantity = Math.trunc(Number(item.quantity));
         if (!Number.isInteger(productId) || productId <= 0 || quantity <= 0)
           throw new Error(`Artikel ${index + 1} enthält ungültige Daten.`);
+        const filamentMaterialId = Math.trunc(Number(item.filamentMaterialId));
+        const selectedMaterial = selectedMaterials.find(
+          (material) => Number(material.id) === filamentMaterialId,
+        );
+        const filamentGrams = Math.max(
+          0,
+          Math.round(Number(item.filamentGrams) || 0),
+        );
+        const materialPrice = Number(selectedMaterial?.pricePerRollCents);
+        const materialWeight = Number(selectedMaterial?.spoolWeightGrams);
+        const actualFilamentCost =
+          selectedMaterial && materialPrice > 0 && materialWeight > 0
+            ? Math.round((filamentGrams * materialPrice) / materialWeight)
+            : Math.max(0, Math.round(Number(item.filamentCostCents) || 0));
         const values = {
           product_id: productId,
           article_name: scalarText(item.articleName, 'Artikel').trim(),
@@ -1795,17 +1856,9 @@ export async function POST(request: Request) {
           ),
           print_deadline: printDeadline || null,
           filament_material_id:
-            Number(item.filamentMaterialId) > 0
-              ? Number(item.filamentMaterialId)
-              : null,
-          filament_grams: Math.max(
-            0,
-            Math.round(Number(item.filamentGrams) || 0),
-          ),
-          filament_cost_cents: Math.max(
-            0,
-            Math.round(Number(item.filamentCostCents) || 0),
-          ),
+            filamentMaterialId > 0 ? filamentMaterialId : null,
+          filament_grams: filamentGrams,
+          filament_cost_cents: actualFilamentCost,
           electricity_cost_cents: Math.max(
             0,
             Math.round(Number(item.electricityCostCents) || 0),
@@ -2087,7 +2140,10 @@ export async function PATCH(request: Request) {
         { error: 'Verkaufsquelle ist ungültig.' },
         { status: 400 },
       );
-    if (!supportedShippingMethods.has(shippingMethod) || shippingMethod === 'abholung')
+    if (
+      !supportedShippingMethods.has(shippingMethod) ||
+      shippingMethod === 'abholung'
+    )
       return Response.json(
         { error: 'Bitte einen gültigen Versanddienstleister auswählen.' },
         { status: 400 },

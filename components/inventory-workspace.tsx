@@ -72,6 +72,7 @@ import {
 } from '@/lib/inventory-bridge';
 import {
   PRINTERS,
+  filamentCostCents,
   isDigitalInventoryProduct,
   variantCostBreakdown,
   variantProductionIssues,
@@ -2738,6 +2739,8 @@ type GeneralCartItem = {
   variant: Row;
   quantity: number;
   salePriceCents: number;
+  filamentMaterialId: string;
+  filamentSearch: string;
 };
 
 const GENERAL_SALES_CHANNELS = [
@@ -2898,6 +2901,20 @@ function GeneralCashRegister({
 }) {
   const products = rows(data.products);
   const components = rows(data.components);
+  const materials = useMemo(
+    () =>
+      rows(data.materials).sort((left, right) =>
+        materialChoiceLabel(left).localeCompare(
+          materialChoiceLabel(right),
+          'de',
+          {
+            numeric: true,
+            sensitivity: 'base',
+          },
+        ),
+      ),
+    [data.materials],
+  );
   const customers = rows(data.customers);
   const [channel, setChannel] =
     useState<(typeof GENERAL_SALES_CHANNELS)[number]>('Abholung');
@@ -2942,7 +2959,20 @@ function GeneralCashRegister({
         .join(' ')
         .toLocaleLowerCase('de')
         .includes(search.trim().toLocaleLowerCase('de')),
-    );
+    )
+    .sort((left, right) => {
+      const productOrder = string(left.product.name).localeCompare(
+        string(right.product.name),
+        'de',
+        { numeric: true, sensitivity: 'base' },
+      );
+      if (productOrder) return productOrder;
+      return cashVariantLabel(left.product, left.variant).localeCompare(
+        cashVariantLabel(right.product, right.variant),
+        'de',
+        { numeric: true, sensitivity: 'base' },
+      );
+    });
   const total = cart.reduce(
     (sum, item) => sum + item.quantity * item.salePriceCents,
     0,
@@ -2997,14 +3027,39 @@ function GeneralCashRegister({
       products,
       components,
     );
-    if (!combinedPrint || combinedMinutes <= 0 || combinedGrams <= 0)
+    const applyActualFilament = (production: {
+      printMinutes: number;
+      filamentGrams: number;
+      filamentCostCents: number;
+      electricityCostCents: number;
+      machineCostCents: number;
+    }) => {
+      const material = materials.find(
+        (entry) => string(entry.id) === item.filamentMaterialId,
+      );
+      if (
+        !material ||
+        number(material.pricePerRollCents) <= 0 ||
+        number(material.spoolWeightGrams) <= 0
+      )
+        return production;
       return {
+        ...production,
+        filamentCostCents: filamentCostCents(
+          production.filamentGrams,
+          number(material.pricePerRollCents),
+          number(material.spoolWeightGrams),
+        ),
+      };
+    };
+    if (!combinedPrint || combinedMinutes <= 0 || combinedGrams <= 0)
+      return applyActualFilament({
         printMinutes: breakdown.printMinutes,
         filamentGrams: breakdown.netGrams + breakdown.wasteGrams,
         filamentCostCents: breakdown.filamentCents + breakdown.wasteCents,
         electricityCostCents: breakdown.electricityCents,
         machineCostCents: breakdown.machineCents,
-      };
+      });
     const expectedMinutes = cart.reduce((sum, entry) => {
       const value = variantCostBreakdown(
         entry.product,
@@ -3035,14 +3090,14 @@ function GeneralCashRegister({
     const timeScale =
       breakdown.printMinutes > 0 ? printMinutes / breakdown.printMinutes : 0;
     const weightScale = originalGrams > 0 ? filamentGrams / originalGrams : 0;
-    return {
+    return applyActualFilament({
       printMinutes,
       filamentGrams,
       filamentCostCents:
         (breakdown.filamentCents + breakdown.wasteCents) * weightScale,
       electricityCostCents: breakdown.electricityCents * timeScale,
       machineCostCents: breakdown.machineCents * timeScale,
-    };
+    });
   }
 
   function adjustedUnitCost(item: GeneralCartItem) {
@@ -3068,6 +3123,17 @@ function GeneralCashRegister({
   );
   const adjustedMargin = total - adjustedProductionTotal - shippingCostCents;
   const adjustedMarginPercent = total > 0 ? (adjustedMargin / total) * 100 : 0;
+  const incompleteFilamentItems = cart.filter((item) => {
+    if (isDigitalInventoryProduct(item.product)) return false;
+    const material = materials.find(
+      (entry) => string(entry.id) === item.filamentMaterialId,
+    );
+    return (
+      !material ||
+      number(material.pricePerRollCents) <= 0 ||
+      number(material.spoolWeightGrams) <= 0
+    );
+  });
 
   function itemKey(product: Row, variant: Row) {
     return `${string(product.id)}:${string(variant.id, 'standard')}`;
@@ -3084,9 +3150,26 @@ function GeneralCashRegister({
         return current.map((item) =>
           item === match ? { ...item, quantity: item.quantity + 1 } : item,
         );
+      const relevantFilaments = rows(product.filaments).filter(
+        (row) =>
+          !string(row.productVariantId) ||
+          string(row.productVariantId) === string(variant.id),
+      );
+      const defaultMaterialId = string(
+        variant.materialId ||
+          relevantFilaments.find((row) => number(row.materialId) > 0)
+            ?.materialId,
+      );
       return [
         ...current,
-        { product, variant, quantity: 1, salePriceCents: price },
+        {
+          product,
+          variant,
+          quantity: 1,
+          salePriceCents: price,
+          filamentMaterialId: defaultMaterialId,
+          filamentSearch: '',
+        },
       ];
     });
   }
@@ -3121,6 +3204,12 @@ function GeneralCashRegister({
 
   async function book() {
     if (!cart.length || saving) return;
+    if (incompleteFilamentItems.length) {
+      setMessage(
+        'Bitte für jeden gedruckten Artikel ein Filament mit Rollenpreis und Rollengewicht auswählen.',
+      );
+      return;
+    }
     setSaving(true);
     setMessage('');
     const response = await inventoryRequest('/api/inventory/workspace', {
@@ -3150,14 +3239,6 @@ function GeneralCashRegister({
             products,
             components,
           );
-          const filaments = rows(item.product.filaments).filter(
-            (row) =>
-              !string(row.productVariantId) ||
-              string(row.productVariantId) === string(item.variant.id),
-          );
-          const primaryFilament = filaments.find(
-            (row) => number(row.materialId) > 0,
-          );
           const production = productionForCartItem(item);
           return {
             productId: number(item.product.id),
@@ -3168,9 +3249,7 @@ function GeneralCashRegister({
             quantity: item.quantity,
             printer: string(item.variant.printer || item.product.printer),
             printMinutes: production.printMinutes,
-            filamentMaterialId: number(
-              item.variant.materialId || primaryFilament?.materialId,
-            ),
+            filamentMaterialId: number(item.filamentMaterialId),
             filamentGrams: production.filamentGrams,
             filamentCostCents: production.filamentCostCents,
             electricityCostCents: production.electricityCostCents,
@@ -3354,6 +3433,29 @@ function GeneralCashRegister({
               const unitCost = adjustedUnitCost(item);
               const itemMargin =
                 (item.salePriceCents - unitCost) * item.quantity;
+              const filamentQuery = item.filamentSearch
+                .trim()
+                .toLocaleLowerCase('de');
+              const matchingMaterials = materials.filter((material) =>
+                [
+                  materialChoiceLabel(material),
+                  material.name,
+                  material.materialType,
+                ]
+                  .join(' ')
+                  .toLocaleLowerCase('de')
+                  .includes(filamentQuery),
+              );
+              const selectedMaterial = materials.find(
+                (material) => string(material.id) === item.filamentMaterialId,
+              );
+              const visibleMaterials =
+                selectedMaterial &&
+                !matchingMaterials.some(
+                  (material) => string(material.id) === item.filamentMaterialId,
+                )
+                  ? [selectedMaterial, ...matchingMaterials]
+                  : matchingMaterials;
               return (
                 <div
                   key={key}
@@ -3365,6 +3467,59 @@ function GeneralCashRegister({
                   <div className="text-xs text-white/60">
                     {cashVariantLabel(item.product, item.variant)}
                   </div>
+                  {!isDigitalInventoryProduct(item.product) ? (
+                    <div className="mt-3 grid gap-2 rounded-lg border border-white/15 p-2">
+                      <div className="grid gap-1 text-xs text-white/65">
+                        <span>Verwendetes Filament suchen</span>
+                        <Input
+                          aria-label={`Filament für ${string(item.product.name)} suchen`}
+                          className="h-9 bg-white text-black"
+                          value={item.filamentSearch}
+                          onChange={(event) =>
+                            patchCart(key, {
+                              filamentSearch: event.target.value,
+                            })
+                          }
+                          placeholder="Marke, Farbe oder Art"
+                        />
+                      </div>
+                      <div className="grid gap-1 text-xs text-white/65">
+                        <span>Tatsächlich verwendete Rolle</span>
+                        <select
+                          aria-label={`Verwendetes Filament für ${string(item.product.name)}`}
+                          className="h-9 min-w-0 rounded-lg border border-white/20 bg-white px-2 text-sm text-black"
+                          value={item.filamentMaterialId}
+                          onChange={(event) =>
+                            patchCart(key, {
+                              filamentMaterialId: event.target.value,
+                            })
+                          }
+                        >
+                          <option value="">Filament auswählen</option>
+                          {visibleMaterials.map((material) => (
+                            <option
+                              key={string(material.id)}
+                              value={string(material.id)}
+                            >
+                              {materialChoiceOption(material)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {filamentQuery && !visibleMaterials.length ? (
+                        <p className="text-xs text-amber-200">
+                          Kein passendes Filament gefunden.
+                        </p>
+                      ) : null}
+                      {selectedMaterial &&
+                      (number(selectedMaterial.pricePerRollCents) <= 0 ||
+                        number(selectedMaterial.spoolWeightGrams) <= 0) ? (
+                        <p className="text-xs text-amber-200">
+                          Bei dieser Rolle fehlen Preis oder Rollengewicht.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="mt-3 grid grid-cols-[auto_1fr] gap-2">
                     <div className="flex items-center gap-2">
                       <Button
@@ -3418,6 +3573,12 @@ function GeneralCashRegister({
             {!cart.length ? (
               <p className="text-sm text-white/60">
                 Wähle links einen Artikel aus.
+              </p>
+            ) : null}
+            {incompleteFilamentItems.length ? (
+              <p className="rounded-lg border border-amber-300/40 bg-amber-200/10 p-3 text-xs text-amber-100">
+                Vor dem Speichern braucht jeder gedruckte Artikel ein Filament
+                mit vollständigen Kostendaten.
               </p>
             ) : null}
           </div>
@@ -3596,6 +3757,7 @@ function GeneralCashRegister({
               disabled={
                 !cart.length ||
                 saving ||
+                incompleteFilamentItems.length > 0 ||
                 (combinedPrint &&
                   (combinedMinutes <= 0 || combinedGrams <= 0)) ||
                 (issueInvoice && (!recipient.trim() || !customerAddress.trim()))
