@@ -2499,6 +2499,14 @@ export async function DELETE(request: Request) {
         if (body.entity !== 'product_variants') throw error;
         await inventoryFetch(
           accessToken,
+          `stock_movements?product_variant_id=eq.${rowId}`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({ product_variant_id: null }),
+          },
+        );
+        await inventoryFetch(
+          accessToken,
           `product_filaments?product_variant_id=eq.${rowId}`,
           { method: 'DELETE' },
         );
