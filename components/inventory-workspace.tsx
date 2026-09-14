@@ -707,7 +707,9 @@ export function InventoryWorkspace({
 
   const fetchArea = useCallback(
     async (area: Exclude<InventoryArea, 'overview'>) => {
-      const response = await inventoryRequest('/api/inventory/workspace?area=' + area);
+      const response = await inventoryRequest(
+        '/api/inventory/workspace?area=' + area,
+      );
       const result = (await response.json()) as AreaData & { error?: string };
       if (!response.ok)
         throw new Error(result.error || 'Daten konnten nicht geladen werden.');
@@ -3064,8 +3066,7 @@ function GeneralCashRegister({
     (sum, item) => sum + adjustedUnitCost(item) * item.quantity,
     0,
   );
-  const adjustedMargin =
-    total - adjustedProductionTotal - shippingCostCents;
+  const adjustedMargin = total - adjustedProductionTotal - shippingCostCents;
   const adjustedMarginPercent = total > 0 ? (adjustedMargin / total) * 100 : 0;
 
   function itemKey(product: Row, variant: Row) {
@@ -4407,10 +4408,13 @@ function ReceiptUpload({
     const body = new FormData();
     body.set('file', file);
     body.set('expenseId', expenseId);
-    const response = await inventoryRequest('/api/inventory/expense-documents', {
-      method: 'POST',
-      body,
-    });
+    const response = await inventoryRequest(
+      '/api/inventory/expense-documents',
+      {
+        method: 'POST',
+        body,
+      },
+    );
     const result = (await response.json()) as { error?: string };
     setUploading(false);
     if (!response.ok)
@@ -4514,7 +4518,9 @@ function Expenses({
       .sort((left, right) => {
         const dateDifference =
           expenseDateTimestamp(right) - expenseDateTimestamp(left);
-        return dateDifference || string(right.id).localeCompare(string(left.id));
+        return (
+          dateDifference || string(right.id).localeCompare(string(left.id))
+        );
       })
       .reduce<Record<string, Row[]>>((groups, expense) => {
         const key = monthKey(expenseDateValue(expense)) || 'without-date';
@@ -5340,7 +5346,9 @@ function EntityEditor({
                       value={inventoryReviewStatus(form.studioStatus)}
                       onChange={(event) => {
                         const status = event.target.value as
-                          'draft' | 'final' | 'customer_order';
+                          | 'draft'
+                          | 'final'
+                          | 'customer_order';
                         setValue('studioStatus', status);
                         if (status === 'final' && !form.finalizedAt)
                           setValue(
@@ -5998,6 +6006,28 @@ const ManufacturingEditor = forwardRef<
     }));
   }
 
+  function filamentDefinitionKey(row: Row) {
+    return JSON.stringify([
+      string(row.part).trim(),
+      string(row.materialId),
+      number(row.grams),
+      number(row.wasteGrams),
+      string(row.printer),
+      number(row.printMinutes),
+      number(row.stockQuantity),
+      boolean(row.printedTogether),
+    ]);
+  }
+
+  function linkedFilamentRows(row: Row) {
+    if (!row.id || !string(row.part).trim()) return row.id ? [row] : [];
+    const definition = filamentDefinitionKey(row);
+    return filaments.filter(
+      (item) =>
+        string(item.part).trim() && filamentDefinitionKey(item) === definition,
+    );
+  }
+
   function open(
     entity: 'product_variants' | 'product_filaments',
     row: Row = {},
@@ -6017,11 +6047,27 @@ const ManufacturingEditor = forwardRef<
             position: filaments.length,
           };
     const quick = quickValues[string(row.id)];
+    const linkedVariantIds =
+      entity === 'product_filaments'
+        ? linkedFilamentRows(row)
+            .map((item) => string(item.productVariantId))
+            .filter(Boolean)
+        : [];
     setEditing({ entity, row });
     setValues({
       ...defaults,
       ...row,
       ...(entity === 'product_variants' && quick ? quick : {}),
+      ...(entity === 'product_filaments'
+        ? {
+            productVariantIds:
+              linkedVariantIds.length > 0
+                ? linkedVariantIds
+                : string(row.productVariantId)
+                  ? [string(row.productVariantId)]
+                  : [],
+          }
+        : {}),
     });
     setMessage('');
     window.requestAnimationFrame(() =>
@@ -6072,6 +6118,7 @@ const ManufacturingEditor = forwardRef<
     open('product_filaments', {
       productId: number(product.id),
       productVariantId: number(row.id),
+      productVariantIds: [string(row.id)],
       part: '',
       grams: 0,
       wasteGrams: 0,
@@ -6088,6 +6135,7 @@ const ManufacturingEditor = forwardRef<
     open('product_filaments', {
       productId: number(product.id),
       productVariantId: number(row.id),
+      productVariantIds: [string(row.id)],
       part,
       grams: 0,
       wasteGrams: 0,
@@ -6161,28 +6209,92 @@ const ManufacturingEditor = forwardRef<
           }
         : values;
     try {
-      const response = await inventoryRequest('/api/inventory/workspace', {
-        method: editing.row.id == null ? 'POST' : 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entity: editing.entity,
-          id: editing.row.id,
-          values: saveValues,
-        }),
-      });
-      const result = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok)
-        throw new Error(
-          result.error || 'Ausführung konnte nicht gespeichert werden.',
-        );
+      let nextFilaments = filaments;
       if (editing.entity === 'product_filaments') {
-        const nextFilaments = editing.row.id
-          ? filaments.map((item) =>
-              string(item.id) === string(editing.row.id) ? values : item,
-            )
-          : [...filaments, values];
+        const selectedVariantIds = Array.isArray(values.productVariantIds)
+          ? values.productVariantIds.map((item) => string(item)).filter(Boolean)
+          : string(values.productVariantId)
+            ? [string(values.productVariantId)]
+            : [];
+        const desiredVariantIds: Array<string | null> =
+          selectedVariantIds.length ? selectedVariantIds : [null];
+        const sourceRows = editing.row.id
+          ? linkedFilamentRows(editing.row)
+          : [];
+        const unusedRows = [...sourceRows];
+        const savedRows: Row[] = [];
+        const filamentValues = { ...values };
+        delete filamentValues.productVariantIds;
+
+        for (const [index, variantId] of desiredVariantIds.entries()) {
+          let rowIndex = unusedRows.findIndex(
+            (item) => string(item.productVariantId) === string(variantId),
+          );
+          if (rowIndex < 0 && index === 0 && unusedRows.length) rowIndex = 0;
+          const existing =
+            rowIndex >= 0 ? unusedRows.splice(rowIndex, 1)[0] : null;
+          const rowValues = {
+            ...filamentValues,
+            productVariantId: variantId ? Number(variantId) : null,
+          };
+          const response = await inventoryRequest('/api/inventory/workspace', {
+            method: existing?.id == null ? 'POST' : 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entity: 'product_filaments',
+              id: existing?.id,
+              values: rowValues,
+            }),
+          });
+          const result = (await response.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          if (!response.ok)
+            throw new Error(
+              result.error || 'Bauteil konnte nicht gespeichert werden.',
+            );
+          savedRows.push({ ...rowValues, id: existing?.id });
+        }
+
+        for (const obsolete of unusedRows) {
+          const response = await inventoryRequest('/api/inventory/workspace', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entity: 'product_filaments',
+              id: obsolete.id,
+            }),
+          });
+          if (!response.ok)
+            throw new Error(
+              'Eine abgewählte Varianten-Zuordnung konnte nicht entfernt werden.',
+            );
+        }
+
+        const sourceIds = new Set(sourceRows.map((item) => string(item.id)));
+        nextFilaments = [
+          ...filaments.filter((item) => !sourceIds.has(string(item.id))),
+          ...savedRows,
+        ];
+      } else {
+        const response = await inventoryRequest('/api/inventory/workspace', {
+          method: editing.row.id == null ? 'POST' : 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity: editing.entity,
+            id: editing.row.id,
+            values: saveValues,
+          }),
+        });
+        const result = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(
+            result.error || 'Ausführung konnte nicht gespeichert werden.',
+          );
+      }
+      if (editing.entity === 'product_filaments') {
         const nextProduct = { ...product, filaments: nextFilaments };
         const costResponses = await Promise.all(
           variants.map((variant) =>
@@ -6421,8 +6533,7 @@ const ManufacturingEditor = forwardRef<
           const usesPartProduction = structuralParts.length > 0;
           const isMultipart = partNames.size > 1;
           const defectSource = variants.find(
-            (item) =>
-              string(item.id) === string(draft.defectSourceVariantId),
+            (item) => string(item.id) === string(draft.defectSourceVariantId),
           );
           const simpleColorCount =
             (string(draft.materialId) ? 1 : 0) + additionalColors.length;
@@ -7060,7 +7171,9 @@ const ManufacturingEditor = forwardRef<
                                 item.name || item.appearance,
                                 'Variante ' + string(item.id),
                               )}
-                              {string(item.size) ? ` · ${string(item.size)}` : ''}
+                              {string(item.size)
+                                ? ` · ${string(item.size)}`
+                                : ''}
                             </option>
                           ))}
                       </select>
@@ -7534,7 +7647,9 @@ const ManufacturingEditor = forwardRef<
                                 item.name || item.appearance,
                                 'Variante ' + string(item.id),
                               )}
-                              {string(item.size) ? ` · ${string(item.size)}` : ''}
+                              {string(item.size)
+                                ? ` · ${string(item.size)}`
+                                : ''}
                             </option>
                           ))}
                       </select>
@@ -7678,31 +7793,82 @@ const ManufacturingEditor = forwardRef<
               </>
             ) : (
               <>
-                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                  Verwendung
-                  <select
-                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                    value={string(values.productVariantId)}
-                    onChange={(event) =>
-                      setValues((current) => ({
-                        ...current,
-                        productVariantId: event.target.value
-                          ? Number(event.target.value)
-                          : null,
-                      }))
-                    }
-                  >
-                    <option value="">Für alle Varianten</option>
-                    {variants.map((variant, index) => (
-                      <option
-                        key={string(variant.id)}
-                        value={string(variant.id)}
-                      >
-                        Nur {string(variant.name, `Variante ${index + 1}`)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <fieldset className="grid gap-2 rounded-xl border bg-white p-3 sm:col-span-2">
+                  <legend className="px-1 text-xs font-medium text-muted-foreground">
+                    Passende Varianten
+                  </legend>
+                  <p className="text-xs text-muted-foreground">
+                    Wähle alle Varianten, bei denen dieses Bauteil verwendet
+                    wird.
+                  </p>
+                  <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={
+                        !Array.isArray(values.productVariantIds) ||
+                        values.productVariantIds.length === 0
+                      }
+                      onChange={() =>
+                        setValues((current) => ({
+                          ...current,
+                          productVariantIds: [],
+                          productVariantId: null,
+                        }))
+                      }
+                    />
+                    Für alle Varianten
+                  </label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {variants.map((variant, index) => {
+                      const variantId = string(variant.id);
+                      const selected = Array.isArray(values.productVariantIds)
+                        ? values.productVariantIds.map((item) => string(item))
+                        : [];
+                      const checked = selected.includes(variantId);
+                      return (
+                        <label
+                          key={variantId}
+                          className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) =>
+                              setValues((current) => {
+                                const currentIds = Array.isArray(
+                                  current.productVariantIds,
+                                )
+                                  ? current.productVariantIds.map((item) =>
+                                      string(item),
+                                    )
+                                  : [];
+                                const nextIds = event.target.checked
+                                  ? Array.from(
+                                      new Set([...currentIds, variantId]),
+                                    )
+                                  : currentIds.filter(
+                                      (item) => item !== variantId,
+                                    );
+                                return {
+                                  ...current,
+                                  productVariantIds: nextIds,
+                                  productVariantId:
+                                    nextIds.length === 1
+                                      ? Number(nextIds[0])
+                                      : null,
+                                };
+                              })
+                            }
+                          />
+                          {string(
+                            variant.name || variant.appearance,
+                            `Variante ${index + 1}`,
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
                 <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
                   Farbe / Material
                   <select
@@ -8143,9 +8309,7 @@ function RelationsSummary({
           ) : null}
           <details
             open={componentFormOpen}
-            onToggle={(event) =>
-              setComponentFormOpen(event.currentTarget.open)
-            }
+            onToggle={(event) => setComponentFormOpen(event.currentTarget.open)}
             className="group rounded-xl border border-dashed bg-white/60"
           >
             <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
@@ -8581,10 +8745,13 @@ function ProductAssetManager({
             String(!existingImage && !hasUploadedPrimary && uploaded === 0),
           );
         }
-        const response = await inventoryRequest('/api/inventory/product-assets', {
-          method: 'POST',
-          body,
-        });
+        const response = await inventoryRequest(
+          '/api/inventory/product-assets',
+          {
+            method: 'POST',
+            body,
+          },
+        );
         const result = (await response.json().catch(() => ({}))) as {
           error?: string;
         };
@@ -8752,20 +8919,26 @@ function ProductAssetManager({
       body.set('productId', string(product.id));
       body.set('kind', 'image');
       body.set('isPrimary', String(boolean(asset.isPrimary)));
-      const uploadResponse = await inventoryRequest('/api/inventory/product-assets', {
-        method: 'POST',
-        body,
-      });
+      const uploadResponse = await inventoryRequest(
+        '/api/inventory/product-assets',
+        {
+          method: 'POST',
+          body,
+        },
+      );
       const uploadResult = (await uploadResponse.json().catch(() => ({}))) as {
         error?: string;
       };
       if (!uploadResponse.ok)
         throw new Error(uploadResult.error || 'Bild nicht ersetzt.');
-      const deleteResponse = await inventoryRequest('/api/inventory/product-assets', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: asset.id }),
-      });
+      const deleteResponse = await inventoryRequest(
+        '/api/inventory/product-assets',
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: asset.id }),
+        },
+      );
       if (!deleteResponse.ok)
         throw new Error(
           'Das neue Bild wurde gespeichert, das alte aber nicht entfernt.',
