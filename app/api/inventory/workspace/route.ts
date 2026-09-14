@@ -4,6 +4,7 @@ import {
   inventoryReviewStatus,
   inventoryHeaders,
   readCookie,
+  requestUrl,
   requireInventoryManager,
 } from '@/lib/inventory-bridge';
 import { env } from 'cloudflare:workers';
@@ -1343,7 +1344,7 @@ export async function GET(request: Request) {
       { error: 'FormPoesie-Anmeldung erforderlich.' },
       { status: 401 },
     );
-  const area = new URL(request.url).searchParams.get('area') || 'products';
+  const area = requestUrl(request).searchParams.get('area') || 'products';
   if (['sales', 'months', 'expenses', 'trash'].includes(area)) {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;

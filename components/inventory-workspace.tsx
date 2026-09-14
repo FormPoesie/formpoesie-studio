@@ -4122,14 +4122,14 @@ function Sales({
     onlineSignatures.length - new Set(onlineSignatures).size;
   return (
     <section className="mt-6">
-      <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
+      <div className="flex min-w-0 flex-col justify-between gap-3 xl:flex-row xl:items-end">
         <div>
           <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
             Nach Monaten
           </p>
           <h2 className="mt-1 font-heading text-3xl">Verkaufshistorie</h2>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[660px]">
+        <div className="grid min-w-0 gap-2 sm:grid-cols-3 xl:min-w-[660px]">
           <label className="grid gap-1 text-xs text-muted-foreground">
             Monat
             <select
@@ -4180,7 +4180,7 @@ function Sales({
           </label>
         </div>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <Stat value={soldPieces} label="sichtbare verkaufte Artikel" />
         <Stat
           value={monthSales.length + monthOnline.length}

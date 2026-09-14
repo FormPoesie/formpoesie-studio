@@ -266,8 +266,34 @@ export function sessionCookie(
   value: string,
   maxAge: number,
 ) {
-  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  const forwardedProtocol = (request.headers.get('x-forwarded-proto') || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  const secureRequest =
+    forwardedProtocol === 'https' || /^https:\/\//i.test(request.url || '');
+  const secure = secureRequest ? '; Secure' : '';
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+export function requestUrl(request: Request) {
+  try {
+    return new URL(request.url);
+  } catch {
+    const forwardedProtocol = (request.headers.get('x-forwarded-proto') || '')
+      .split(',')[0]
+      .trim()
+      .toLowerCase();
+    const protocol = forwardedProtocol === 'https' ? 'https' : 'http';
+    const host =
+      request.headers.get('x-forwarded-host') ||
+      request.headers.get('host') ||
+      'formpoesie.local';
+    const path = request.url?.startsWith('/')
+      ? request.url
+      : `/${request.url || ''}`;
+    return new URL(path, `${protocol}://${host}`);
+  }
 }
 
 export function inventoryHeaders(accessToken?: string) {
