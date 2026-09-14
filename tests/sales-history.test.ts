@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   expenseAmountCents,
   filterSalesHistory,
+  isWithinRecentCalendarDays,
   marketVenue,
 } from '../lib/sales-history';
 
@@ -35,4 +36,23 @@ void test('Verkaufshistorie filtert Markt und Datum gemeinsam', () => {
 void test('Marktkosten und sonstige Ausgaben werden centgenau übernommen', () => {
   assert.equal(expenseAmountCents({ amountCents: 750 }), 750);
   assert.equal(expenseAmountCents({ priceCents: 499, quantity: 3 }), 1497);
+});
+
+void test('Startseitenerfolge umfassen auch den Sonntag vor einem Montag', () => {
+  assert.equal(
+    isWithinRecentCalendarDays('2026-09-13', '2026-09-14'),
+    true,
+  );
+  assert.equal(
+    isWithinRecentCalendarDays('2026-09-08', '2026-09-14'),
+    true,
+  );
+  assert.equal(
+    isWithinRecentCalendarDays('2026-09-07', '2026-09-14'),
+    false,
+  );
+  assert.equal(
+    isWithinRecentCalendarDays('2026-09-15', '2026-09-14'),
+    false,
+  );
 });

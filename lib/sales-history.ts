@@ -45,6 +45,26 @@ function matchesDate(row: HistoryRow, filter: SalesHistoryFilter) {
   );
 }
 
+export function isWithinRecentCalendarDays(
+  value: unknown,
+  today: string,
+  days = 7,
+) {
+  const date = text(value).slice(0, 10);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(today) ||
+    !Number.isInteger(days) ||
+    days < 1
+  )
+    return false;
+  const firstDay = new Date(`${today}T12:00:00Z`);
+  if (Number.isNaN(firstDay.getTime())) return false;
+  firstDay.setUTCDate(firstDay.getUTCDate() - (days - 1));
+  const start = firstDay.toISOString().slice(0, 10);
+  return date >= start && date <= today;
+}
+
 export function filterSalesHistory(
   marketSales: HistoryRow[],
   onlineSales: HistoryRow[],

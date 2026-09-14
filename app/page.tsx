@@ -70,6 +70,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import type { InventoryItem } from '@/lib/inventory-bridge';
 import { validateListingContent } from '@/lib/listing-engine';
+import { isWithinRecentCalendarDays } from '@/lib/sales-history';
 import {
   InventoryWorkspace,
   type InventoryArea,
@@ -4324,22 +4325,19 @@ function WeeklySuccesses({
           },
       )
       .then((data) => {
-        const now = new Date();
-        const day = (now.getDay() + 6) % 7;
-        const start = new Date(now);
-        start.setHours(0, 0, 0, 0);
-        start.setDate(start.getDate() - day);
-        const inWeek = (value: unknown) => {
-          const date = new Date(String(value));
-          return (
-            Number.isFinite(date.getTime()) && date >= start && date <= now
-          );
-        };
+        const today = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Europe/Berlin',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(new Date());
+        const isRecent = (value: unknown) =>
+          isWithinRecentCalendarDays(value, today);
         const sales = (data.sales || []).filter(
-          (sale) => sale.isCancelled !== true && inWeek(sale.date),
+          (sale) => sale.isCancelled !== true && isRecent(sale.date),
         );
         const online = (data.onlineSales || []).filter((sale) =>
-          inWeek(sale.date),
+          isRecent(sale.date),
         );
         let pieces = 0;
         let revenue = 0;
@@ -4390,8 +4388,8 @@ function WeeklySuccesses({
 
   if (!enabled) return null;
   const cards: Array<[string | number, string, string?]> = [
-    [stats?.pieces ?? '…', 'verkaufte Artikel diese Woche'],
-    [stats ? money(stats.revenue / 100) : '…', 'Umsatz diese Woche'],
+    [stats?.pieces ?? '…', 'verkaufte Artikel in 7 Tagen'],
+    [stats ? money(stats.revenue / 100) : '…', 'Umsatz in 7 Tagen'],
     [
       stats?.top || '…',
       stats
@@ -4405,7 +4403,7 @@ function WeeklySuccesses({
       <p className="text-xs font-semibold tracking-[.12em] text-[var(--fp-primary)] uppercase">
         Erfolge
       </p>
-      <h2 className="mt-1 font-heading text-3xl">Diese Woche</h2>
+      <h2 className="mt-1 font-heading text-3xl">Letzte 7 Tage</h2>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map(([value, label, productId]) => (
           <button
