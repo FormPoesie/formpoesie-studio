@@ -1,5 +1,5 @@
 export function shippingMethodForChannel(channel: string) {
-  return channel === 'Abholung' ? 'abholung' : 'versand';
+  return channel === 'Abholung' ? 'abholung' : null;
 }
 
 export function invoiceCustomerIsComplete(name: string, address: string) {
