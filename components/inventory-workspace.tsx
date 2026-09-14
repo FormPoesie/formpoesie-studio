@@ -6219,6 +6219,7 @@ const ManufacturingEditor = forwardRef<
       if (!next) return false;
       const fields = [
         'weightClassGroup',
+        'defectSourceVariantId',
         'name',
         'materialId',
         'grams',
@@ -6400,6 +6401,10 @@ const ManufacturingEditor = forwardRef<
           );
           const usesPartProduction = structuralParts.length > 0;
           const isMultipart = partNames.size > 1;
+          const defectSource = variants.find(
+            (item) =>
+              string(item.id) === string(draft.defectSourceVariantId),
+          );
           const simpleColorCount =
             (string(draft.materialId) ? 1 : 0) + additionalColors.length;
           const productionLabel = isDigital
@@ -6449,6 +6454,16 @@ const ManufacturingEditor = forwardRef<
                       .filter(Boolean)
                       .join(' · ') || 'Größe und Ausprägung noch offen'}
                   </span>
+                  {defectSource ? (
+                    <span className="mt-1 block text-xs font-medium text-[#8b5c27]">
+                      Mangelware von{' '}
+                      {string(
+                        defectSource.name || defectSource.size,
+                        'gewählter Variante',
+                      )}{' '}
+                      · {number(draft.quantity)} Stück
+                    </span>
+                  ) : null}
                   <span className="mt-1 block text-xs text-muted-foreground">
                     {isDigital ? (
                       <>Digitale Datei · kein Stücklimit · 100 % Marge</>
@@ -6680,7 +6695,11 @@ const ManufacturingEditor = forwardRef<
                     ) : (
                       <>
                         <Field
-                          label="Fertigbestand"
+                          label={
+                            string(draft.defectSourceVariantId)
+                              ? 'Anzahl Mangelware'
+                              : 'Fertigbestand'
+                          }
                           type="number"
                           value={string(number(draft.quantity))}
                           onChange={(value) =>
@@ -6873,38 +6892,46 @@ const ManufacturingEditor = forwardRef<
                 </div>
                 <details className="group/more mt-4 rounded-xl border bg-white/55">
                   <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
-                    Zustand, Größen &amp; Zusatzkosten
+                    Mangelware, Zubehör &amp; Zusatzkosten
                     <span className="transition group-open/more:rotate-180">
                       ⌄
                     </span>
                   </summary>
                   <div className="grid gap-4 border-t p-3 sm:grid-cols-2">
                     <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                      Größen &amp; Gewichtsklassen
+                      Mangelware von Variante
                       <select
                         className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                        value={string(draft.weightClassGroup)}
+                        value={string(draft.defectSourceVariantId)}
                         onChange={(event) =>
                           updateVariant(
                             id,
-                            'weightClassGroup',
-                            event.target.value || null,
+                            'defectSourceVariantId',
+                            event.target.value
+                              ? Number(event.target.value)
+                              : null,
                           )
                         }
                       >
-                        <option value="">Eigenständige Variante</option>
+                        <option value="">
+                          Keine Mangelware – normale Variante
+                        </option>
                         {variants
-                          .filter((item) => string(item.id) !== id)
+                          .filter(
+                            (item) =>
+                              string(item.id) !== id &&
+                              !string(item.defectSourceVariantId),
+                          )
                           .map((item) => (
                             <option
                               key={string(item.id)}
-                              value={string(item.weightClassGroup || item.id)}
+                              value={string(item.id)}
                             >
-                              Gewichtsklasse von{' '}
                               {string(
                                 item.name || item.appearance,
                                 'Variante ' + string(item.id),
                               )}
+                              {string(item.size) ? ` · ${string(item.size)}` : ''}
                             </option>
                           ))}
                       </select>
@@ -6937,7 +6964,7 @@ const ManufacturingEditor = forwardRef<
                       }
                     />
                     <Field
-                      label="Zubehör, das mitgeht"
+                      label="Mitgegebenes Zubehör (Freitext)"
                       value={string(draft.accessories)}
                       onChange={(value) =>
                         updateVariant(id, 'accessories', value)
@@ -6950,6 +6977,36 @@ const ManufacturingEditor = forwardRef<
                         updateVariant(id, 'extraCostCents', value)
                       }
                     />
+                    <div className="flex flex-wrap gap-2 sm:col-span-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          document
+                            .getElementById(
+                              `product-components-${string(product.id)}`,
+                            )
+                            ?.scrollIntoView({ behavior: 'smooth' })
+                        }
+                      >
+                        <Plus className="size-3.5" /> Bauteil zuordnen
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          document
+                            .getElementById(
+                              `product-accessories-${string(product.id)}`,
+                            )
+                            ?.scrollIntoView({ behavior: 'smooth' })
+                        }
+                      >
+                        <Plus className="size-3.5" /> Zubehörartikel zuordnen
+                      </Button>
+                    </div>
                   </div>
                 </details>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -7223,7 +7280,11 @@ const ManufacturingEditor = forwardRef<
                           </select>
                         </label>
                         <Field
-                          label="Fertigbestand"
+                          label={
+                            string(values.defectSourceVariantId)
+                              ? 'Anzahl Mangelware'
+                              : 'Fertigbestand'
+                          }
                           type="number"
                           value={string(values.quantity)}
                           onChange={(value) =>
@@ -7306,39 +7367,45 @@ const ManufacturingEditor = forwardRef<
                 </section>
                 <details className="group/more rounded-xl border bg-white/55">
                   <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
-                    Zustand, Größen &amp; Zusatzkosten
+                    Mangelware, Zubehör &amp; Zusatzkosten
                     <span className="transition group-open/more:rotate-180">
                       ⌄
                     </span>
                   </summary>
                   <div className="grid gap-4 border-t p-4 sm:grid-cols-2">
                     <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-                      Größen &amp; Gewichtsklassen
+                      Mangelware von Variante
                       <select
                         className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
-                        value={string(values.weightClassGroup)}
+                        value={string(values.defectSourceVariantId)}
                         onChange={(event) =>
                           setValues((current) => ({
                             ...current,
-                            weightClassGroup: event.target.value || null,
+                            defectSourceVariantId: event.target.value
+                              ? Number(event.target.value)
+                              : null,
                           }))
                         }
                       >
-                        <option value="">Eigenständige Variante</option>
+                        <option value="">
+                          Keine Mangelware – normale Variante
+                        </option>
                         {variants
                           .filter(
-                            (item) => string(item.id) !== string(values.id),
+                            (item) =>
+                              string(item.id) !== string(values.id) &&
+                              !string(item.defectSourceVariantId),
                           )
                           .map((item) => (
                             <option
                               key={string(item.id)}
-                              value={string(item.weightClassGroup || item.id)}
+                              value={string(item.id)}
                             >
-                              Gewichtsklasse von{' '}
                               {string(
                                 item.name || item.appearance,
                                 'Variante ' + string(item.id),
                               )}
+                              {string(item.size) ? ` · ${string(item.size)}` : ''}
                             </option>
                           ))}
                       </select>
@@ -7390,7 +7457,7 @@ const ManufacturingEditor = forwardRef<
                       }
                     />
                     <Field
-                      label="Zubehör, das mitgeht"
+                      label="Mitgegebenes Zubehör (Freitext)"
                       value={string(values.accessories)}
                       onChange={(value) =>
                         setValues((current) => ({
@@ -7409,6 +7476,36 @@ const ManufacturingEditor = forwardRef<
                         }))
                       }
                     />
+                    <div className="flex flex-wrap gap-2 sm:col-span-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          document
+                            .getElementById(
+                              `product-components-${string(product.id)}`,
+                            )
+                            ?.scrollIntoView({ behavior: 'smooth' })
+                        }
+                      >
+                        <Plus className="size-3.5" /> Bauteil zuordnen
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          document
+                            .getElementById(
+                              `product-accessories-${string(product.id)}`,
+                            )
+                            ?.scrollIntoView({ behavior: 'smooth' })
+                        }
+                      >
+                        <Plus className="size-3.5" /> Zubehörartikel zuordnen
+                      </Button>
+                    </div>
                   </div>
                 </details>
                 <div className="rounded-xl border bg-white p-3 text-xs sm:col-span-2 lg:col-span-3">
@@ -7748,6 +7845,7 @@ function RelationsSummary({
   const [accessoryDraft, setAccessoryDraft] = useState<Row>({});
   const [relationMessage, setRelationMessage] = useState('');
   const [relationSaving, setRelationSaving] = useState(false);
+  const [componentFormOpen, setComponentFormOpen] = useState(true);
   const selectedComponent = selectableProducts.find(
     (item) => string(item.id) === string(componentDraft.componentProductId),
   );
@@ -7859,8 +7957,15 @@ function RelationsSummary({
           </div>
         </details>
       ) : null}
-      <section className="rounded-2xl border bg-white/55 p-4">
-        <h3 className="font-medium">Bauteile & Stückliste</h3>
+      <section
+        id={`product-components-${string(product.id)}`}
+        className="scroll-mt-6 rounded-2xl border bg-white/55 p-4"
+      >
+        <h3 className="font-medium">Bauteile erfassen</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Lagerartikel, die fest in diesem Artikel oder einer Variante verbaut
+          werden.
+        </p>
         <div className="mt-3 space-y-2">
           {components.map((item) => (
             <div
@@ -7907,7 +8012,13 @@ function RelationsSummary({
               Keine Bauteile zugeordnet.
             </p>
           ) : null}
-          <details className="group rounded-xl border border-dashed bg-white/60">
+          <details
+            open={componentFormOpen}
+            onToggle={(event) =>
+              setComponentFormOpen(event.currentTarget.open)
+            }
+            className="group rounded-xl border border-dashed bg-white/60"
+          >
             <summary className="flex cursor-pointer list-none items-center justify-between p-3 text-sm font-medium">
               <span>+ Lagerartikel als Bauteil</span>
               <span className="transition group-open:rotate-180">⌄</span>
@@ -8033,8 +8144,15 @@ function RelationsSummary({
           </details>
         </div>
       </section>
-      <section className="rounded-2xl border bg-white/55 p-4">
-        <h3 className="font-medium">Passendes Zubehör</h3>
+      <section
+        id={`product-accessories-${string(product.id)}`}
+        className="scroll-mt-6 rounded-2xl border bg-white/55 p-4"
+      >
+        <h3 className="font-medium">Zubehör erfassen</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Auswählbare Artikel, die mitgegeben oder dieser Variante zugeordnet
+          werden.
+        </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {accessories.map((item) => (
             <span

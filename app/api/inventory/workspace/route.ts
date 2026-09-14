@@ -336,6 +336,29 @@ async function saveMeasurementPrecision(
     .run();
 }
 
+async function saveVariantDefectMapping(rowId: string, values: JsonRecord) {
+  if (!('defectSourceVariantId' in values)) return;
+  const sourceVariantId = scalarText(values.defectSourceVariantId).trim();
+  if (!sourceVariantId) {
+    await env.DB.prepare(
+      'DELETE FROM inventory_variant_defects WHERE variant_id = ?',
+    )
+      .bind(rowId)
+      .run();
+    return;
+  }
+  await env.DB.prepare(
+    `INSERT INTO inventory_variant_defects
+       (variant_id, source_variant_id, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(variant_id) DO UPDATE SET
+       source_variant_id = excluded.source_variant_id,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(rowId, sourceVariantId, new Date().toISOString())
+    .run();
+}
+
 async function inventoryFetch(
   accessToken: string,
   path: string,
@@ -401,6 +424,7 @@ async function decorateProducts(value: unknown) {
   let assetRows: JsonRecord[] = [];
   let measurementRows: JsonRecord[] = [];
   let channelPriceRows: JsonRecord[] = [];
+  let variantDefectRows: JsonRecord[] = [];
   try {
     const metadataResult = await env.DB.prepare(
       `SELECT product_id AS productId, review_status AS studioStatus,
@@ -448,6 +472,15 @@ async function decorateProducts(value: unknown) {
     // The established standard price remains the fallback until the additive
     // channel-price migration is available.
   }
+  try {
+    const variantDefectResult = await env.DB.prepare(
+      `SELECT variant_id AS variantId, source_variant_id AS sourceVariantId
+       FROM inventory_variant_defects`,
+    ).all<JsonRecord>();
+    variantDefectRows = variantDefectResult.results || [];
+  } catch {
+    // Variants remain editable until the additive defect mapping is available.
+  }
   const metadata = new Map(
     metadataRows.map((row) => [scalarText(row.productId), row]),
   );
@@ -462,6 +495,9 @@ async function decorateProducts(value: unknown) {
       `${scalarText(row.entityKind)}:${scalarText(row.rowId)}`,
       row,
     ]),
+  );
+  const variantDefects = new Map(
+    variantDefectRows.map((row) => [scalarText(row.variantId), row]),
   );
   const withChannelPrices = (
     entity: 'products' | 'product_variants',
@@ -516,9 +552,12 @@ async function decorateProducts(value: unknown) {
       {
         ...product,
         variants: withPreciseMeasurements('product_variants', product.variants)
-          .map((variant) =>
-            withChannelPrices('product_variants', variant, 'priceCents'),
-          )
+          .map((variant) => ({
+            ...withChannelPrices('product_variants', variant, 'priceCents'),
+            defectSourceVariantId:
+              variantDefects.get(scalarText(variant.id))?.sourceVariantId ||
+              null,
+          }))
           .sort(compareProductVariants),
         filaments: withPreciseMeasurements(
           'product_filaments',
@@ -1956,6 +1995,8 @@ export async function POST(request: Request) {
           body.values,
         );
     }
+    if (body.entity === 'product_variants' && created?.id != null)
+      await saveVariantDefectMapping(scalarText(created.id), body.values);
     if (
       created?.id != null &&
       ['products', 'product_variants'].includes(body.entity)
@@ -2129,12 +2170,16 @@ export async function PATCH(request: Request) {
     ['etsyPriceCents', 'vintedPriceCents', 'marketPriceCents'].some(
       (key) => key in body.values!,
     );
+  const hasVariantDefectMetadata =
+    body.entity === 'product_variants' &&
+    'defectSourceVariantId' in body.values;
   if (
     (!values || !Object.keys(values).length) &&
     !submittedSaleItems?.length &&
     !hasProductMetadata &&
     !hasExpenseMetadata &&
-    !hasChannelPrices
+    !hasChannelPrices &&
+    !hasVariantDefectMetadata
   )
     return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });
   try {
@@ -2257,6 +2302,8 @@ export async function PATCH(request: Request) {
         )
       : [];
     await saveMeasurementPrecision(body.entity, String(body.id), body.values);
+    if (hasVariantDefectMetadata)
+      await saveVariantDefectMapping(String(body.id), body.values);
     if (hasChannelPrices)
       await saveChannelPrices(
         body.entity,
@@ -2541,6 +2588,14 @@ export async function DELETE(request: Request) {
             `DELETE FROM inventory_measurement_precision
              WHERE entity_kind = 'product_variants' AND row_id = ?`,
           ).bind(String(body.id)),
+          env.DB.prepare(
+            `DELETE FROM inventory_variant_defects WHERE variant_id = ?`,
+          ).bind(String(body.id)),
+          env.DB.prepare(
+            `UPDATE inventory_variant_defects
+             SET source_variant_id = NULL, updated_at = ?
+             WHERE source_variant_id = ?`,
+          ).bind(new Date().toISOString(), String(body.id)),
         ]);
       }
       return Response.json({ deleted: true, result });
