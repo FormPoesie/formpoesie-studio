@@ -6114,6 +6114,7 @@ const ManufacturingEditor = forwardRef<
       setMessage(`${label} wurde entfernt.`);
       await onChanged();
     } catch (reason) {
+      setPendingRemovalKey('');
       setMessage(
         reason instanceof Error ? reason.message : 'Eintrag nicht entfernt.',
       );
@@ -6335,6 +6336,11 @@ const ManufacturingEditor = forwardRef<
               )} fertig`}
         </Badge>
       </div>
+      {message ? (
+        <p className="mt-3 rounded-xl border bg-[var(--fp-paper)]/70 p-3 text-sm">
+          {message}
+        </p>
+      ) : null}
       <div className="mt-4 space-y-4">
         {orderedVariants.map((variant, index) => {
           const id = string(variant.id);
@@ -7552,9 +7558,6 @@ const ManufacturingEditor = forwardRef<
               </>
             )}
           </div>
-          {message ? (
-            <p className="mt-2 text-xs text-muted-foreground">{message}</p>
-          ) : null}
           <p className="mt-3 rounded-xl border border-[var(--fp-primary)]/20 bg-white/70 p-3 text-sm">
             Auch diese Angaben werden unten mit „Alle Änderungen speichern“
             übernommen.

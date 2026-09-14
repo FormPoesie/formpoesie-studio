@@ -2487,11 +2487,42 @@ export async function DELETE(request: Request) {
       return Response.json({ deleted: true, result });
     }
     if (removableRelationEntities.has(body.entity)) {
-      const result = await inventoryFetch(
-        accessToken,
-        `${body.entity}?id=eq.${encodeURIComponent(String(body.id))}`,
-        { method: 'DELETE' },
-      );
+      const rowId = encodeURIComponent(String(body.id));
+      let result: unknown;
+      try {
+        result = await inventoryFetch(
+          accessToken,
+          `${body.entity}?id=eq.${rowId}`,
+          { method: 'DELETE' },
+        );
+      } catch (error) {
+        if (body.entity !== 'product_variants') throw error;
+        await inventoryFetch(
+          accessToken,
+          `product_filaments?product_variant_id=eq.${rowId}`,
+          { method: 'DELETE' },
+        );
+        await inventoryFetch(
+          accessToken,
+          `product_components?or=(parent_variant_id.eq.${rowId},component_variant_id.eq.${rowId})`,
+          { method: 'DELETE' },
+        );
+        await inventoryFetch(
+          accessToken,
+          `product_accessories?or=(product_variant_id.eq.${rowId},accessory_variant_id.eq.${rowId})`,
+          { method: 'DELETE' },
+        );
+        await inventoryFetch(
+          accessToken,
+          `market_demands?product_variant_id=eq.${rowId}`,
+          { method: 'DELETE' },
+        );
+        result = await inventoryFetch(
+          accessToken,
+          `product_variants?id=eq.${rowId}`,
+          { method: 'DELETE' },
+        );
+      }
       if (body.entity === 'product_variants') {
         await env.DB.batch([
           env.DB.prepare(
