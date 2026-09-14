@@ -897,10 +897,20 @@ export function InventoryWorkspace({
         />
       ) : null}
       {active === "sales" ? (
-        <Sales data={data.sales || {}} onOpenProduct={openProduct} />
+        <Sales
+          data={data.sales || {}}
+          onOpenProduct={openProduct}
+          onEditSale={(row) => openEditor("sales", row)}
+          onEditOnlineSale={(row) => openEditor("online_sales", row)}
+        />
       ) : null}
       {active === "months" ? (
-        <Months data={data.months || {}} onOpenProduct={openProduct} />
+        <Months
+          data={data.months || {}}
+          onOpenProduct={openProduct}
+          onEditSale={(row) => openEditor("sales", row)}
+          onEditOnlineSale={(row) => openEditor("online_sales", row)}
+        />
       ) : null}
       {active === "account" ? <Account data={data.account || {}} /> : null}
       {active === "trash" ? (
@@ -3421,9 +3431,13 @@ function CashRegister({
 function Sales({
   data,
   onOpenProduct,
+  onEditSale,
+  onEditOnlineSale,
 }: {
   data: AreaData;
   onOpenProduct: (productId: string) => void | Promise<void>;
+  onEditSale: (sale: Row) => void;
+  onEditOnlineSale: (sale: Row) => void;
 }) {
   const items = rows(data.sales).filter((sale) => !boolean(sale.isCancelled));
   const online = rows(data.onlineSales);
@@ -3633,7 +3647,15 @@ function Sales({
                 </p>
               </div>
               <div className="text-lg font-semibold">
-                {cents(saleTotal(sale))}
+                <span>{cents(saleTotal(sale))}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-3"
+                  onClick={() => onEditSale(sale)}
+                >
+                  <Pencil className="size-3.5" /> Verkauf bearbeiten
+                </Button>
               </div>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -3695,7 +3717,15 @@ function Sales({
                 </p>
               </div>
               <div className="text-lg font-semibold">
-                {cents(onlineSaleRevenue(sale))}
+                <span>{cents(onlineSaleRevenue(sale))}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-3"
+                  onClick={() => onEditOnlineSale(sale)}
+                >
+                  <Pencil className="size-3.5" /> Verkauf bearbeiten
+                </Button>
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -4030,9 +4060,13 @@ function Expenses({
 function Months({
   data,
   onOpenProduct,
+  onEditSale,
+  onEditOnlineSale,
 }: {
   data: AreaData;
   onOpenProduct: (productId: string) => void | Promise<void>;
+  onEditSale: (sale: Row) => void;
+  onEditOnlineSale: (sale: Row) => void;
 }) {
   const sales = rows(data.sales).filter((sale) => !boolean(sale.isCancelled));
   const online = rows(data.onlineSales);
@@ -4040,6 +4074,9 @@ function Months({
   const otherExpenses = rows(data.otherExpenses);
   const expenses = [...marketExpenses, ...otherExpenses];
   const highlights = rows(data.highlights);
+  const markets = rows(data.markets);
+  const saleItemName = (saleItem: Row) =>
+    string(object(object(saleItem.articleVariant).article).name, "Artikel");
   const keys = [
     ...new Set(
       [
@@ -4216,39 +4253,160 @@ function Months({
           const highlight = highlights.find(
             (item) => string(item.month) === key,
           );
+          const saleCount = monthSales.length + monthOnline.length;
           return (
-            <article key={key} className="rounded-2xl border bg-white/65 p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="font-heading text-2xl">
-                  {new Intl.DateTimeFormat("de-DE", {
-                    month: "long",
-                    year: "numeric",
-                  }).format(new Date(key + "-01T00:00:00Z"))}
-                </h2>
-                <Badge variant="outline">{soldPieces} verkaufte Artikel</Badge>
+            <details
+              key={key}
+              className="group overflow-hidden rounded-2xl border bg-white/65"
+            >
+              <summary className="cursor-pointer list-none p-5 marker:content-none">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="font-heading text-2xl">
+                    {new Intl.DateTimeFormat("de-DE", {
+                      month: "long",
+                      year: "numeric",
+                    }).format(new Date(key + "-01T00:00:00Z"))}
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">
+                      {soldPieces} verkaufte Artikel
+                    </Badge>
+                    <span
+                      className="grid size-8 place-items-center rounded-full border bg-white text-sm transition group-open:rotate-180"
+                      aria-hidden="true"
+                    >
+                      ⌄
+                    </span>
+                  </div>
+                </div>
+                <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Umsatz</dt>
+                    <dd className="mt-1 font-semibold">{cents(revenue)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">
+                      Herstellung
+                    </dt>
+                    <dd className="mt-1">{cents(costs)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Ausgaben</dt>
+                    <dd className="mt-1">{cents(other)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Ergebnis</dt>
+                    <dd className="mt-1 font-semibold">
+                      {cents(revenue - costs - other)}
+                    </dd>
+                  </div>
+                </dl>
+                <p className="mt-4 text-xs font-medium text-[var(--fp-primary)]">
+                  {saleCount
+                    ? `${saleCount} Verkaufsvorgang${saleCount === 1 ? "" : "e"} anzeigen`
+                    : "Keine Verkaufsvorgänge in diesem Monat"}
+                </p>
+              </summary>
+              <div className="border-t bg-white/35 p-5">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-heading text-xl">
+                      Verkäufe &amp; Einzelpositionen
+                    </h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Eine Position öffnet immer den Verkauf, in dem sie gebucht
+                      wurde.
+                    </p>
+                  </div>
+                  <Badge variant="outline">{saleCount} Vorgänge</Badge>
+                </div>
+                <div className="grid gap-3">
+                  {monthSales.map((sale) => (
+                    <article
+                      key={string(sale.id)}
+                      className="rounded-xl border bg-white/75 p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="font-medium">
+                            Verkauf #{string(sale.id)}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {date(sale.date)} ·{" "}
+                            {marketVenue(sale, markets).label} ·{" "}
+                            {string(
+                              sale.paymentMethod,
+                              "Zahlungsart nicht erfasst",
+                            )}
+                          </div>
+                        </div>
+                        <div className="font-semibold">
+                          {cents(saleTotal(sale))}
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        {rows(sale.items).map((item) => {
+                          const quantity = number(item.quantity, 1);
+                          return (
+                            <button
+                              key={string(item.id)}
+                              type="button"
+                              onClick={() => onEditSale(sale)}
+                              className="flex items-center justify-between gap-3 rounded-lg border bg-white p-3 text-left transition hover:border-[var(--fp-primary)] hover:bg-[var(--fp-mist)]/45"
+                            >
+                              <span>
+                                <span className="block text-sm font-medium">
+                                  {quantity} × {saleItemName(item)}
+                                </span>
+                                <span className="mt-1 block text-xs text-muted-foreground">
+                                  Einzelpreis {cents(item.unitSalePriceCents)} ·
+                                  Herstellung {cents(item.unitCostPriceCents)}
+                                </span>
+                              </span>
+                              <span className="shrink-0 text-xs font-medium text-[var(--fp-primary)]">
+                                Verkauf ansehen
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </article>
+                  ))}
+                  {monthOnline.map((sale) => (
+                    <button
+                      key={`online-${string(sale.id)}`}
+                      type="button"
+                      onClick={() => onEditOnlineSale(sale)}
+                      className="flex items-center justify-between gap-3 rounded-xl border bg-white/75 p-4 text-left transition hover:border-[var(--fp-primary)] hover:bg-[var(--fp-mist)]/45"
+                    >
+                      <span>
+                        <span className="block font-medium">
+                          {number(sale.quantity, 1)} ×{" "}
+                          {string(sale.articleName, "Online-Verkauf")}
+                        </span>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          {date(sale.date)} · {onlineVenue(sale).label}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <span className="block font-semibold">
+                          {cents(onlineSaleRevenue(sale))}
+                        </span>
+                        <span className="mt-1 block text-xs font-medium text-[var(--fp-primary)]">
+                          Verkauf ansehen
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                  {!saleCount ? (
+                    <p className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
+                      Für diesen Monat wurden keine Verkaufspositionen gefunden.
+                    </p>
+                  ) : null}
+                </div>
               </div>
-              <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-                <div>
-                  <dt className="text-xs text-muted-foreground">Umsatz</dt>
-                  <dd className="mt-1 font-semibold">{cents(revenue)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Herstellung</dt>
-                  <dd className="mt-1">{cents(costs)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Ausgaben</dt>
-                  <dd className="mt-1">{cents(other)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Ergebnis</dt>
-                  <dd className="mt-1 font-semibold">
-                    {cents(revenue - costs - other)}
-                  </dd>
-                </div>
-              </dl>
               {highlight ? (
-                <div className="mt-5 rounded-xl bg-[var(--fp-mist)] p-4 text-sm">
+                <div className="m-5 mt-0 rounded-xl bg-[var(--fp-mist)] p-4 text-sm">
                   <div className="text-xs font-semibold tracking-[.1em] text-[var(--fp-primary)] uppercase">
                     Modell des Monats
                   </div>
@@ -4273,7 +4431,7 @@ function Months({
                   )}
                 </div>
               ) : null}
-            </article>
+            </details>
           );
         })}
       </div>
@@ -4431,6 +4589,7 @@ function EntityEditor({
   const productHasVariants = isProduct && rows(editor.row.variants).length > 0;
   const isMaterial = editor.entity === "materials";
   const isMarket = editor.entity === "markets";
+  const isSale = editor.entity === "sales";
   const isOnline = editor.entity === "online_sales";
   const isExpense = editor.entity === "other_expenses";
   async function saveEverything() {
@@ -4455,13 +4614,18 @@ function EntityEditor({
               ? editor.row.id
                 ? "Artikel bearbeiten"
                 : "Artikel anlegen"
-              : editor.row.id
-                ? "Bearbeiten"
-                : "Neu anlegen"}
+              : isSale || isOnline
+                ? "Verkauf bearbeiten"
+                : editor.row.id
+                  ? "Bearbeiten"
+                  : "Neu anlegen"}
           </DialogTitle>
           <DialogDescription>
-            Die vertraute Artikelmaske: Basis, Varianten, Herstellung,
-            Kalkulation und Bestand auf einer Seite.
+            {isProduct
+              ? "Die vertraute Artikelmaske: Basis, Varianten, Herstellung, Kalkulation und Bestand auf einer Seite."
+              : isSale || isOnline
+                ? "Der ursprünglich gebuchte Verkauf bleibt einsehbar und kann hier aktualisiert werden."
+                : "Angaben prüfen und Änderungen speichern."}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2 sm:grid-cols-2">
@@ -4883,11 +5047,108 @@ function EntityEditor({
           ) : null}
           {isOnline ? (
             <>
+              {input("articleName", "Artikel")}
+              {input("size", "Variante / Größe")}
+              {input("quantity", "Menge", "number")}
+              {input("date", "Verkaufsdatum", "date")}
+              {input("channel", "Verkaufskanal")}
+              <EuroField
+                label="Verkaufspreis pro Stück"
+                value={number(form.salePriceCents)}
+                onChange={(value) => setValue("salePriceCents", value)}
+              />
+              <EuroField
+                label="Versandkosten"
+                value={number(form.shippingCostCents)}
+                onChange={(value) => setValue("shippingCostCents", value)}
+              />
               {input("printer", "Drucker")}
               {input("printDeadline", "Druckfrist", "date")}
               {input("shippingMethod", "Versandart")}
               {input("shippingDeadline", "Versandfrist", "date")}
               {input("shippingRecipient", "Empfänger")}
+              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
+                Notiz
+                <Textarea
+                  value={string(form.note)}
+                  onChange={(event) => setValue("note", event.target.value)}
+                  className="bg-white text-foreground"
+                />
+              </label>
+            </>
+          ) : null}
+          {isSale ? (
+            <>
+              {input("date", "Verkaufsdatum", "date")}
+              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                Zahlungsart
+                <select
+                  className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                  value={string(form.paymentMethod)}
+                  onChange={(event) =>
+                    setValue("paymentMethod", event.target.value)
+                  }
+                >
+                  <option value="">Ohne Angabe</option>
+                  <option value="BAR">Bar</option>
+                  <option value="PAYPAL">PayPal</option>
+                  <option value="KARTE">Karte</option>
+                  <option value="SONSTIGES">Überweisung / Sonstiges</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                Preisberechnung
+                <select
+                  className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                  value={string(form.pricingMode, "ITEMS")}
+                  onChange={(event) =>
+                    setValue("pricingMode", event.target.value)
+                  }
+                >
+                  <option value="ITEMS">Aus Einzelpositionen</option>
+                  <option value="TOTAL">Fester Gesamtpreis</option>
+                </select>
+              </label>
+              {string(form.pricingMode, "ITEMS") === "TOTAL" ? (
+                <EuroField
+                  label="Gesamtpreis"
+                  value={number(form.totalPriceCents)}
+                  onChange={(value) => setValue("totalPriceCents", value)}
+                />
+              ) : (
+                <EuroField
+                  label="Rabatt"
+                  value={number(form.discountCents)}
+                  onChange={(value) => setValue("discountCents", value)}
+                />
+              )}
+              <section className="rounded-2xl border bg-white/70 p-4 sm:col-span-2">
+                <h3 className="font-heading text-xl">Gebuchte Positionen</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Mengen und Herstellkosten sind Buchungs-Snapshots. Dadurch
+                  bleibt der damalige Lagerabgang nachvollziehbar.
+                </p>
+                <div className="mt-3 grid gap-2">
+                  {rows(form.items).map((item) => (
+                    <div
+                      key={string(item.id)}
+                      className="flex items-center justify-between gap-3 rounded-xl border bg-white p-3 text-sm"
+                    >
+                      <span>
+                        {number(item.quantity, 1)} ×{" "}
+                        {string(
+                          object(object(item.articleVariant).article).name,
+                          "Artikel",
+                        )}
+                      </span>
+                      <span className="text-right text-xs text-muted-foreground">
+                        Verkauf {cents(item.unitSalePriceCents)} · Herstellung{" "}
+                        {cents(item.unitCostPriceCents)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
               <label className="grid gap-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
                 Notiz
                 <Textarea

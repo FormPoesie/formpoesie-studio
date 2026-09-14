@@ -112,6 +112,14 @@ const entityFields: Record<string, Set<string>> = {
     "note",
   ]),
   markets: new Set(["name", "location", "date", "end_date", "status"]),
+  sales: new Set([
+    "date",
+    "payment_method",
+    "pricing_mode",
+    "discount_cents",
+    "total_price_cents",
+    "note",
+  ]),
   online_sales: new Set([
     "product_id",
     "article_name",
@@ -942,7 +950,9 @@ async function loadArea(accessToken: string, area: string, request: Request) {
           accessToken,
           "sales",
           "select=" +
-            encodeURIComponent("*,items:sale_items(*)") +
+            encodeURIComponent(
+              "*,items:sale_items(*,articleVariant:article_variants!sale_items_article_variant_id_fkey(*,article:articles(*)))",
+            ) +
             "&deleted_at=is.null&order=date.desc",
         ),
         query(
