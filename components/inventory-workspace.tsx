@@ -6084,6 +6084,22 @@ const ManufacturingEditor = forwardRef<
     );
   }
 
+  function addPartToVariant(row: Row, part = 'Bauteil') {
+    open('product_filaments', {
+      productId: number(product.id),
+      productVariantId: number(row.id),
+      part,
+      grams: 0,
+      wasteGrams: 0,
+      printer: row.printer || null,
+      printMinutes: 0,
+      position: filaments.length,
+    });
+    setMessage(
+      `${part} für „${string(row.name, 'Variante')}“: Material, Gewicht und Druckzeit ergänzen.`,
+    );
+  }
+
   async function removeManufacturingRow(
     entity: 'product_variants' | 'product_filaments',
     row: Row,
@@ -6389,6 +6405,9 @@ const ManufacturingEditor = forwardRef<
                 )
               : effectiveParts;
           const structuralParts = relevantParts.filter((item) =>
+            string(item.part).trim(),
+          );
+          const variantNamedParts = variantParts.filter((item) =>
             string(item.part).trim(),
           );
           const additionalColors = variantParts.filter(
@@ -6830,7 +6849,7 @@ const ManufacturingEditor = forwardRef<
                             </span>
                           </span>
                         ) : null}
-                        {variantParts.map((item) => {
+                        {additionalColors.map((item) => {
                           const label =
                             materialChoiceLabel(object(item.material)) ||
                             'Material offen';
@@ -6881,13 +6900,123 @@ const ManufacturingEditor = forwardRef<
                             </span>
                           );
                         })}
-                        {!string(draft.materialId) && !variantParts.length ? (
+                        {!string(draft.materialId) &&
+                        !additionalColors.length ? (
                           <span className="text-xs text-muted-foreground">
                             Noch keine Farbe hinterlegt.
                           </span>
                         ) : null}
                       </div>
                     </div>
+                    {!isDigital ? (
+                      <div className="rounded-xl border bg-white/75 p-3 sm:col-span-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h5 className="text-sm font-medium">
+                              Bauteile dieser Variante
+                            </h5>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              Zum Beispiel Wandhalterung oder Tischständer –
+                              jeweils mit eigenem Material, Gewicht und eigener
+                              Druckzeit.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                addPartToVariant(draft, 'Wandhalterung')
+                              }
+                            >
+                              <Plus className="size-3.5" /> Wandhalterung
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                addPartToVariant(draft, 'Tischständer')
+                              }
+                            >
+                              <Plus className="size-3.5" /> Tischständer
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => addPartToVariant(draft)}
+                            >
+                              <Plus className="size-3.5" /> Weiteres Bauteil
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {variantNamedParts.map((item) => {
+                            const materialLabel =
+                              materialChoiceLabel(object(item.material)) ||
+                              'Material offen';
+                            const partLabel = string(item.part, 'Bauteil');
+                            return (
+                              <span
+                                key={string(item.id)}
+                                className="inline-flex overflow-hidden rounded-xl border bg-white"
+                              >
+                                <button
+                                  type="button"
+                                  className="px-3 py-2 text-left text-xs hover:bg-[var(--fp-mist)]"
+                                  onClick={() =>
+                                    open('product_filaments', item)
+                                  }
+                                >
+                                  <strong className="block">{partLabel}</strong>
+                                  <span className="mt-0.5 block text-muted-foreground">
+                                    {materialLabel} ·{' '}
+                                    {decimalInputValue(item.grams)} g
+                                    {number(item.printMinutes) > 0
+                                      ? ` · ${duration(number(item.printMinutes))}`
+                                      : ''}
+                                  </span>
+                                </button>
+                                <Button
+                                  type="button"
+                                  variant={
+                                    pendingRemovalKey ===
+                                    `product_filaments:${string(item.id)}`
+                                      ? 'destructive'
+                                      : 'ghost'
+                                  }
+                                  size="icon"
+                                  className="h-auto w-9 rounded-none border-l text-red-700"
+                                  disabled={detailSaving}
+                                  aria-label={
+                                    pendingRemovalKey ===
+                                    `product_filaments:${string(item.id)}`
+                                      ? `${partLabel} endgültig entfernen`
+                                      : `${partLabel} entfernen`
+                                  }
+                                  onClick={() =>
+                                    void removeManufacturingRow(
+                                      'product_filaments',
+                                      item,
+                                      partLabel,
+                                    )
+                                  }
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </span>
+                            );
+                          })}
+                          {!variantNamedParts.length ? (
+                            <span className="text-xs text-muted-foreground">
+                              Noch keine Bauteile für diese Variante angelegt.
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <details className="group/more mt-4 rounded-xl border bg-white/55">
