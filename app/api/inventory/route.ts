@@ -11,7 +11,7 @@ export async function GET(request: Request) {
       { connected: false, error: 'Inventar ist nicht verbunden.' },
       { status: 401 },
     );
-  const result = offlineQuery(
+  const result = await offlineQuery(
     'products',
     'deleted_at=is.null&order=name.asc',
   );

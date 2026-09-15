@@ -7,6 +7,7 @@ import {
   readCookie,
   sessionCookie,
 } from '@/lib/inventory-bridge';
+import { authenticateInventoryUser, deleteInventorySession } from '@/lib/cloudflare-auth';
 
 const accessName = 'fp_inventory_access';
 const refreshName = 'fp_inventory_refresh';
@@ -92,26 +93,17 @@ export async function POST(request: Request) {
       { error: 'E-Mail-Adresse und Passwort fehlen.' },
       { status: 400 },
     );
-  const digest = Array.from(
-    new Uint8Array(
-      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.password)),
-    ),
-  )
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-  if (
-    body.email.trim().toLocaleLowerCase('de') === 'formpoesie@gmail.com' &&
-    digest === '2e71b2910a2952141920f190fa6bca756008368368c4cd461689fcd73611ea4e'
-  ) {
+  const local = await authenticateInventoryUser(body.email, body.password);
+  if (local) {
     const response = Response.json({
       connected: true,
-      email: 'formpoesie@gmail.com',
-      name: 'Marlon',
-      canManage: true,
+      email: local.user.email,
+      name: local.user.name,
+      canManage: canManageInventory(local.user, { id: local.user.id, name: local.user.name, role: local.user.role }),
     });
     response.headers.append(
       'Set-Cookie',
-      sessionCookie(request, accessName, 'fp-emergency-2026-09-15', 60 * 60 * 24 * 7),
+      sessionCookie(request, accessName, local.token, 60 * 60 * 24 * 30),
     );
     return response;
   }
@@ -165,6 +157,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  await deleteInventorySession(readCookie(request, accessName));
   const response = Response.json({ connected: false });
   response.headers.append(
     'Set-Cookie',

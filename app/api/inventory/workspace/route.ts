@@ -5,7 +5,7 @@ import {
   readCookie,
   requireInventoryManager,
 } from '@/lib/inventory-bridge';
-import { offlineQuery } from '@/lib/offline-inventory';
+import { offlineMutate, offlineQuery } from '@/lib/offline-inventory';
 import { env } from 'cloudflare:workers';
 import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
 import {
@@ -228,6 +228,11 @@ async function inventoryFetch(
   path: string,
   init?: RequestInit,
 ) {
+  const method = (init?.method || 'GET').toUpperCase();
+  if (method !== 'GET') {
+    const body = init?.body ? (JSON.parse(String(init.body)) as JsonRecord) : {};
+    return toCamel(await offlineMutate(path, method, body));
+  }
   const headers = new Headers(inventoryHeaders(accessToken));
   headers.set('Prefer', 'return=representation');
   if (init?.headers) {
@@ -252,7 +257,7 @@ async function inventoryFetch(
 
 async function query(accessToken: string, table: string, params: string) {
   void accessToken;
-  return toCamel(offlineQuery(table, params));
+  return toCamel(await offlineQuery(table, params));
 }
 
 async function classifyMarkets(value: unknown) {

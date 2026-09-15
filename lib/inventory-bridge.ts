@@ -58,6 +58,12 @@ function stringValue(value: unknown, fallback = '') {
     : fallback;
 }
 
+export function inventoryReviewStatus(value: unknown): 'draft' | 'final' {
+  return stringValue(value).trim().toLocaleLowerCase('de') === 'final'
+    ? 'final'
+    : 'draft';
+}
+
 function rows(value: unknown) {
   return Array.isArray(value) ? (value as UnknownRow[]) : [];
 }
@@ -272,11 +278,9 @@ export function inventoryHeaders(accessToken?: string) {
 export async function getInventoryUser(request: Request) {
   const accessToken = readCookie(request, 'fp_inventory_access');
   if (!accessToken) return null;
-  if (accessToken === 'fp-emergency-2026-09-15')
-    return {
-      email: 'formpoesie@gmail.com',
-      id: '23175293-b48b-46e9-bb2d-ee03218019b7',
-    };
+  const { inventoryUserForToken } = await import('@/lib/cloudflare-auth');
+  const localUser = await inventoryUserForToken(accessToken);
+  if (localUser) return localUser;
   const response = await fetch(INVENTORY_SUPABASE_URL + '/auth/v1/user', {
     headers: inventoryHeaders(accessToken),
   });
@@ -295,8 +299,10 @@ export async function getInventoryProfile(
   accessToken: string,
   userId?: string,
 ) {
-  if (accessToken === 'fp-emergency-2026-09-15')
-    return { id: userId, name: 'Marlon', role: 'inhaber' };
+  const { inventoryUserForToken } = await import('@/lib/cloudflare-auth');
+  const localUser = await inventoryUserForToken(accessToken);
+  if (localUser)
+    return { id: localUser.id, name: localUser.name, role: localUser.role };
   if (!accessToken || !userId) return null;
   const response = await fetch(
     `${INVENTORY_SUPABASE_URL}/rest/v1/profiles?select=id,name,role&id=eq.${encodeURIComponent(userId)}&limit=1`,
@@ -313,7 +319,7 @@ export function canManageInventory(
 ) {
   const role = (profile?.role || '').trim().toLocaleLowerCase('de');
   if (role)
-    return ['inhaber', 'inhaber/in', 'admin', 'owner', 'verwaltung'].includes(
+    return ['inhaber', 'inhaber/in', 'admin', 'owner', 'verwaltung', 'vollzugriff'].includes(
       role,
     );
   const identity = `${profile?.name || ''} ${user?.email || ''}`
