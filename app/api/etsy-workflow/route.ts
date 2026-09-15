@@ -1,13 +1,12 @@
 /* oxlint-disable typescript/no-base-to-string, typescript/restrict-template-expressions */
 import { env } from 'cloudflare:workers';
 import {
-  INVENTORY_SUPABASE_URL,
-  inventoryHeaders,
   normalizeInventoryProduct,
   readCookie,
   requireInventoryAdmin,
   getInventoryUser,
 } from '@/lib/inventory-bridge';
+import { offlineQuery } from '@/lib/offline-inventory';
 import {
   calculateAutomaticEtsyPrice,
   type CentralPriceView,
@@ -42,15 +41,8 @@ function cents(value: unknown) {
   return Number.isFinite(number) ? Math.round(number) : null;
 }
 async function inventoryProduct(request: Request, productId: string) {
-  const token = readCookie(request, 'fp_inventory_access');
-  const select =
-    '*,designer:designers(*),filaments:product_filaments(*,material:materials(*)),variants:product_variants(*,material:materials(*))';
-  const response = await fetch(
-    `${INVENTORY_SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(productId)}&deleted_at=is.null&limit=1&select=${encodeURIComponent(select)}`,
-    { headers: inventoryHeaders(token), cache: 'no-store' },
-  );
-  if (!response.ok) throw new Error('INVALID_VARIANT_DATA');
-  const rows = (await response.json()) as Record<string, unknown>[];
+  void request;
+  const rows = await offlineQuery('products', `id=eq.${encodeURIComponent(productId)}&deleted_at=is.null&limit=1`);
   return rows[0] ? normalizeInventoryProduct(rows[0]) : null;
 }
 

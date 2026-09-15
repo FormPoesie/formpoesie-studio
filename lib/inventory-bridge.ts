@@ -1,8 +1,4 @@
 export const INVENTORY_APP_URL = 'https://formpoesie.expo.app';
-export const INVENTORY_SUPABASE_URL =
-  'https://udxxqdycgfaordrrfibu.supabase.co';
-export const INVENTORY_SUPABASE_KEY =
-  'sb_publishable_yAw5Bg7jxpPa-ddCR3GIrA_Vya3lKsQ';
 
 export type InventoryVariant = {
   id: number | string;
@@ -267,26 +263,13 @@ export function sessionCookie(
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
 
-export function inventoryHeaders(accessToken?: string) {
-  return {
-    apikey: INVENTORY_SUPABASE_KEY,
-    Authorization: `Bearer ${accessToken || INVENTORY_SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
-  };
-}
-
 export async function getInventoryUser(request: Request) {
   const accessToken = readCookie(request, 'fp_inventory_access');
   if (!accessToken) return null;
   const { inventoryUserForToken } = await import('@/lib/cloudflare-auth');
   const localUser = await inventoryUserForToken(accessToken);
   if (localUser) return localUser;
-  const response = await fetch(INVENTORY_SUPABASE_URL + '/auth/v1/user', {
-    headers: inventoryHeaders(accessToken),
-  });
-  return response.ok
-    ? ((await response.json()) as { email?: string; id?: string })
-    : null;
+  return null;
 }
 
 export type InventoryProfile = {
@@ -303,14 +286,8 @@ export async function getInventoryProfile(
   const localUser = await inventoryUserForToken(accessToken);
   if (localUser)
     return { id: localUser.id, name: localUser.name, role: localUser.role };
-  if (!accessToken || !userId) return null;
-  const response = await fetch(
-    `${INVENTORY_SUPABASE_URL}/rest/v1/profiles?select=id,name,role&id=eq.${encodeURIComponent(userId)}&limit=1`,
-    { headers: inventoryHeaders(accessToken), cache: 'no-store' },
-  );
-  if (!response.ok) return null;
-  const rows = (await response.json()) as InventoryProfile[];
-  return rows[0] || null;
+  void userId;
+  return null;
 }
 
 export function canManageInventory(

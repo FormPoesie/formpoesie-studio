@@ -1,7 +1,5 @@
 import {
-  INVENTORY_SUPABASE_URL,
   getInventoryUser,
-  inventoryHeaders,
   readCookie,
   requireInventoryManager,
 } from '@/lib/inventory-bridge';
@@ -234,26 +232,9 @@ async function inventoryFetch(
     const body = init?.body ? (JSON.parse(String(init.body)) as JsonRecord) : {};
     return toCamel(await offlineMutate(path, method, body));
   }
-  const headers = new Headers(inventoryHeaders(accessToken));
-  headers.set('Prefer', 'return=representation');
-  if (init?.headers) {
-    for (const [key, value] of new Headers(init.headers))
-      headers.set(key, value);
-  }
-  const response = await fetch(INVENTORY_SUPABASE_URL + '/rest/v1/' + path, {
-    ...init,
-    headers,
-  });
-  const result = (await response.json().catch(() => null)) as unknown;
-  if (!response.ok) {
-    const error = result as { message?: string; details?: string } | null;
-    throw new Error(
-      error?.message ||
-        error?.details ||
-        'Inventardaten konnten nicht gelesen werden.',
-    );
-  }
-  return toCamel(result);
+  void accessToken;
+  const [table, params = ''] = path.split('?');
+  return toCamel(await offlineQuery(table, params));
 }
 
 async function query(accessToken: string, table: string, params: string) {

@@ -1,8 +1,4 @@
-import {
-  INVENTORY_SUPABASE_KEY,
-  INVENTORY_SUPABASE_URL,
-  inventoryHeaders,
-} from './inventory-bridge';
+import { offlineQuery } from './offline-inventory';
 import {
   MARKET_INTELLIGENCE_CONFIG,
   applyTrendHistory,
@@ -34,7 +30,6 @@ import {
 
 export type MarketRunnerBindings = MarketResearchBindings & {
   DB: D1Database;
-  INVENTORY_SUPABASE_SERVICE_ROLE_KEY?: string;
 };
 
 type Row = Record<string, unknown>;
@@ -79,29 +74,9 @@ async function stableId(prefix: string, value: string) {
   return `${prefix}_${hash.slice(0, 24)}`;
 }
 
-function inventoryAuth(token: string) {
-  return {
-    ...inventoryHeaders(token),
-    Prefer: 'return=representation',
-  };
-}
-
 async function inventoryQuery(token: string, table: string, query: string) {
-  const response = await fetch(
-    `${INVENTORY_SUPABASE_URL}/rest/v1/${table}?${query}`,
-    {
-      headers: inventoryAuth(token),
-      signal: AbortSignal.timeout(20_000),
-    },
-  );
-  const payload = (await response.json().catch(() => null)) as unknown;
-  if (!response.ok) {
-    const error = payload as { message?: string } | null;
-    throw new Error(
-      error?.message || `Inventarabruf ${table}: Status ${response.status}.`,
-    );
-  }
-  return rows(payload);
+  void token;
+  return offlineQuery(table, query);
 }
 
 function productKind(product: Row) {
@@ -209,7 +184,7 @@ async function loadCatalog(token: string): Promise<Catalog> {
     .filter((product) => product.id && product.name);
   if (!products.length)
     throw new Error(
-      'Der autonome Katalogabruf liefert keine Produkte. Für den Wochenlauf ist INVENTORY_SUPABASE_SERVICE_ROLE_KEY erforderlich; bestehende Market Intelligence bleibt aktiv.',
+      'Der autonome Katalogabruf liefert keine Produkte; bestehende Market Intelligence bleibt aktiv.',
     );
   return { products, rawProducts, sales: [...sales, ...onlineSales] };
 }
@@ -634,10 +609,7 @@ export async function runMarketIntelligence(
     .bind(runId, runKind, instant)
     .run();
   try {
-    const token =
-      options.inventoryAccessToken ||
-      env.INVENTORY_SUPABASE_SERVICE_ROLE_KEY ||
-      INVENTORY_SUPABASE_KEY;
+    const token = options.inventoryAccessToken || '';
     const catalog = await loadCatalog(token);
     const fingerprint = await catalogFingerprint(catalog.products);
     const previousRun = await env.DB.prepare(

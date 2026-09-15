@@ -1,8 +1,5 @@
 import { env } from 'cloudflare:workers';
-import {
-  INVENTORY_SUPABASE_URL,
-  inventoryHeaders,
-} from '@/lib/inventory-bridge';
+import { offlineQuery } from '@/lib/offline-inventory';
 
 type Row = Record<string, unknown>;
 
@@ -21,13 +18,9 @@ function number(value: unknown, fallback = 0) {
 }
 
 async function source(accessToken: string, path: string) {
-  const response = await fetch(INVENTORY_SUPABASE_URL + '/rest/v1/' + path, {
-    headers: inventoryHeaders(accessToken),
-    cache: 'no-store',
-  });
-  if (!response.ok)
-    throw new Error('Verkäufe konnten nicht ausgewertet werden.');
-  return (await response.json()) as unknown;
+  void accessToken;
+  const [table, params = ''] = path.split('?');
+  return offlineQuery(table, params);
 }
 
 function currentMonth() {
