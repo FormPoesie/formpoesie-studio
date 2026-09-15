@@ -4547,9 +4547,14 @@ function Months({
 function Account({ data }: { data: AreaData }) {
   const user = object(data.user);
   const profile = object(data.profile);
-  const employees = rows(data.users).filter(
-    (account) => !['inhaber', 'vollzugriff'].includes(string(account.role).toLocaleLowerCase('de')),
-  );
+  const ownRole = string(profile.role).toLocaleLowerCase('de');
+  const employees = rows(data.users).filter((account) => {
+    if (string(account.id) === string(user.id)) return false;
+    const role = string(account.role).toLocaleLowerCase('de');
+    return ownRole === 'inhaber'
+      ? role !== 'inhaber'
+      : !['inhaber', 'vollzugriff'].includes(role);
+  });
   const [name, setName] = useState(string(profile.name));
   const [email, setEmail] = useState(string(user.email));
   const [currentPassword, setCurrentPassword] = useState('');

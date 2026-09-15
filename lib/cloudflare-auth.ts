@@ -132,8 +132,12 @@ export async function resetInventoryUserPassword(token: string, userId: string, 
   const db = await database();
   const target = await db.prepare('SELECT id,role FROM inventory_users WHERE id=?').bind(userId).first<{ id: string; role: string }>();
   if (!target) return { error: 'Konto nicht gefunden.', status: 404 };
-  if (['inhaber', 'vollzugriff'].includes(target.role.toLocaleLowerCase('de')))
-    return { error: 'Verwaltungskonten ändern ihr Passwort im persönlichen Konto.', status: 400 };
+  const adminRole = admin!.role.toLocaleLowerCase('de');
+  const targetRole = target.role.toLocaleLowerCase('de');
+  if (target.id === admin!.id)
+    return { error: 'Das eigene Passwort wird im persönlichen Konto geändert.', status: 400 };
+  if (targetRole === 'inhaber' || (targetRole === 'vollzugriff' && adminRole !== 'inhaber'))
+    return { error: 'Dieses Verwaltungskonto darfst du nicht zurücksetzen.', status: 403 };
   const salt = Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map((byte) => byte.toString(16).padStart(2, '0')).join('');
   await db.prepare('UPDATE inventory_users SET password_salt=?,password_hash=? WHERE id=?')
