@@ -345,6 +345,7 @@ export default function Home() {
   );
   const [inventoryConnected, setInventoryConnected] = useState(false);
   const [inventoryCanManage, setInventoryCanManage] = useState(false);
+  const [inventoryCanAdmin, setInventoryCanAdmin] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [inventoryEmail, setInventoryEmail] = useState('');
   const [inventoryUserName, setInventoryUserName] = useState('');
@@ -412,7 +413,7 @@ export default function Home() {
   function openInventory(area: InventoryArea = 'overview', productId = '') {
     if (
       ['pricing', 'sales', 'months', 'expenses', 'trash'].includes(area) &&
-      !inventoryCanManage
+      !inventoryCanAdmin
     )
       return;
     setActiveProduct(null);
@@ -513,7 +514,7 @@ export default function Home() {
     void loadTrash();
   }
 
-  function restoreBrowserView(view: string, canManage: boolean) {
+  function restoreBrowserView(view: string, canManage: boolean, canAdmin = false) {
     const inventoryArea = view.startsWith('inventory-')
       ? view.slice('inventory-'.length)
       : '';
@@ -536,7 +537,7 @@ export default function Home() {
       const area = inventoryArea as InventoryArea;
       if (
         ['pricing', 'sales', 'months', 'expenses', 'trash'].includes(area) &&
-        !canManage
+        !canAdmin
       ) {
         replaceBrowserView();
         return;
@@ -569,7 +570,7 @@ export default function Home() {
       setActiveProduct(null);
       closeModules();
       setOrderFormOpen(true);
-    } else if (view === 'trash' && canManage) {
+    } else if (view === 'trash' && canAdmin) {
       setActiveProduct(null);
       closeModules();
       setTrashOpen(true);
@@ -586,9 +587,11 @@ export default function Home() {
         email?: string;
         name?: string;
         canManage?: boolean;
+        canAdmin?: boolean;
       };
       setInventoryConnected(Boolean(session.connected));
       setInventoryCanManage(Boolean(session.canManage));
+      setInventoryCanAdmin(Boolean(session.canAdmin));
       if (session.email) setInventoryEmail(session.email);
       if (session.name) setInventoryUserName(session.name);
       if (!session.connected)
@@ -645,6 +648,7 @@ export default function Home() {
         connected?: boolean;
         name?: string;
         canManage?: boolean;
+        canAdmin?: boolean;
         error?: string;
       };
       if (!response.ok || !data.connected)
@@ -652,6 +656,7 @@ export default function Home() {
       setInventoryPassword('');
       setInventoryConnected(true);
       setInventoryCanManage(Boolean(data.canManage));
+      setInventoryCanAdmin(Boolean(data.canAdmin));
       if (data.name) setInventoryUserName(data.name);
       const inventoryResponse = await fetch('/api/inventory');
       const inventory = (await inventoryResponse.json()) as {
@@ -751,7 +756,7 @@ export default function Home() {
   useEffect(() => {
     queueMicrotask(() => {
       void loadInventory().then((session) => {
-        restoreBrowserView(currentBrowserView(), session.canManage);
+        restoreBrowserView(currentBrowserView(), Boolean(session.canManage), Boolean(session.canAdmin));
         if (!session.connected) return;
         void loadProducts().catch(() =>
           setNotice('Die Produktdatenbank wird vorbereitet.'),
@@ -1315,7 +1320,7 @@ export default function Home() {
             </button>
           ))}
           {navGroups
-            .filter((group) => !('restricted' in group) || inventoryCanManage)
+            .filter((group) => !('restricted' in group) || inventoryCanAdmin)
             .map((group) => (
               <details
                 key={group.label}
@@ -1354,7 +1359,7 @@ export default function Home() {
             ))}
         </nav>
         <div className="mt-auto space-y-1">
-          {inventoryCanManage ? (
+          {inventoryCanAdmin ? (
             <button
               type="button"
               onClick={openTrash}
@@ -1369,7 +1374,7 @@ export default function Home() {
               ) : null}
             </button>
           ) : null}
-          {inventoryCanManage ? (
+          {inventoryCanAdmin ? (
             <button
               onClick={() => void openSettings()}
               className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--fp-paper)]/68"
@@ -1401,7 +1406,7 @@ export default function Home() {
           </SheetHeader>
           <nav className="space-y-5 px-4 pb-2" aria-label="Mobile Navigation">
             {navGroups
-              .filter((group) => !('restricted' in group) || inventoryCanManage)
+              .filter((group) => !('restricted' in group) || inventoryCanAdmin)
               .map((group) => (
                 <section key={group.label}>
                   <h2 className="px-2 text-xs font-semibold tracking-[.12em] text-muted-foreground uppercase">
@@ -1432,7 +1437,7 @@ export default function Home() {
                 System
               </h2>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {inventoryCanManage ? (
+                {inventoryCanAdmin ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -1444,7 +1449,7 @@ export default function Home() {
                     <Trash2 className="size-5" /> Papierkorb
                   </button>
                 ) : null}
-                {inventoryCanManage ? (
+                {inventoryCanAdmin ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -1554,7 +1559,7 @@ export default function Home() {
                 <Check className="size-3" /> 3DFormPoesie
               </Badge>
             </a>
-            {inventoryCanManage ? (
+            {inventoryCanAdmin ? (
               <button
                 aria-label="Profile und Regeln öffnen"
                 onClick={() => void openSettings()}
@@ -1598,7 +1603,8 @@ export default function Home() {
           <InventoryWorkspace
             initialArea={inventoryArea}
             initialProductId={inventoryProductId}
-            canManage={inventoryCanManage}
+            canManage={inventoryCanAdmin}
+            canAdmin={inventoryCanAdmin}
             onCreateListing={createFromInventory}
           />
         ) : draftModule ? (

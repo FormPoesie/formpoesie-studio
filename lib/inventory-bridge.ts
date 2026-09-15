@@ -319,12 +319,23 @@ export function canManageInventory(
 ) {
   const role = (profile?.role || '').trim().toLocaleLowerCase('de');
   if (role)
-    return ['inhaber', 'inhaber/in', 'admin', 'owner', 'verwaltung', 'vollzugriff'].includes(
+    return ['inhaber', 'inhaber/in', 'admin', 'owner', 'verwaltung', 'vollzugriff', 'markt'].includes(
       role,
     );
   const identity = `${profile?.name || ''} ${user?.email || ''}`
     .trim()
     .toLocaleLowerCase('de');
+  return /(^|[\s.@_-])(marlon|jasmin)([\s.@_-]|$)/.test(identity);
+}
+
+export function canAccessInventoryAdministration(
+  user: { email?: string; id?: string } | null,
+  profile: InventoryProfile | null,
+) {
+  const role = (profile?.role || '').trim().toLocaleLowerCase('de');
+  if (['inhaber', 'inhaber/in', 'admin', 'owner', 'verwaltung', 'vollzugriff'].includes(role))
+    return true;
+  const identity = `${profile?.name || ''} ${user?.email || ''}`.toLocaleLowerCase('de');
   return /(^|[\s.@_-])(marlon|jasmin)([\s.@_-]|$)/.test(identity);
 }
 

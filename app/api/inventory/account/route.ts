@@ -4,13 +4,20 @@ import {
   inventoryHeaders,
   readCookie,
 } from '@/lib/inventory-bridge';
+import { inventoryUserForToken, updateInventoryAccount } from '@/lib/cloudflare-auth';
 
 export async function PATCH(request: Request) {
   const accessToken = readCookie(request, 'fp_inventory_access');
   const user = await getInventoryUser(request);
   if (!accessToken || !user?.id)
     return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
-  const body = (await request.json()) as { name?: string; email?: string };
+  const body = (await request.json()) as {
+    name?: string; email?: string; currentPassword?: string; password?: string;
+  };
+  if (await inventoryUserForToken(accessToken)) {
+    const local = await updateInventoryAccount(accessToken, body);
+    return Response.json(local, { status: 'status' in local ? local.status : 200 });
+  }
   const result: { nameSaved?: boolean; emailRequested?: boolean } = {};
 
   if (typeof body.name === 'string' && body.name.trim()) {

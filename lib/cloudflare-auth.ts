@@ -82,3 +82,34 @@ export async function deleteInventorySession(token: string) {
     await db.prepare('DELETE FROM inventory_sessions WHERE token=?').bind(token).run();
   }
 }
+
+export async function updateInventoryAccount(
+  token: string,
+  changes: { name?: string; email?: string; currentPassword?: string; password?: string },
+) {
+  const user = await inventoryUserForToken(token);
+  if (!user) return { error: 'Anmeldung erforderlich.', status: 401 };
+  const db = await database();
+  if (changes.password) {
+    if (changes.password.length < 10)
+      return { error: 'Das neue Passwort muss mindestens 10 Zeichen lang sein.', status: 400 };
+    const credential = await db.prepare('SELECT password_salt AS salt,password_hash AS hash FROM inventory_users WHERE id=?')
+      .bind(user.id).first<{ salt: string; hash: string }>();
+    if (!credential || !changes.currentPassword ||
+        (await passwordHash(changes.currentPassword, credential.salt)) !== credential.hash)
+      return { error: 'Das aktuelle Passwort ist nicht korrekt.', status: 400 };
+    const salt = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    await db.prepare('UPDATE inventory_users SET password_salt=?,password_hash=? WHERE id=?')
+      .bind(salt, await passwordHash(changes.password, salt), user.id).run();
+  }
+  const name = changes.name?.trim() || user.name;
+  const email = changes.email?.trim() || user.email;
+  try {
+    await db.prepare('UPDATE inventory_users SET name=?,email=? WHERE id=?')
+      .bind(name, email, user.id).run();
+  } catch {
+    return { error: 'Diese E-Mail-Adresse wird bereits verwendet.', status: 400 };
+  }
+  return { saved: true, passwordChanged: Boolean(changes.password) };
+}

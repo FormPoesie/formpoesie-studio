@@ -648,11 +648,13 @@ export function InventoryWorkspace({
   initialArea = 'products',
   initialProductId = '',
   canManage = false,
+  canAdmin = false,
 }: {
   onCreateListing: (item: InventoryItem) => void;
   initialArea?: InventoryArea;
   initialProductId?: string;
   canManage?: boolean;
+  canAdmin?: boolean;
 }) {
   const [active, setActive] = useState<InventoryArea>(initialArea);
   const [data, setData] = useState<Record<string, AreaData>>({});
@@ -1018,13 +1020,12 @@ export function InventoryWorkspace({
         {visibleSections
           .filter(
             (section) =>
-              canManage ||
+              canAdmin ||
               ![
                 'pricing',
                 'sales',
                 'months',
                 'expenses',
-                'account',
                 'trash',
               ].includes(section.id),
           )
@@ -4548,6 +4549,9 @@ function Account({ data }: { data: AreaData }) {
   const profile = object(data.profile);
   const [name, setName] = useState(string(profile.name));
   const [email, setEmail] = useState(string(user.email));
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [password, setPassword] = useState('');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
@@ -4556,10 +4560,14 @@ function Account({ data }: { data: AreaData }) {
   }, [profile.name, user.email]);
 
   async function save() {
+    if (password && password !== passwordConfirmation) {
+      setMessage('Die neuen Passwörter stimmen nicht überein.');
+      return;
+    }
     const response = await fetch('/api/inventory/account', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email }),
+      body: JSON.stringify({ name, email, currentPassword, password }),
     });
     const result = (await response.json()) as {
       emailRequested?: boolean;
@@ -4569,9 +4577,16 @@ function Account({ data }: { data: AreaData }) {
       response.ok
         ? result.emailRequested
           ? 'Gespeichert. Bitte bestätige die neue E-Mail-Adresse.'
-          : 'Kontodaten gespeichert.'
+          : password
+            ? 'Kontodaten und Passwort gespeichert.'
+            : 'Kontodaten gespeichert.'
         : result.error || 'Kontodaten konnten nicht gespeichert werden.',
     );
+    if (response.ok) {
+      setCurrentPassword('');
+      setPassword('');
+      setPasswordConfirmation('');
+    }
   }
   return (
     <section className="mt-6 max-w-2xl rounded-[26px] border bg-white/65 p-6">
@@ -4588,8 +4603,11 @@ function Account({ data }: { data: AreaData }) {
         </div>
         <div>
           <div className="text-xs text-muted-foreground">Datenquelle</div>
-          <div className="mt-1 font-medium">FormPoesie Supabase</div>
+          <div className="mt-1 font-medium">FormPoesie Cloudflare</div>
         </div>
+        <Field label="Aktuelles Passwort" type="password" value={currentPassword} onChange={setCurrentPassword} />
+        <Field label="Neues Passwort" type="password" value={password} onChange={setPassword} />
+        <Field label="Neues Passwort wiederholen" type="password" value={passwordConfirmation} onChange={setPasswordConfirmation} />
       </div>
       <Button className="mt-5" onClick={() => void save()}>
         <Check className="size-4" /> Kontodaten speichern

@@ -1,6 +1,7 @@
 import {
   INVENTORY_SUPABASE_URL,
   canManageInventory,
+  canAccessInventoryAdministration,
   getInventoryUser,
   getInventoryProfile,
   inventoryHeaders,
@@ -50,6 +51,7 @@ export async function GET(request: Request) {
         email: currentUser.email || '',
         name: profile?.name || '',
         canManage: canManageInventory(currentUser, profile),
+        canAdmin: canAccessInventoryAdministration(currentUser, profile),
       }),
     );
 
@@ -80,6 +82,7 @@ export async function GET(request: Request) {
       email: session.user?.email || '',
       name: profile?.name || '',
       canManage: canManageInventory(session.user || null, profile),
+      canAdmin: canAccessInventoryAdministration(session.user || null, profile),
     }),
     request,
     session,
@@ -100,6 +103,7 @@ export async function POST(request: Request) {
       email: local.user.email,
       name: local.user.name,
       canManage: canManageInventory(local.user, { id: local.user.id, name: local.user.name, role: local.user.role }),
+      canAdmin: canAccessInventoryAdministration(local.user, { id: local.user.id, name: local.user.name, role: local.user.role }),
     });
     response.headers.append(
       'Set-Cookie',
@@ -146,6 +150,7 @@ export async function POST(request: Request) {
       email: result.user?.email || body.email,
       name: profile?.name || '',
       canManage: canManageInventory(result.user || null, profile),
+      canAdmin: canAccessInventoryAdministration(result.user || null, profile),
     }),
     request,
     result as {
