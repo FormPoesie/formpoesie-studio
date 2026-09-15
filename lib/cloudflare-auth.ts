@@ -91,8 +91,6 @@ export async function updateInventoryAccount(
   if (!user) return { error: 'Anmeldung erforderlich.', status: 401 };
   const db = await database();
   if (changes.password) {
-    if (changes.password.length < 10)
-      return { error: 'Das neue Passwort muss mindestens 10 Zeichen lang sein.', status: 400 };
     const credential = await db.prepare('SELECT password_salt AS salt,password_hash AS hash FROM inventory_users WHERE id=?')
       .bind(user.id).first<{ salt: string; hash: string }>();
     if (!credential || !changes.currentPassword ||
