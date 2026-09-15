@@ -6,6 +6,7 @@ import {
   requireInventoryManager,
 } from '@/lib/inventory-bridge';
 import { offlineMutate, offlineQuery } from '@/lib/offline-inventory';
+import { inventoryUserForToken, listInventoryUsers } from '@/lib/cloudflare-auth';
 import { env } from 'cloudflare:workers';
 import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
 import {
@@ -913,6 +914,14 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     return { products, materials, markets, otherExpenses };
   }
   if (area === 'account') {
+    const localUser = await inventoryUserForToken(accessToken);
+    if (localUser) {
+      return {
+        user: localUser,
+        profile: { id: localUser.id, name: localUser.name, role: localUser.role },
+        users: await listInventoryUsers(accessToken),
+      };
+    }
     const user = await getInventoryUser(request);
     const profiles = user?.id
       ? await query(

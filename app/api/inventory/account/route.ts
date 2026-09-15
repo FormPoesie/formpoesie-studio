@@ -4,7 +4,7 @@ import {
   inventoryHeaders,
   readCookie,
 } from '@/lib/inventory-bridge';
-import { inventoryUserForToken, updateInventoryAccount } from '@/lib/cloudflare-auth';
+import { inventoryUserForToken, resetInventoryUserPassword, updateInventoryAccount } from '@/lib/cloudflare-auth';
 
 export async function PATCH(request: Request) {
   const accessToken = readCookie(request, 'fp_inventory_access');
@@ -12,10 +12,12 @@ export async function PATCH(request: Request) {
   if (!accessToken || !user?.id)
     return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
   const body = (await request.json()) as {
-    name?: string; email?: string; currentPassword?: string; password?: string;
+    name?: string; email?: string; currentPassword?: string; password?: string; targetUserId?: string;
   };
   if (await inventoryUserForToken(accessToken)) {
-    const local = await updateInventoryAccount(accessToken, body);
+    const local = body.targetUserId
+      ? await resetInventoryUserPassword(accessToken, body.targetUserId, body.password || '')
+      : await updateInventoryAccount(accessToken, body);
     return Response.json(local, { status: 'status' in local ? local.status : 200 });
   }
   const result: { nameSaved?: boolean; emailRequested?: boolean } = {};

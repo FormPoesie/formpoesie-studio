@@ -4547,11 +4547,17 @@ function Months({
 function Account({ data }: { data: AreaData }) {
   const user = object(data.user);
   const profile = object(data.profile);
+  const employees = rows(data.users).filter(
+    (account) => !['inhaber', 'vollzugriff'].includes(string(account.role).toLocaleLowerCase('de')),
+  );
   const [name, setName] = useState(string(profile.name));
   const [email, setEmail] = useState(string(user.email));
   const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
+  const [employeeId, setEmployeeId] = useState('');
+  const [temporaryPassword, setTemporaryPassword] = useState('');
+  const [employeeMessage, setEmployeeMessage] = useState('');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
@@ -4588,6 +4594,23 @@ function Account({ data }: { data: AreaData }) {
       setPasswordConfirmation('');
     }
   }
+
+  async function resetEmployeePassword() {
+    if (!employeeId || !temporaryPassword) {
+      setEmployeeMessage('Bitte Mitarbeiter und Übergangspasswort eingeben.');
+      return;
+    }
+    const response = await fetch('/api/inventory/account', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetUserId: employeeId, password: temporaryPassword }),
+    });
+    const result = (await response.json()) as { error?: string };
+    setEmployeeMessage(response.ok
+      ? 'Übergangspasswort gespeichert. Der Mitarbeiter kann sich damit sofort anmelden.'
+      : result.error || 'Übergangspasswort konnte nicht gespeichert werden.');
+    if (response.ok) setTemporaryPassword('');
+  }
   return (
     <section className="mt-6 max-w-2xl rounded-[26px] border bg-white/65 p-6">
       <UserRound className="size-8 text-[var(--fp-primary)]" />
@@ -4614,6 +4637,32 @@ function Account({ data }: { data: AreaData }) {
       </Button>
       {message ? (
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+      ) : null}
+      {employees.length ? (
+        <div className="mt-8 border-t pt-6">
+          <h3 className="font-heading text-2xl">Mitarbeiterpasswort festlegen</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Lege selbst ein Übergangspasswort fest. Das bisherige Passwort des Mitarbeiters ist nicht erforderlich.
+          </p>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block">Mitarbeiter</span>
+              <select className="h-10 w-full rounded-lg border bg-white px-3" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>
+                <option value="">Bitte auswählen</option>
+                {employees.map((account) => (
+                  <option key={string(account.id)} value={string(account.id)}>
+                    {string(account.name)} · {string(account.email)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Field label="Neues Übergangspasswort" type="password" value={temporaryPassword} onChange={setTemporaryPassword} />
+          </div>
+          <Button className="mt-4" onClick={() => void resetEmployeePassword()}>
+            <Check className="size-4" /> Übergangspasswort speichern
+          </Button>
+          {employeeMessage ? <p className="mt-2 text-sm text-muted-foreground">{employeeMessage}</p> : null}
+        </div>
       ) : null}
     </section>
   );

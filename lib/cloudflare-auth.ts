@@ -111,3 +111,33 @@ export async function updateInventoryAccount(
   }
   return { saved: true, passwordChanged: Boolean(changes.password) };
 }
+
+function isInventoryAdministrator(user: CloudflareUser | null) {
+  return Boolean(user && ['inhaber', 'vollzugriff'].includes(user.role.toLocaleLowerCase('de')));
+}
+
+export async function listInventoryUsers(token: string) {
+  const admin = await inventoryUserForToken(token);
+  if (!isInventoryAdministrator(admin)) return [];
+  const db = await database();
+  const result = await db.prepare('SELECT id,email,name,role FROM inventory_users ORDER BY name').all<CloudflareUser>();
+  return result.results || [];
+}
+
+export async function resetInventoryUserPassword(token: string, userId: string, password: string) {
+  const admin = await inventoryUserForToken(token);
+  if (!isInventoryAdministrator(admin))
+    return { error: 'Nur Marlon und Jasmin dürfen Mitarbeiterpasswörter ändern.', status: 403 };
+  if (!password) return { error: 'Bitte ein neues Passwort eingeben.', status: 400 };
+  const db = await database();
+  const target = await db.prepare('SELECT id,role FROM inventory_users WHERE id=?').bind(userId).first<{ id: string; role: string }>();
+  if (!target) return { error: 'Konto nicht gefunden.', status: 404 };
+  if (['inhaber', 'vollzugriff'].includes(target.role.toLocaleLowerCase('de')))
+    return { error: 'Verwaltungskonten ändern ihr Passwort im persönlichen Konto.', status: 400 };
+  const salt = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  await db.prepare('UPDATE inventory_users SET password_salt=?,password_hash=? WHERE id=?')
+    .bind(salt, await passwordHash(password, salt), userId).run();
+  await db.prepare('DELETE FROM inventory_sessions WHERE user_id=?').bind(userId).run();
+  return { saved: true };
+}
