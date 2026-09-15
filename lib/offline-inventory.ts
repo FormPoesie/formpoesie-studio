@@ -66,6 +66,13 @@ async function relatedRows(
       ),
     };
   }
+  if (table === 'articles') {
+    return {
+      ...row,
+      variants: (related.article_variants || await storedTable('article_variants'))
+        .filter((item) => String(item.article_id) === String(row.id)),
+    };
+  }
   return row;
 }
 
@@ -97,12 +104,47 @@ export async function offlineQuery(table: string, params = ''): Promise<Row[]> {
     names.forEach((name, index) => { related[name] = values[index]; });
   } else if (table === 'sales') {
     related.sale_items = await storedTable('sale_items');
+  } else if (table === 'articles') {
+    related.article_variants = await storedTable('article_variants');
   }
   return Promise.all(rows.slice(offset, offset + limit).map((row) => relatedRows(table, row, related)));
 }
 
 export async function offlineMutate(path: string, method: string, body: Row): Promise<Row[]> {
   const [table, rawParams = ''] = path.split('?');
+  if (table === 'rpc/verkauf_buchen') {
+    const sales = await storedTable('sales');
+    const operationId = String(body.p_operation_id || '');
+    const existing = operationId
+      ? sales.find((sale) => String(sale.operation_id || '') === operationId)
+      : null;
+    if (existing) return [{ sale_id: existing.id, bereits: true }];
+    const saleId = Math.max(0, ...sales.map((row) => Number(row.id) || 0)) + 1;
+    const createdAt = new Date().toISOString();
+    sales.push({
+      id: saleId,
+      date: body.p_date,
+      market_id: body.p_market_id,
+      discount_cents: body.p_discount_cents || 0,
+      pricing_mode: body.p_pricing_mode || 'ITEMIZED',
+      total_price_cents: body.p_total_price_cents ?? null,
+      payment_method: body.p_payment_method ?? null,
+      note: body.p_note ?? null,
+      operation_id: operationId || null,
+      created_by: body.p_created_by ?? null,
+      created_at: createdAt,
+      deleted_at: null,
+      is_cancelled: false,
+    });
+    const saleItems = await storedTable('sale_items');
+    let itemId = Math.max(0, ...saleItems.map((row) => Number(row.id) || 0));
+    for (const line of Array.isArray(body.p_zeilen) ? body.p_zeilen as Row[] : []) {
+      saleItems.push({ id: ++itemId, sale_id: saleId, ...line });
+    }
+    await saveTable('sales', sales);
+    await saveTable('sale_items', saleItems);
+    return [{ sale_id: saleId, bereits: false }];
+  }
   if (table.startsWith('rpc/'))
     throw new Error('Diese Bestandsaktion wird noch auf den neuen Cloudflare-Speicher übertragen.');
   let rows = await storedTable(table);
@@ -130,6 +172,14 @@ export async function offlineMutate(path: string, method: string, body: Row): Pr
     });
     await saveTable(table, rows);
     return updated;
+  }
+  if (method === 'DELETE') {
+    const params = new URLSearchParams(rawParams);
+    const id = params.get('id')?.replace(/^eq\./, '');
+    const removed = rows.filter((row) => id != null && String(row.id) === id);
+    rows = rows.filter((row) => id == null || String(row.id) !== id);
+    await saveTable(table, rows);
+    return removed;
   }
   throw new Error('Nicht unterstützte Inventaraktion.');
 }

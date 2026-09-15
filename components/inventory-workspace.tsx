@@ -1159,7 +1159,12 @@ export function InventoryWorkspace({
         />
       ) : null}
       {active === 'sales' ? (
-        <Sales data={data.sales || {}} onOpenProduct={openProduct} />
+        <Sales
+          data={data.sales || {}}
+          onOpenProduct={openProduct}
+          onEditOnline={(row) => openEditor('online_sales', row)}
+          onChanged={() => void fetchArea('sales')}
+        />
       ) : null}
       {active === 'months' ? (
         <Months data={data.months || {}} onOpenProduct={openProduct} />
@@ -3684,9 +3689,13 @@ function CashRegister({
 function Sales({
   data,
   onOpenProduct,
+  onEditOnline,
+  onChanged,
 }: {
   data: AreaData;
   onOpenProduct: (productId: string) => void | Promise<void>;
+  onEditOnline: (sale: Row) => void;
+  onChanged: () => void;
 }) {
   const items = rows(data.sales).filter((sale) => !boolean(sale.isCancelled));
   const online = rows(data.onlineSales);
@@ -3703,6 +3712,7 @@ function Sales({
   const activeMonth = selectedMonth || keys[0] || '';
   const [selectedVenue, setSelectedVenue] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
+  const [editingSale, setEditingSale] = useState<Row | null>(null);
   const filtered = filterSalesHistory(items, online, markets, {
     month: activeMonth,
     date: selectedDate,
@@ -3898,6 +3908,9 @@ function Sales({
               <div className="text-lg font-semibold">
                 {cents(saleTotal(sale))}
               </div>
+              <Button size="sm" variant="outline" onClick={() => setEditingSale(sale)}>
+                <Pencil className="size-4" /> Bearbeiten
+              </Button>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
               {rows(sale.items).map((item) => {
@@ -3960,6 +3973,9 @@ function Sales({
               <div className="text-lg font-semibold">
                 {cents(onlineSaleRevenue(sale))}
               </div>
+              <Button size="sm" variant="outline" onClick={() => onEditOnline(sale)}>
+                <Pencil className="size-4" /> Bearbeiten
+              </Button>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Badge variant="outline">{number(sale.quantity, 1)} Stück</Badge>
@@ -3990,7 +4006,111 @@ function Sales({
           </div>
         ) : null}
       </div>
+      {editingSale ? (
+        <SaleEditDialog
+          sale={editingSale}
+          markets={markets}
+          articles={articles}
+          onClose={() => setEditingSale(null)}
+          onSaved={() => { setEditingSale(null); onChanged(); }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function SaleEditDialog({ sale, markets, articles, onClose, onSaved }: {
+  sale: Row;
+  markets: Row[];
+  articles: Row[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<Row>({ ...sale });
+  const [lines, setLines] = useState<Row[]>(rows(sale.items).map((item) => ({ ...item })));
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const variants = articles.flatMap((article) => rows(article.variants).map((variant) => ({
+    ...variant,
+    articleLabel: `${string(article.name, 'Artikel')} · ${string(variant.color || variant.name || variant.size, 'Standard')}`,
+  })));
+  const itemizedTotal = lines.reduce((sum, line) => {
+    const gross = number(line.quantity, 1) * number(line.unitSalePriceCents);
+    return sum + Math.round(gross * (1 - number(line.discountPercent) / 100));
+  }, 0) - number(form.discountCents);
+  const setLine = (index: number, key: string, value: unknown) =>
+    setLines((current) => current.map((line, position) => position === index ? { ...line, [key]: value } : line));
+
+  async function save() {
+    setSaving(true);
+    setMessage('');
+    const response = await fetch('/api/inventory/workspace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'update_sale', sale: form, items: lines }),
+    });
+    const result = (await response.json()) as { error?: string };
+    setSaving(false);
+    if (!response.ok) { setMessage(result.error || 'Verkauf konnte nicht gespeichert werden.'); return; }
+    onSaved();
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto bg-[#f8f4ed] sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="font-heading text-3xl">Verkauf #{string(sale.id)} bearbeiten</DialogTitle>
+          <DialogDescription>Alle ursprünglichen Angaben und die wirksame Gesamtsumme können nachträglich korrigiert werden.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="Verkaufsdatum" type="date" value={string(form.date)} onChange={(value) => setForm({ ...form, date: value })} />
+          <label className="grid gap-1 text-sm">Verkaufsort
+            <select className="h-10 rounded-lg border bg-white px-3" value={string(form.marketId)} onChange={(event) => setForm({ ...form, marketId: number(event.target.value) })}>
+              {markets.map((market) => <option key={string(market.id)} value={string(market.id)}>{string(market.name)}</option>)}
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm">Zahlungsart
+            <select className="h-10 rounded-lg border bg-white px-3" value={string(form.paymentMethod)} onChange={(event) => setForm({ ...form, paymentMethod: event.target.value })}>
+              <option value="BAR">Bar</option><option value="PAYPAL">PayPal</option><option value="KARTE">Karte</option><option value="SONSTIGES">Überweisung / Sonstiges</option><option value="">Ohne Angabe</option>
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm">Preisberechnung
+            <select className="h-10 rounded-lg border bg-white px-3" value={string(form.pricingMode, 'ITEMIZED')} onChange={(event) => setForm({ ...form, pricingMode: event.target.value })}>
+              <option value="ITEMIZED">Aus Positionen</option><option value="TOTAL">Feste Gesamtsumme</option>
+            </select>
+          </label>
+          <EuroField label="Gesamtrabatt" value={number(form.discountCents)} onChange={(value) => setForm({ ...form, discountCents: value })} />
+          {string(form.pricingMode) === 'TOTAL' ? (
+            <EuroField label="Wirksame Gesamtsumme" value={number(form.totalPriceCents)} onChange={(value) => setForm({ ...form, totalPriceCents: value })} />
+          ) : (
+            <div className="rounded-xl border bg-white p-3"><div className="text-xs text-muted-foreground">Berechnete Gesamtsumme</div><div className="mt-1 text-xl font-semibold">{cents(Math.max(0, itemizedTotal))}</div></div>
+          )}
+        </div>
+        <label className="mt-4 grid gap-1 text-sm">Notiz
+          <Textarea value={string(form.note)} onChange={(event) => setForm({ ...form, note: event.target.value })} />
+        </label>
+        <div className="mt-5 space-y-3">
+          <h3 className="font-heading text-2xl">Verkaufspositionen</h3>
+          {lines.map((line, index) => (
+            <div key={string(line.id, String(index))} className="grid gap-3 rounded-xl border bg-white/70 p-3 md:grid-cols-5">
+              <label className="grid gap-1 text-xs md:col-span-2">Artikel / Variante
+                <select className="h-9 rounded-lg border bg-white px-2 text-sm" value={string(line.articleVariantId)} onChange={(event) => setLine(index, 'articleVariantId', number(event.target.value))}>
+                  {variants.map((variant) => <option key={string(variant.id)} value={string(variant.id)}>{string(variant.articleLabel)}</option>)}
+                </select>
+              </label>
+              <Field label="Menge" type="number" value={string(line.quantity)} onChange={(value) => setLine(index, 'quantity', Math.max(1, Number(value) || 1))} />
+              <EuroField label="Stückpreis" value={number(line.unitSalePriceCents)} onChange={(value) => setLine(index, 'unitSalePriceCents', value)} />
+              <Field label="Rabatt %" type="number" value={string(line.discountPercent)} onChange={(value) => setLine(index, 'discountPercent', Math.max(0, Math.min(100, Number(value) || 0)))} />
+            </div>
+          ))}
+        </div>
+        {message ? <p className="mt-3 text-sm text-red-700">{message}</p> : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Abbrechen</Button>
+          <Button onClick={() => void save()} disabled={saving || !lines.length}>{saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />} Verkauf speichern</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

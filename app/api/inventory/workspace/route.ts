@@ -843,7 +843,7 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     return { expenses: await decorateExpenses(expenses) };
   }
   if (area === 'sales') {
-    const [sales, markets, onlineSales] = await Promise.all([
+    const [sales, markets, onlineSales, articles] = await Promise.all([
       query(
         accessToken,
         'sales',
@@ -859,11 +859,12 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'online_sales',
         'select=*&deleted_at=is.null&order=date.desc',
       ),
+      query(accessToken, 'articles', 'select=*,variants:article_variants(*)&deleted_at=is.null&order=name.asc'),
     ]);
     const highlights = await rebuildMonthlyProductHighlights(accessToken).catch(
       () => [],
     );
-    return { sales, markets, onlineSales, highlights };
+    return { sales, markets, onlineSales, articles, highlights };
   }
   if (area === 'months') {
     const [sales, expenses, onlineSales, otherExpenses, markets] =
@@ -976,12 +977,57 @@ export async function POST(request: Request) {
     createFulfillment?: boolean;
     order?: JsonRecord;
     items?: JsonRecord[];
+    sale?: JsonRecord;
   };
   if (body.entity === 'other_expenses') {
     const denied = await requireInventoryManager(request);
     if (denied) return denied;
   }
   try {
+    if (body.action === 'update_sale') {
+      const saleId = scalarText(body.sale?.id);
+      if (!saleId) return Response.json({ error: 'Verkauf fehlt.' }, { status: 400 });
+      const lines = Array.isArray(body.items) ? body.items : [];
+      if (!lines.length)
+        return Response.json({ error: 'Mindestens eine Verkaufsposition ist erforderlich.' }, { status: 400 });
+      await offlineMutate(`sales?id=eq.${encodeURIComponent(saleId)}`, 'PATCH', {
+        date: body.sale?.date,
+        market_id: body.sale?.marketId,
+        payment_method: body.sale?.paymentMethod || null,
+        pricing_mode: body.sale?.pricingMode === 'TOTAL' ? 'TOTAL' : 'ITEMIZED',
+        total_price_cents: body.sale?.pricingMode === 'TOTAL'
+          ? Math.max(0, Math.trunc(Number(body.sale?.totalPriceCents) || 0))
+          : null,
+        discount_cents: Math.max(0, Math.trunc(Number(body.sale?.discountCents) || 0)),
+        note: scalarText(body.sale?.note).trim() || null,
+        updated_by: user.id || null,
+      });
+      const existing = await offlineQuery('sale_items', `sale_id=eq.${encodeURIComponent(saleId)}`);
+      const kept = new Set<string>();
+      for (const line of lines) {
+        const values = {
+          sale_id: Number(saleId),
+          article_variant_id: Number(line.articleVariantId),
+          quantity: Math.max(1, Math.trunc(Number(line.quantity) || 1)),
+          unit_sale_price_cents: Math.max(0, Math.trunc(Number(line.unitSalePriceCents) || 0)),
+          unit_cost_price_cents: Math.max(0, Math.trunc(Number(line.unitCostPriceCents) || 0)),
+          discount_percent: Math.max(0, Math.min(100, Number(line.discountPercent) || 0)),
+          component_choices: line.componentChoices ?? null,
+        };
+        if (line.id != null) {
+          kept.add(String(line.id));
+          await offlineMutate(`sale_items?id=eq.${encodeURIComponent(String(line.id))}`, 'PATCH', values);
+        } else {
+          const created = await offlineMutate('sale_items', 'POST', values);
+          if (created[0]?.id != null) kept.add(String(created[0].id));
+        }
+      }
+      for (const old of existing) {
+        if (!kept.has(String(old.id)))
+          await offlineMutate(`sale_items?id=eq.${encodeURIComponent(String(old.id))}`, 'DELETE', {});
+      }
+      return Response.json({ saved: true });
+    }
     if (body.action === 'create_online_order') {
       const allowedChannels = new Set([
         'Abholung',
