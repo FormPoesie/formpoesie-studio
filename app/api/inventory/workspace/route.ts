@@ -310,10 +310,10 @@ async function decorateProducts(value: unknown) {
     );
     return {
       ...product,
-      studioStatus: scalarText(
-        metadata.get(scalarText(product.id))?.studioStatus,
-        'final',
-      ),
+      studioStatus:
+        scalarText(metadata.get(scalarText(product.id))?.studioStatus) === 'final'
+          ? 'final'
+          : 'draft',
       finalizedAt: metadata.get(scalarText(product.id))?.finalizedAt || null,
       etsyListed: [1, true].includes(
         metadata.get(scalarText(product.id))?.etsyListed as boolean | number,
