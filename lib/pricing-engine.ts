@@ -2,6 +2,7 @@ import {
   DEFAULT_PRICING_CONFIG,
   type ChannelPricingConfig,
   type MarketCategory,
+  type MarketPsychology,
   type MarketQuantiles,
   type PricingConfig,
   type SalesChannel,
@@ -10,6 +11,12 @@ import {
 export type Confidence = 'high' | 'medium' | 'low';
 export type PricingStatus =
   | 'OK'
+  | 'MISSING_COGS'
+  | 'INVALID_COGS'
+  | 'INVALID_DIMENSIONS'
+  | 'INVALID_PRICING_INPUT'
+  | 'INVALID_CHANNEL_CONFIG'
+  | 'REVIEW'
   | 'REVIEW_MARKET_FIT'
   | 'BLOCKED_LICENSE'
   | 'BLOCKED_UNSAFE'
@@ -20,6 +27,124 @@ export type Demand = 'niche' | 'known' | 'very_known' | 'trend' | 'unknown';
 export type Competition = 'low' | 'medium' | 'high' | 'unknown';
 export type ProductTier = 'standard' | 'premium' | 'ultra';
 export type DiscountState = 'GREEN' | 'YELLOW' | 'RED';
+export type ImpactType = 'SOLID' | 'DETAILED' | 'PREMIUM_IMPACT';
+export type DemandPerformanceStatus = 'HIGH' | 'NORMAL' | 'LOW' | 'UNKNOWN';
+
+export type BundleType = 'single' | 'multipack' | 'semantic_set';
+export type PricingRole = 'base' | 'bundle';
+export type PricingSegment =
+  | 'small_functional'
+  | 'small_item'
+  | 'functional'
+  | 'figure'
+  | 'historical_bust'
+  | 'gothic'
+  | 'gift'
+  | 'hollow';
+
+export interface ProductVariant {
+  id?: string | number;
+  sku?: string;
+  activePrice?: number;
+  cogs?: number;
+  unitCount?: number;
+  bundleType?: BundleType;
+  pricingRole?: PricingRole;
+  marketCeiling?: number;
+}
+
+export interface PremiumProductLeitplanke {
+  targetBasePrice: number;
+  scaleWithWeight: boolean;
+  baseWeightGrams: number;
+}
+
+export type ClassificationContext = {
+  dimensions?: { l: number; w: number; h: number };
+  keywords: string[];
+  isPremiumOrArt: boolean;
+};
+
+export class VariantParser {
+  private static readonly MULTIPACK_PATTERNS = [
+    /(?:^|\s)(\d+)\s*(?:er|x|stk\.?|stück|pack)(?:\s*(?:set|pack))?(?:\s|$)/i,
+    /(?:^|\s)(?:pack|set)\s*(?:von\s*)?(\d+)(?:\s|$)/i,
+    /(?:^|\s)x\s*(\d+)(?:\s|$)/i,
+  ];
+
+  static parseMetadata(variantName: string): Partial<ProductVariant> {
+    const cleanName = variantName.toLocaleLowerCase('de').trim();
+    for (const pattern of this.MULTIPACK_PATTERNS) {
+      const count = Number(cleanName.match(pattern)?.[1]);
+      if (Number.isInteger(count) && count > 1)
+        return {
+          unitCount: count,
+          bundleType: 'multipack',
+          pricingRole: 'bundle',
+        };
+    }
+    return { unitCount: 1, bundleType: 'single', pricingRole: 'base' };
+  }
+}
+
+export class SegmentClassifier {
+  static classify(context: ClassificationContext): PricingSegment {
+    const l = context.dimensions?.l ?? 0;
+    const w = context.dimensions?.w ?? 0;
+    const h = context.dimensions?.h ?? 0;
+    const volume = l * w * h;
+    const keywords = context.keywords.map((keyword) =>
+      keyword.toLocaleLowerCase('de'),
+    );
+    const hasSmallDimensions = l > 0 && Math.max(l, w, h) <= 6;
+    const hasSmallVolume = volume > 0 && volume <= 100;
+    const functionalKeywords = [
+      'clip',
+      'klammer',
+      'haken',
+      'halter',
+      'magnet',
+      'kabel',
+      'beutelclip',
+    ];
+    const hasFunctionalSignal = keywords.some((keyword) =>
+      functionalKeywords.some((signal) => keyword.includes(signal)),
+    );
+    if (!context.isPremiumOrArt) {
+      if ((hasSmallDimensions || hasSmallVolume) && hasFunctionalSignal)
+        return 'small_functional';
+      if (hasSmallDimensions || hasSmallVolume) return 'small_item';
+    }
+    if (keywords.some((keyword) => keyword.includes('gothic'))) return 'gothic';
+    if (keywords.some((keyword) => /büst|bust/.test(keyword)))
+      return 'historical_bust';
+    if (keywords.some((keyword) => /figur|skulptur/.test(keyword)))
+      return 'figure';
+    if (keywords.some((keyword) => /geschenk|gift/.test(keyword))) return 'gift';
+    if (keywords.some((keyword) => /hohl|vase|hollow/.test(keyword))) return 'hollow';
+    return 'functional';
+  }
+}
+
+export type DemandPerformanceInput = {
+  sales30: number;
+  previous30: number;
+  sales90: number;
+  views30?: number | null;
+  favorites30?: number | null;
+  daysObserved?: number | null;
+  stockProduced90?: number | null;
+};
+
+export type DemandPerformanceResult = {
+  multiplier: number;
+  status: DemandPerformanceStatus;
+  source: 'PERFORMANCE' | 'DEFAULT';
+  conversionRate?: number;
+  favoriteVelocity?: number;
+  stockTurnover?: number;
+  evidence: string[];
+};
 
 export type ValueInputs = {
   complexity: number;
@@ -38,7 +163,11 @@ export type DiscountResult = {
   state: DiscountState;
 };
 
+export type ParameterSource = 'AUTO' | 'RESEARCH' | 'PORTFOLIO' | 'DEFAULT' | 'MANUAL' | 'REVIEW';
+
 export interface PriceRecommendation {
+  productId?: string;
+  variantId?: string;
   status: PricingStatus;
   confidence: Confidence;
   channel: SalesChannel;
@@ -56,21 +185,35 @@ export interface PriceRecommendation {
   diagnostics: {
     presenceFactor?: number;
     valueFactor?: number;
+    impactMultiplier?: number;
+    impactType?: ImpactType;
+    demandIndex?: number;
+    demandPerformanceStatus?: DemandPerformanceStatus;
+    demandEvidence?: string[];
     demandCompetitionFactor?: number;
     selectedQuantile?: number;
     selectedQuantilePosition?: number;
+    marketPsychology?: MarketPsychology;
+    marketPsychologyShift?: number;
     roundingRule?: string;
     priceDriver?: 'floor' | 'market';
     volumeComponent?: number;
     warnings?: string[];
     etsyScenarios?: Record<string, number>;
+    pricingSegment?: PricingSegment;
+    marketCeiling?: number;
   };
   discountSafety?: {
     tenPercent: DiscountResult;
     fifteenPercent: DiscountResult;
     twentyPercent: DiscountResult;
     maximumSafeDiscount: number;
+    maxDiscountBeforeMinimumContributionViolation: number;
+    maxDiscountBeforeBreakEven: number;
   };
+  parameterSources?: Record<string, ParameterSource>;
+  calculatedAt?: string;
+  pricingConfigVersion?: string;
 }
 
 export type PhysicalPricingInput = {
@@ -88,16 +231,27 @@ export type PhysicalPricingInput = {
   hollowBody?: boolean;
   highEndCollector?: boolean;
   value: ValueInputs;
+  impactType?: ImpactType;
+  demandPerformance?: DemandPerformanceInput;
   demand: Demand;
   competition: Competition;
+  marketPsychology?: MarketPsychology;
   buyerShipping?: number;
   channelNonCogsCost?: number;
   channelOverrides?: Partial<ChannelPricingConfig>;
   offsiteRate?: 0 | 0.12 | 0.15;
   config?: PricingConfig;
+  parameterSources?: Record<string, ParameterSource>;
+  keywords?: string[];
+  isPremiumOrArt?: boolean;
+  weightGrams?: number | null;
+  marketCeiling?: number | null;
+  premiumLeitplanke?: PremiumProductLeitplanke | null;
 };
 
 export type DigitalLicense = {
+  /** Eigene Entwürfe benötigen keinen Nachweis eines fremden Weiterverkaufsrechts. */
+  isOwnDesign?: boolean;
   creator?: string;
   sourceUrl?: string;
   licenseSource?: string;
@@ -119,6 +273,7 @@ export type DigitalPricingInput = {
   printReadiness: number;
   competition: Competition;
   demandClass?: Demand;
+  marketPsychology?: MarketPsychology;
   isLeadProduct?: boolean;
   config?: PricingConfig;
 };
@@ -220,10 +375,52 @@ function median(values: number[]) {
 export function calculateMinimumContribution(
   cogs: number,
   config = DEFAULT_PRICING_CONFIG,
+  micro = false,
 ) {
+  if (!Number.isFinite(cogs) || cogs < 0) throw new Error('INVALID_COGS');
+  const economicClass = micro ? config.physical.micro : config.physical.normal;
   return Math.max(
-    config.physical.minimumAbsoluteContribution,
-    Math.max(0, cogs) * config.physical.minimumCogsContributionRate,
+    economicClass.minimumAbsoluteContribution,
+    Math.max(0, cogs) * economicClass.minimumCogsContributionRate,
+  );
+}
+
+export function roundToPsychologicalCeil(price: number) {
+  const base = Math.floor(price);
+  const candidate = base + 0.9;
+  return money(candidate + EPSILON >= price ? candidate : base + 1.9);
+}
+
+export function calculateMultipackPrice(
+  baseItemPrice: number,
+  totalCogs: number,
+  quantity: number,
+  config = DEFAULT_PRICING_CONFIG,
+) {
+  if (quantity <= 1) return roundToPsychologicalCeil(baseItemPrice);
+  const factor =
+    quantity >= 10
+      ? config.bundles.degressions[10]
+      : quantity >= 5
+        ? config.bundles.degressions[5]
+        : quantity >= 3
+          ? config.bundles.degressions[3]
+          : 1;
+  const rawBundlePrice = baseItemPrice * quantity * factor;
+  const absoluteFloor =
+    Math.max(0, totalCogs) + config.physical.micro.minimumAbsoluteContribution;
+  return roundToPsychologicalCeil(Math.max(rawBundlePrice, absoluteFloor));
+}
+
+export function calculatePremiumGuidePrice(
+  guide: PremiumProductLeitplanke,
+  weightGrams?: number | null,
+) {
+  if (!guide.scaleWithWeight || !(weightGrams && guide.baseWeightGrams > 0))
+    return Math.max(0, guide.targetBasePrice);
+  return Math.max(
+    0,
+    guide.targetBasePrice * Math.max(1, weightGrams / guide.baseWeightGrams),
   );
 }
 
@@ -232,6 +429,9 @@ export function calculateRequiredNet(
   minimumContribution: number,
   channelNonCogsCost = 0,
 ) {
+  if (![cogs, minimumContribution, channelNonCogsCost].every(Number.isFinite) ||
+      cogs < 0 || minimumContribution < 0 || channelNonCogsCost < 0)
+    throw new Error('INVALID_PRICING_INPUT');
   return Math.max(0, cogs) + Math.max(0, minimumContribution) + Math.max(0, channelNonCogsCost);
 }
 
@@ -252,6 +452,12 @@ export function invertChannelFees({
   feeVatRate?: number;
   additionalChannelCosts?: number;
 }) {
+  if (![requiredNet, discountFactor, buyerShipping, percentageFees, fixedFees,
+        feeVatRate, additionalChannelCosts].every(Number.isFinite) ||
+      requiredNet < 0 || buyerShipping < 0 || percentageFees < 0 ||
+      fixedFees < 0 || feeVatRate < 0 || additionalChannelCosts < 0 ||
+      discountFactor > 1)
+    throw new Error('INVALID_CHANNEL_FEE_CONFIGURATION');
   const d = discountFactor;
   const denominator = 1 - (1 + feeVatRate) * percentageFees;
   if (!(d > 0) || denominator <= EPSILON)
@@ -431,13 +637,61 @@ export function calculatePhysicalMarketAnchor({
   presenceFactor,
   valueFactor,
   demandCompetitionFactor,
+  impactMultiplier = 1,
+  demandIndex = 1,
 }: {
   selectedQuantile: number;
   presenceFactor: number;
   valueFactor: number;
   demandCompetitionFactor: number;
+  impactMultiplier?: number;
+  demandIndex?: number;
 }) {
-  return selectedQuantile * presenceFactor * valueFactor * demandCompetitionFactor;
+  return selectedQuantile * presenceFactor * impactMultiplier * valueFactor *
+    demandCompetitionFactor * demandIndex;
+}
+
+export function calculateImpactMultiplier(
+  impactType: ImpactType,
+  config = DEFAULT_PRICING_CONFIG,
+) {
+  if (impactType === 'SOLID') return config.impact.solid;
+  if (impactType === 'PREMIUM_IMPACT') return config.impact.premiumImpact;
+  return config.impact.detailed;
+}
+
+export function calculateDemandPerformance(
+  input: DemandPerformanceInput,
+  config = DEFAULT_PRICING_CONFIG,
+): DemandPerformanceResult {
+  const values = [input.sales30, input.previous30, input.sales90];
+  if (values.some((value) => !Number.isFinite(value) || value < 0))
+    throw new Error('INVALID_DEMAND_PERFORMANCE');
+  const views = input.views30 ?? null;
+  const favorites = input.favorites30 ?? null;
+  const days = input.daysObserved ?? 30;
+  const conversionRate = views != null && views > 0 ? input.sales30 / views : undefined;
+  const favoriteVelocity = favorites != null && days > 0 ? favorites / days : undefined;
+  const stockTurnover = input.stockProduced90 != null && input.stockProduced90 > 0
+    ? input.sales90 / input.stockProduced90
+    : undefined;
+  const evidence: string[] = [];
+  if (conversionRate != null) evidence.push(`Conversion ${(conversionRate * 100).toFixed(1)} %`);
+  if (favoriteVelocity != null) evidence.push(`${favoriteVelocity.toFixed(2)} Favoriten/Tag`);
+  if (stockTurnover != null) evidence.push(`Lagerumschlag ${(stockTurnover * 100).toFixed(0)} %`);
+  const enoughViews = views != null && views >= config.demandPerformance.minimumReliableViews;
+  const enoughSales = input.sales90 >= config.demandPerformance.minimumReliableSales;
+  const trend = Math.log((input.sales30 + 0.5) / (input.previous30 + 0.5));
+  const high = (enoughViews && conversionRate != null && conversionRate >= config.demandPerformance.highConversionRate) ||
+    (favoriteVelocity != null && favoriteVelocity >= config.demandPerformance.highFavoriteVelocity) ||
+    (enoughSales && trend > Math.log(1.35));
+  const low = enoughViews && conversionRate != null && conversionRate <= config.demandPerformance.lowConversionRate &&
+    (favoriteVelocity == null || favoriteVelocity <= config.demandPerformance.lowFavoriteVelocity);
+  if (high) return { multiplier: config.demandPerformance.high, status: 'HIGH', source: 'PERFORMANCE', conversionRate, favoriteVelocity, stockTurnover, evidence };
+  if (low) return { multiplier: config.demandPerformance.low, status: 'LOW', source: 'PERFORMANCE', conversionRate, favoriteVelocity, stockTurnover, evidence };
+  if (enoughSales || enoughViews) return { multiplier: config.demandPerformance.normal, status: 'NORMAL', source: 'PERFORMANCE', conversionRate, favoriteVelocity, stockTurnover, evidence };
+  return { multiplier: config.demandPerformance.normal, status: 'UNKNOWN', source: 'DEFAULT', conversionRate, favoriteVelocity, stockTurnover,
+    evidence: ['Zu wenig reale Klick- oder Verkaufsdaten; neutraler Faktor 1,00.'] };
 }
 
 export function roundMarketPrice(raw: number) {
@@ -461,6 +715,19 @@ export function roundCommercialPrice(raw: number) {
   return Math.ceil(raw * 2 - EPSILON) / 2;
 }
 
+export function roundDirectPrice(raw: number) {
+  return Math.ceil(raw * 2 - EPSILON) / 2;
+}
+
+export function roundVintedPrice(raw: number) {
+  return Math.ceil(raw - EPSILON);
+}
+
+export function roundEbayPrice(raw: number) {
+  const candidate = Math.floor(raw) + 0.99;
+  return money(candidate + EPSILON >= raw ? candidate : candidate + 1);
+}
+
 export function roundForChannel(
   raw: number,
   channel: SalesChannel,
@@ -470,7 +737,9 @@ export function roundForChannel(
   const strategy = config.channels[channel].roundingStrategy;
   if (strategy === 'market') return roundMarketPrice(raw);
   if (strategy === 'etsy-physical') return roundEtsyPhysical(raw, collectible);
-  return roundCommercialPrice(raw);
+  if (strategy === 'vinted') return roundVintedPrice(raw);
+  if (strategy === 'ebay') return roundEbayPrice(raw);
+  return roundDirectPrice(raw);
 }
 
 function configuredChannel(
@@ -536,19 +805,25 @@ export function calculateDiscountSafety({
             : 'RED',
     };
   };
-  let low = 0;
-  let high = 0.95;
-  for (let index = 0; index < 50; index += 1) {
-    const middle = (low + high) / 2;
-    if (calculate(middle).contribution + EPSILON >= minimumContribution)
-      low = middle;
-    else high = middle;
-  }
+  const maximumDiscountFor = (minimum: number) => {
+    let low = 0;
+    let high = 0.95;
+    for (let index = 0; index < 50; index += 1) {
+      const middle = (low + high) / 2;
+      if (calculate(middle).contribution + EPSILON >= minimum) low = middle;
+      else high = middle;
+    }
+    return Math.floor(low * 1000) / 1000;
+  };
+  const contributionLimit = maximumDiscountFor(minimumContribution);
+  const breakEvenLimit = maximumDiscountFor(0);
   return {
     tenPercent: calculate(0.1),
     fifteenPercent: calculate(0.15),
     twentyPercent: calculate(0.2),
-    maximumSafeDiscount: Math.floor(low * 1000) / 1000,
+    maximumSafeDiscount: contributionLimit,
+    maxDiscountBeforeMinimumContributionViolation: contributionLimit,
+    maxDiscountBeforeBreakEven: breakEvenLimit,
   };
 }
 
@@ -556,7 +831,42 @@ export function calculatePhysicalRecommendation(
   input: PhysicalPricingInput,
 ): PriceRecommendation {
   const config = input.config || DEFAULT_PRICING_CONFIG;
-  const minimumContribution = calculateMinimumContribution(input.cogs, config);
+  if (!config.channels[input.channel]) {
+    return { status: 'INVALID_CHANNEL_CONFIG', confidence: 'low', channel: input.channel,
+      diagnostics: { warnings: ['Unbekannte oder unvollständige Kanalkonfiguration.'] },
+      parameterSources: input.parameterSources, pricingConfigVersion: config.version };
+  }
+  if (!Number.isFinite(input.cogs) || input.cogs < 0) {
+    return { status: 'INVALID_COGS', confidence: 'low', channel: input.channel,
+      diagnostics: { warnings: ['Herstellungskosten sind ungültig.'] },
+      parameterSources: input.parameterSources, pricingConfigVersion: config.version };
+  }
+  if (input.cogs === 0) {
+    return { status: 'MISSING_COGS', confidence: 'low', channel: input.channel,
+      diagnostics: { warnings: ['COGS fehlen; physisches Pricing ist blockiert.'] },
+      parameterSources: input.parameterSources, pricingConfigVersion: config.version };
+  }
+  if (Object.values(input.value).some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
+    return { status: 'INVALID_PRICING_INPUT', confidence: 'low', channel: input.channel,
+      diagnostics: { warnings: ['Value-Parameter müssen zwischen 0 und 1 liegen.'] },
+      parameterSources: input.parameterSources, pricingConfigVersion: config.version };
+  }
+  const segment = SegmentClassifier.classify({
+    dimensions:
+      input.lengthCm && input.widthCm && input.heightCm
+        ? { l: input.lengthCm, w: input.widthCm, h: input.heightCm }
+        : undefined,
+    keywords: input.keywords || [input.category],
+    isPremiumOrArt:
+      input.isPremiumOrArt ??
+      Boolean(input.highEndCollector || input.tier !== 'standard'),
+  });
+  const isMicro = segment === 'small_functional' || segment === 'small_item';
+  const minimumContribution = calculateMinimumContribution(
+    input.cogs,
+    config,
+    isMicro,
+  );
   const requiredNet = calculateRequiredNet(
     input.cogs,
     minimumContribution,
@@ -578,28 +888,48 @@ export function calculatePhysicalRecommendation(
     feeVatRate: fees.feeVatRate,
     additionalChannelCosts: fees.nonCogsCosts,
   });
-  const presence = calculatePresenceFactor(input, config);
+  const presence = calculatePresenceFactor(
+    isMicro && !input.referenceLongestCm
+      ? { ...input, referenceLongestCm: 4.5 }
+      : input,
+    config,
+  );
   const valueFactor = calculateValueFactor(input.value, config);
+  const impactType = input.impactType || 'DETAILED';
+  const impactMultiplier = calculateImpactMultiplier(impactType, config);
+  const demandPerformance = calculateDemandPerformance(
+    input.demandPerformance || { sales30: 0, previous30: 0, sales90: 0 },
+    config,
+  );
   const demandCompetitionFactor = calculateDemandCompetitionFactor(
     input.demand,
     input.competition,
     config,
   );
-  const quantilePosition = quantilePositionForTier(
+  const marketPsychology = input.marketPsychology || 'balanced';
+  const marketPsychologyShift = config.marketPsychology[marketPsychology].quantileShift;
+  const quantilePosition = clamp(quantilePositionForTier(
     input.tier,
     input.highEndCollector,
-  );
+  ) + marketPsychologyShift, 0.25, 0.9);
   const categoryQuantiles = config.marketQuantiles[input.category];
   const selectedQuantile = interpolateQuantile(categoryQuantiles, quantilePosition);
-  const marketPrice = presence
-    ? calculatePhysicalMarketAnchor({
+  let marketPrice = calculatePhysicalMarketAnchor({
         selectedQuantile,
-        presenceFactor: presence.factor,
+        presenceFactor: presence?.factor ?? 1,
+        impactMultiplier,
         valueFactor,
         demandCompetitionFactor,
-      })
-    : undefined;
-  const rawPrice = Math.max(floorPrice, marketPrice ?? -Infinity);
+        demandIndex: demandPerformance.multiplier,
+      });
+  if (input.premiumLeitplanke)
+    marketPrice = Math.max(
+      marketPrice,
+      calculatePremiumGuidePrice(input.premiumLeitplanke, input.weightGrams),
+    );
+  if (input.marketCeiling && input.marketCeiling > 0)
+    marketPrice = Math.min(marketPrice, input.marketCeiling);
+  const rawPrice = Math.max(floorPrice, marketPrice);
   const recommendedPrice = roundForChannel(
     rawPrice,
     input.channel,
@@ -617,11 +947,17 @@ export function calculatePhysicalRecommendation(
   });
   const profit = currentNet - input.cogs;
   const warnings: string[] = [];
-  if (!presence) warnings.push('Maße fehlen; Marktanker nicht berechnet.');
+  if (!presence) warnings.push('Maße fehlen; neutraler Präsenzfaktor 1,00 verwendet.');
   if (input.demand === 'unknown' || input.competition === 'unknown')
     warnings.push('Nachfrage oder Konkurrenz ist unbekannt.');
   const status =
-    floorPrice > categoryQuantiles.p90 * 1.2 ? 'REVIEW_MARKET_FIT' : 'OK';
+    input.marketCeiling && input.marketCeiling > 0 && floorPrice > input.marketCeiling
+      ? 'REVIEW_MARKET_FIT'
+      : floorPrice > categoryQuantiles.p90 * 1.2
+        ? 'REVIEW_MARKET_FIT'
+        : !presence
+          ? 'REVIEW'
+          : 'OK';
   const etsyScenarios =
     input.channel === 'etsy'
       ? Object.fromEntries(
@@ -656,7 +992,7 @@ export function calculatePhysicalRecommendation(
     minimumContribution: money(minimumContribution),
     requiredNet: money(requiredNet),
     floorPrice: money(floorPrice),
-    marketPrice: marketPrice == null ? undefined : money(marketPrice),
+    marketPrice: money(marketPrice),
     rawPrice: money(rawPrice),
     recommendedPrice: money(recommendedPrice),
     expectedContribution: money(profit),
@@ -667,13 +1003,22 @@ export function calculatePhysicalRecommendation(
       presenceFactor: presence?.factor,
       volumeComponent: presence?.volumeComponent,
       valueFactor,
+      impactMultiplier,
+      impactType,
+      demandIndex: demandPerformance.multiplier,
+      demandPerformanceStatus: demandPerformance.status,
+      demandEvidence: demandPerformance.evidence,
       demandCompetitionFactor,
       selectedQuantile: money(selectedQuantile),
       selectedQuantilePosition: quantilePosition,
+      marketPsychology,
+      marketPsychologyShift,
       roundingRule: fees.roundingStrategy,
-      priceDriver: marketPrice != null && marketPrice > floorPrice ? 'market' : 'floor',
+      priceDriver: marketPrice > floorPrice ? 'market' : 'floor',
       warnings,
       etsyScenarios,
+      pricingSegment: segment,
+      marketCeiling: input.marketCeiling || undefined,
     },
     discountSafety: calculateDiscountSafety({
       regularPrice: recommendedPrice,
@@ -686,7 +1031,51 @@ export function calculatePhysicalRecommendation(
       offsiteRate: input.offsiteRate,
       config,
     }),
+    parameterSources: input.parameterSources,
+    pricingConfigVersion: config.version,
   };
+}
+
+export function calculateAllChannelRecommendations(
+  input: Omit<PhysicalPricingInput, 'channel'> & {
+    channelNonCogsCosts?: Partial<Record<SalesChannel, number>>;
+    marketPsychologyByChannel?: Partial<Record<SalesChannel, MarketPsychology>>;
+    demandPerformanceByChannel?: Partial<Record<SalesChannel, DemandPerformanceInput>>;
+    demandByChannel?: Partial<Record<SalesChannel, Demand>>;
+    competitionByChannel?: Partial<Record<SalesChannel, Competition>>;
+  },
+): Record<SalesChannel, PriceRecommendation> {
+  const {
+    channelNonCogsCosts,
+    marketPsychologyByChannel,
+    demandPerformanceByChannel,
+    demandByChannel,
+    competitionByChannel,
+    ...shared
+  } = input;
+  return Object.fromEntries(
+    (['etsy', 'direct', 'vinted', 'ebay', 'market'] as const).map((channel) => [
+      channel,
+      calculatePhysicalRecommendation({ ...shared, channel,
+        marketPsychology: marketPsychologyByChannel?.[channel] ?? shared.marketPsychology,
+        demandPerformance:
+          demandPerformanceByChannel?.[channel] ?? shared.demandPerformance,
+        demand: demandByChannel?.[channel] ?? shared.demand,
+        competition: competitionByChannel?.[channel] ?? shared.competition,
+        channelNonCogsCost: channelNonCogsCosts?.[channel] ?? shared.channelNonCogsCost }),
+    ]),
+  ) as Record<SalesChannel, PriceRecommendation>;
+}
+
+export function applyRecommendationsToDraft(
+  currentDraft: Partial<Record<SalesChannel, number>>,
+  recommendations: Partial<Record<SalesChannel, PriceRecommendation>>,
+): Partial<Record<SalesChannel, number>> {
+  const nextDraft = { ...currentDraft };
+  for (const [channel, recommendation] of Object.entries(recommendations) as Array<[SalesChannel, PriceRecommendation]>) {
+    if (typeof recommendation.recommendedPrice === 'number') nextDraft[channel] = recommendation.recommendedPrice;
+  }
+  return nextDraft;
 }
 
 export function calculateDigitalScore(input: DigitalPricingInput) {
@@ -716,16 +1105,33 @@ export function calculateDigitalRecommendation(
   input: DigitalPricingInput,
 ): PriceRecommendation {
   const config = input.config || DEFAULT_PRICING_CONFIG;
-  if (!input.license?.digitalRedistributionAllowed) {
+  if (!config.channels[input.channel]) {
+    return { status: 'INVALID_CHANNEL_CONFIG', confidence: 'low', channel: input.channel,
+      diagnostics: { warnings: ['Unbekannte oder unvollständige Kanalkonfiguration.'] },
+      pricingConfigVersion: config.version };
+  }
+  if ([input.modelComplexity, input.demand, input.differentiation, input.utility,
+       input.printReadiness].some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
+    return { status: 'INVALID_PRICING_INPUT', confidence: 'low', channel: input.channel,
+      diagnostics: { warnings: ['Digitalparameter müssen zwischen 0 und 1 liegen.'] },
+      pricingConfigVersion: config.version };
+  }
+  if (
+    !input.license?.isOwnDesign &&
+    !input.license?.digitalRedistributionAllowed
+  ) {
     return {
       status: 'BLOCKED_LICENSE',
       confidence: 'low',
       channel: input.channel,
       diagnostics: { warnings: ['Digitale Weiterverkaufsrechte sind nicht belegt.'] },
+      pricingConfigVersion: config.version,
     };
   }
   const score = calculateDigitalScore(input);
-  const q = clamp(0.25 + 0.65 * score, 0.25, 0.9);
+  const marketPsychology = input.marketPsychology || 'balanced';
+  const marketPsychologyShift = config.marketPsychology[marketPsychology].quantileShift;
+  const q = clamp(0.25 + 0.65 * score + marketPsychologyShift, 0.25, 0.9);
   const selectedQuantile = interpolateQuantile(config.marketQuantiles.digital, q);
   const demandCompetitionFactor = calculateDemandCompetitionFactor(
     input.demandClass || 'unknown',
@@ -742,7 +1148,10 @@ export function calculateDigitalRecommendation(
   return {
     status: 'OK',
     confidence:
-      input.competition === 'unknown' || !input.license.evidence ? 'medium' : 'high',
+      input.competition === 'unknown' ||
+      (!input.license.isOwnDesign && !input.license.evidence)
+        ? 'medium'
+        : 'high',
     channel: input.channel,
     marketPrice: money(marketPrice),
     rawPrice: money(marketPrice),
@@ -750,13 +1159,18 @@ export function calculateDigitalRecommendation(
     diagnostics: {
       selectedQuantile: money(selectedQuantile),
       selectedQuantilePosition: q,
+      marketPsychology,
+      marketPsychologyShift,
       demandCompetitionFactor,
       priceDriver: 'market',
-      roundingRule: input.channel === 'etsy' ? 'etsy-digital-ladder' : 'commercial',
+      roundingRule: input.channel === 'etsy'
+        ? 'etsy-digital-ladder'
+        : config.channels[input.channel].roundingStrategy,
       warnings: input.license.buyerCommercialUseAllowed
         ? []
         : ['Endkundenlizenz ist nur für private Nutzung vorgesehen.'],
     },
+    pricingConfigVersion: config.version,
   };
 }
 

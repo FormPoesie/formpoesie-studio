@@ -1,19 +1,22 @@
 import {
-  INVENTORY_SUPABASE_URL,
   getInventoryUser,
   inventoryReviewStatus,
-  inventoryHeaders,
   readCookie,
   requestUrl,
   requireInventoryManager,
 } from '@/lib/inventory-bridge';
-import { env } from 'cloudflare:workers';
+import { env, waitUntil } from 'cloudflare:workers';
 import { rebuildMonthlyProductHighlights } from '@/lib/monthly-product';
 import {
   invoiceCustomerIsComplete,
   shippingMethodForChannel,
 } from '@/lib/invoice-workflow';
 import { safeAssetFilename } from '@/lib/product-assets';
+import {
+  enqueueMarketAnalysis,
+  processMarketAnalysisJob,
+  researchFieldsChanged,
+} from '@/lib/market-analysis-jobs';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -225,6 +228,43 @@ const removableRelationEntities = new Set([
   'product_variants',
 ]);
 
+const marketResearchFields: Record<string, ReadonlySet<string>> = {
+  products: new Set([
+    'name',
+    'family_id',
+    'designer_id',
+    'size',
+    'category',
+    'model_url',
+    'commercial_license',
+    'print_files',
+    'material',
+    'width_mm',
+    'height_mm',
+    'depth_mm',
+    'design_origin',
+    'note',
+  ]),
+  product_variants: new Set([
+    'product_id',
+    'weight_class_group',
+    'name',
+    'material_id',
+    'grams',
+    'size',
+    'appearance',
+    'quantity',
+    'position',
+  ]),
+  product_filaments: new Set([
+    'product_id',
+    'product_variant_id',
+    'material_id',
+    'grams',
+    'part',
+  ]),
+};
+
 function toCamel(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(toCamel);
   if (!value || typeof value !== 'object') return value;
@@ -365,36 +405,239 @@ async function inventoryFetch(
   path: string,
   init?: RequestInit,
 ) {
+  void accessToken;
   const method = (init?.method || 'GET').toUpperCase();
-  const serviceKey = env.INVENTORY_SUPABASE_SERVICE_ROLE_KEY;
-  const usePrivilegedWrite = method !== 'GET' && Boolean(serviceKey);
-  const headers = new Headers(
-    inventoryHeaders(usePrivilegedWrite ? serviceKey : accessToken),
-  );
-  if (usePrivilegedWrite && serviceKey) headers.set('apikey', serviceKey);
-  headers.set('Prefer', 'return=representation');
-  if (init?.headers) {
-    for (const [key, value] of new Headers(init.headers))
-      headers.set(key, value);
-  }
-  const response = await fetch(INVENTORY_SUPABASE_URL + '/rest/v1/' + path, {
-    ...init,
-    headers,
-  });
-  const result = (await response.json().catch(() => null)) as unknown;
-  if (!response.ok) {
-    const error = result as { message?: string; details?: string } | null;
+  if (path.startsWith('rpc/'))
     throw new Error(
-      error?.message ||
-        error?.details ||
-        'Inventardaten konnten nicht gelesen werden.',
+      `Die Inventaraktion ${path.slice(4)} ist noch nicht nach D1 migriert.`,
     );
+  const [table, rawParams = ''] = path.split('?');
+  const snapshot = await env.DB.prepare(
+    'SELECT rows_json FROM inventory_snapshots WHERE table_name=?',
+  )
+    .bind(table)
+    .first<{ rows_json: string }>();
+  let allRows: JsonRecord[] = [];
+  try {
+    const parsed = JSON.parse(snapshot?.rows_json || '[]');
+    allRows = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    allRows = [];
   }
+  const search = new URLSearchParams(rawParams);
+  const matches = (row: JsonRecord) => {
+    for (const [field, expression] of search.entries()) {
+      if (['select', 'order', 'limit'].includes(field)) continue;
+      if (expression === 'is.null' && row[field] != null) return false;
+      if (expression === 'not.is.null' && row[field] == null) return false;
+      if (
+        expression.startsWith('eq.') &&
+        scalarText(row[field]) !== expression.slice(3)
+      )
+        return false;
+    }
+    return true;
+  };
+  if (method === 'GET') return toCamel(allRows.filter(matches));
+  const rawBody = typeof init?.body === 'string' ? init.body : '{}';
+  const body = JSON.parse(rawBody) as
+    | JsonRecord
+    | JsonRecord[];
+  let result: JsonRecord[] = [];
+  if (method === 'POST') {
+    const additions = (Array.isArray(body) ? body : [body]).map((row) => ({
+      ...row,
+      id:
+        row.id ??
+        Math.max(0, ...allRows.map((item) => Number(item.id) || 0)) + 1,
+      created_at: row.created_at ?? new Date().toISOString(),
+      updated_at: row.updated_at ?? new Date().toISOString(),
+    }));
+    allRows.push(...additions);
+    result = additions;
+  } else if (method === 'PATCH') {
+    const values = Array.isArray(body) ? body[0] || {} : body;
+    allRows = allRows.map((row) => {
+      if (!matches(row)) return row;
+      const updated = {
+        ...row,
+        ...values,
+        updated_at: new Date().toISOString(),
+      };
+      result.push(updated);
+      return updated;
+    });
+  } else if (method === 'DELETE') {
+    result = allRows.filter(matches);
+    allRows = allRows.filter((row) => !matches(row));
+  }
+  await env.DB.prepare(
+    `INSERT INTO inventory_snapshots (table_name,rows_json,updated_at)
+     VALUES (?,?,?) ON CONFLICT(table_name) DO UPDATE SET
+       rows_json=excluded.rows_json,updated_at=excluded.updated_at`,
+  )
+    .bind(table, JSON.stringify(allRows), new Date().toISOString())
+    .run();
   return toCamel(result);
 }
 
 async function query(accessToken: string, table: string, params: string) {
-  return inventoryFetch(accessToken, `${table}?${params}`);
+  void accessToken;
+  const readRows = async (tableName: string) => {
+    const snapshot = await env.DB.prepare(
+      'SELECT rows_json FROM inventory_snapshots WHERE table_name = ?',
+    )
+      .bind(tableName)
+      .first<{ rows_json: string }>();
+    if (!snapshot) return [] as JsonRecord[];
+    try {
+      const rows = JSON.parse(snapshot.rows_json);
+      return Array.isArray(rows) ? (rows as JsonRecord[]) : [];
+    } catch {
+      return [] as JsonRecord[];
+    }
+  };
+  const search = new URLSearchParams(params);
+  let rows = await readRows(table);
+  for (const [field, expression] of search.entries()) {
+    if (field === 'select' || field === 'order' || field === 'limit') continue;
+    if (expression === 'is.null')
+      rows = rows.filter((row) => row[field] == null);
+    else if (expression === 'not.is.null')
+      rows = rows.filter((row) => row[field] != null);
+    else if (expression.startsWith('eq.')) {
+      const expected = expression.slice(3);
+      rows = rows.filter((row) => scalarText(row[field]) === expected);
+    } else if (expression.startsWith('in.(')) {
+      const expected = new Set(
+        expression
+          .slice(4, -1)
+          .split(',')
+          .map((value) => decodeURIComponent(value)),
+      );
+      rows = rows.filter((row) => expected.has(scalarText(row[field])));
+    }
+  }
+  const order = search.get('order');
+  if (order) {
+    const [field] = order.split('.')[0].split(/\.(?=[^.]+$)/);
+    const orderField = field || order.split('.')[0];
+    const descending = order.includes('.desc');
+    rows.sort((left, right) => {
+      const a = left[orderField];
+      const b = right[orderField];
+      return (
+        (scalarText(a).localeCompare(scalarText(b), 'de', {
+          numeric: true,
+        }) || 0) * (descending ? -1 : 1)
+      );
+    });
+  }
+  const limit = Number(search.get('limit'));
+  if (Number.isFinite(limit) && limit > 0) rows = rows.slice(0, limit);
+
+  const select = search.get('select') || '';
+  const [
+    brands,
+    materials,
+    products,
+    productFilaments,
+    productVariants,
+    articleVariants,
+    articles,
+    saleItems,
+  ] = await Promise.all([
+    readRows('brands'),
+    readRows('materials'),
+    readRows('products'),
+    readRows('product_filaments'),
+    readRows('product_variants'),
+    readRows('article_variants'),
+    readRows('articles'),
+    readRows('sale_items'),
+  ]);
+  const brandFor = (id: unknown) =>
+    brands.find((row) => String(row.id) === String(id)) || null;
+  const materialFor = (id: unknown) => {
+    const material = materials.find((row) => String(row.id) === String(id));
+    return material
+      ? { ...material, brand: brandFor(material.brand_id) }
+      : null;
+  };
+  if (table === 'products')
+    rows = rows.map((row) => ({
+      ...row,
+      ...(select.includes('filaments:')
+        ? {
+            filaments: productFilaments
+              .filter((item) => String(item.product_id) === String(row.id))
+              .map((item) => ({
+                ...item,
+                material: materialFor(item.material_id),
+              })),
+          }
+        : {}),
+      ...(select.includes('variants:')
+        ? {
+            variants: productVariants
+              .filter((item) => String(item.product_id) === String(row.id))
+              .map((item) => ({
+                ...item,
+                material: materialFor(item.material_id),
+              })),
+          }
+        : {}),
+    }));
+  if (table === 'materials')
+    rows = rows.map((row) => ({ ...row, brand: brandFor(row.brand_id) }));
+  if (table === 'articles')
+    rows = rows.map((row) => ({
+      ...row,
+      variants: articleVariants.filter(
+        (item) => String(item.article_id) === String(row.id),
+      ),
+    }));
+  if (table === 'article_variants')
+    rows = rows.map((row) => ({
+      ...row,
+      article:
+        articles.find((item) => String(item.id) === String(row.article_id)) ||
+        null,
+    }));
+  if (table === 'sales')
+    rows = rows.map((row) => ({
+      ...row,
+      items: saleItems
+        .filter((item) => String(item.sale_id) === String(row.id))
+        .map((item) => {
+          const articleVariant = articleVariants.find(
+            (variant) => String(variant.id) === String(item.article_variant_id),
+          );
+          return {
+            ...item,
+            articleVariant: articleVariant
+              ? {
+                  ...articleVariant,
+                  article:
+                    articles.find(
+                      (article) =>
+                        String(article.id) ===
+                        String(articleVariant.article_id),
+                    ) || null,
+                }
+              : null,
+          };
+        }),
+    }));
+  if (table === 'online_sales')
+    rows = rows.map((row) => ({
+      ...row,
+      filaments: [],
+      product:
+        products.find((item) => String(item.id) === String(row.product_id)) ||
+        null,
+    }));
+  return toCamel(rows);
 }
 
 async function classifyMarkets(value: unknown) {
@@ -463,8 +706,10 @@ async function decorateProducts(value: unknown) {
   try {
     const channelPriceResult = await env.DB.prepare(
       `SELECT entity_kind AS entityKind, row_id AS rowId,
+              direct_price_cents AS directPriceCents,
               etsy_price_cents AS etsyPriceCents,
               vinted_price_cents AS vintedPriceCents,
+              ebay_price_cents AS ebayPriceCents,
               market_price_cents AS marketPriceCents
        FROM inventory_channel_prices`,
     ).all<JsonRecord>();
@@ -509,6 +754,10 @@ async function decorateProducts(value: unknown) {
     const standardPrice = Number(row[standardPriceKey]) || 0;
     return {
       ...row,
+      directPriceCents:
+        saved?.directPriceCents == null
+          ? standardPrice
+          : Number(saved.directPriceCents),
       etsyPriceCents:
         saved?.etsyPriceCents == null
           ? standardPrice
@@ -517,6 +766,10 @@ async function decorateProducts(value: unknown) {
         saved?.vintedPriceCents == null
           ? standardPrice
           : Number(saved.vintedPriceCents),
+      ebayPriceCents:
+        saved?.ebayPriceCents == null
+          ? standardPrice
+          : Number(saved.ebayPriceCents),
       marketPriceCents:
         saved?.marketPriceCents == null
           ? standardPrice
@@ -591,14 +844,18 @@ async function saveChannelPrices(
 ) {
   if (!['products', 'product_variants'].includes(entity)) return;
   const keys = [
+    'directPriceCents',
     'etsyPriceCents',
     'vintedPriceCents',
+    'ebayPriceCents',
     'marketPriceCents',
   ] as const;
   if (!keys.some((key) => key in values)) return;
   const current = await env.DB.prepare(
-    `SELECT etsy_price_cents AS etsyPriceCents,
+    `SELECT direct_price_cents AS directPriceCents,
+            etsy_price_cents AS etsyPriceCents,
             vinted_price_cents AS vintedPriceCents,
+            ebay_price_cents AS ebayPriceCents,
             market_price_cents AS marketPriceCents
      FROM inventory_channel_prices
      WHERE entity_kind = ? AND row_id = ?`,
@@ -613,12 +870,15 @@ async function saveChannelPrices(
         : Math.max(0, Math.trunc(Number(current[key]) || 0));
   await env.DB.prepare(
     `INSERT INTO inventory_channel_prices
-       (entity_kind, row_id, etsy_price_cents, vinted_price_cents,
-        market_price_cents, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+       (entity_kind, row_id, direct_price_cents, etsy_price_cents,
+        vinted_price_cents, ebay_price_cents, market_price_cents,
+        updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(entity_kind, row_id) DO UPDATE SET
+       direct_price_cents = excluded.direct_price_cents,
        etsy_price_cents = excluded.etsy_price_cents,
        vinted_price_cents = excluded.vinted_price_cents,
+       ebay_price_cents = excluded.ebay_price_cents,
        market_price_cents = excluded.market_price_cents,
        updated_by = excluded.updated_by,
        updated_at = excluded.updated_at`,
@@ -626,8 +886,10 @@ async function saveChannelPrices(
     .bind(
       entity,
       rowId,
+      price('directPriceCents'),
       price('etsyPriceCents'),
       price('vintedPriceCents'),
+      price('ebayPriceCents'),
       price('marketPriceCents'),
       userId,
       new Date().toISOString(),
@@ -684,6 +946,10 @@ async function saveProductMetadata(
       instant,
     )
     .run();
+  return {
+    previousStatus: inventoryReviewStatus(current?.reviewStatus),
+    reviewStatus,
+  };
 }
 
 async function decorateExpenses(value: unknown) {
@@ -1257,7 +1523,15 @@ async function loadArea(accessToken: string, area: string, request: Request) {
     };
   }
   if (area === 'sales') {
-    const [sales, markets, onlineSales, marketExpenses] = await Promise.all([
+    const [
+      sales,
+      markets,
+      onlineSales,
+      marketExpenses,
+      products,
+      components,
+      materials,
+    ] = await Promise.all([
       query(
         accessToken,
         'sales',
@@ -1278,11 +1552,37 @@ async function loadArea(accessToken: string, area: string, request: Request) {
         'expenses',
         'select=*&deleted_at=is.null&order=date.desc',
       ),
+      query(
+        accessToken,
+        'products',
+        'select=' +
+          encodeURIComponent(
+            '*,filaments:product_filaments(*,material:materials(*,brand:brands(*))),variants:product_variants(*,material:materials(*,brand:brands(*)))',
+          ) +
+          '&deleted_at=is.null&archived_at=is.null&order=name.asc',
+      ),
+      query(accessToken, 'product_components', 'select=*&order=id.asc'),
+      query(
+        accessToken,
+        'materials',
+        'select=' +
+          encodeURIComponent('*,brand:brands(*)') +
+          '&deleted_at=is.null&order=name.asc',
+      ),
     ]);
     const highlights = await rebuildMonthlyProductHighlights(accessToken).catch(
       () => [],
     );
-    return { sales, markets, onlineSales, marketExpenses, highlights };
+    return {
+      sales,
+      markets,
+      onlineSales,
+      marketExpenses,
+      highlights,
+      products: await decorateProducts(products),
+      components,
+      materials: await decorateMaterials(materials),
+    };
   }
   if (area === 'months') {
     const [sales, expenses, onlineSales, otherExpenses, markets] =
@@ -1783,10 +2083,25 @@ export async function POST(request: Request) {
 
       let orderKey = '';
       const createdIds: string[] = [];
+      const filamentSelectionsFor = (item: JsonRecord) => {
+        const selections = Array.isArray(item.filamentSelections)
+          ? (item.filamentSelections as JsonRecord[])
+          : [];
+        if (selections.length) return selections;
+        return [
+          {
+            partKey: 'aggregate',
+            partLabel: 'Gesamter Druck',
+            materialId: item.filamentMaterialId,
+            grams: item.filamentGrams,
+          },
+        ];
+      };
       const submittedMaterialIds = [
         ...new Set(
           submitted
-            .map((item) => Math.trunc(Number(item.filamentMaterialId)))
+            .flatMap((item) => filamentSelectionsFor(item))
+            .map((item) => Math.trunc(Number(item.materialId)))
             .filter((id) => Number.isInteger(id) && id > 0),
         ),
       ];
@@ -1800,46 +2115,80 @@ export async function POST(request: Request) {
           )) as JsonRecord[])
         : [];
       for (const [index, item] of submitted.entries()) {
-        const filamentGrams = Math.max(
-          0,
-          Math.round(Number(item.filamentGrams) || 0),
-        );
-        if (!filamentGrams) continue;
-        const filamentMaterialId = Math.trunc(Number(item.filamentMaterialId));
-        const selectedMaterial = selectedMaterials.find(
-          (material) => Number(material.id) === filamentMaterialId,
-        );
-        if (
-          !selectedMaterial ||
-          Number(selectedMaterial.pricePerRollCents) <= 0 ||
-          Number(selectedMaterial.spoolWeightGrams) <= 0
-        )
-          return Response.json(
-            {
-              error: `Für Artikel ${index + 1} muss ein Filament mit Rollenpreis und Rollengewicht ausgewählt werden.`,
-            },
-            { status: 400 },
+        for (const selection of filamentSelectionsFor(item)) {
+          const grams = Math.max(0, Math.round(Number(selection.grams) || 0));
+          if (!grams) continue;
+          const materialId = Math.trunc(Number(selection.materialId));
+          const selectedMaterial = selectedMaterials.find(
+            (material) => Number(material.id) === materialId,
           );
+          if (
+            !selectedMaterial ||
+            Number(selectedMaterial.pricePerRollCents) <= 0 ||
+            Number(selectedMaterial.spoolWeightGrams) <= 0
+          )
+            return Response.json(
+              {
+                error: `Für Artikel ${index + 1}, ${scalarText(selection.partLabel, 'Druckteil')} muss ein Filament mit Rollenpreis und Rollengewicht ausgewählt werden.`,
+              },
+              { status: 400 },
+            );
+        }
       }
+      await env.DB.prepare(
+        `CREATE TABLE IF NOT EXISTS inventory_sale_filaments (
+          online_sale_id TEXT NOT NULL,
+          part_key TEXT NOT NULL,
+          part_label TEXT NOT NULL,
+          material_id TEXT NOT NULL,
+          grams INTEGER NOT NULL,
+          cost_cents INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (online_sale_id, part_key)
+        )`,
+      ).run();
       for (const [index, item] of submitted.entries()) {
         const productId = Number(item.productId);
         const quantity = Math.trunc(Number(item.quantity));
         if (!Number.isInteger(productId) || productId <= 0 || quantity <= 0)
           throw new Error(`Artikel ${index + 1} enthält ungültige Daten.`);
-        const filamentMaterialId = Math.trunc(Number(item.filamentMaterialId));
-        const selectedMaterial = selectedMaterials.find(
-          (material) => Number(material.id) === filamentMaterialId,
-        );
-        const filamentGrams = Math.max(
+        const saleFilaments = filamentSelectionsFor(item).map((selection) => {
+          const materialId = Math.trunc(Number(selection.materialId));
+          const selectedMaterial = selectedMaterials.find(
+            (material) => Number(material.id) === materialId,
+          );
+          const grams = Math.max(0, Math.round(Number(selection.grams) || 0));
+          const materialPrice = Number(selectedMaterial?.pricePerRollCents);
+          const materialWeight = Number(selectedMaterial?.spoolWeightGrams);
+          return {
+            partKey: scalarText(selection.partKey, 'aggregate').slice(0, 160),
+            partLabel: scalarText(selection.partLabel, 'Druckteil').slice(0, 200),
+            materialId,
+            grams,
+            costCents:
+              selectedMaterial && materialPrice > 0 && materialWeight > 0
+                ? Math.round((grams * materialPrice) / materialWeight)
+                : 0,
+          };
+        });
+        const filamentGrams = saleFilaments.reduce(
+          (sum, selection) => sum + selection.grams,
           0,
-          Math.round(Number(item.filamentGrams) || 0),
         );
-        const materialPrice = Number(selectedMaterial?.pricePerRollCents);
-        const materialWeight = Number(selectedMaterial?.spoolWeightGrams);
-        const actualFilamentCost =
-          selectedMaterial && materialPrice > 0 && materialWeight > 0
-            ? Math.round((filamentGrams * materialPrice) / materialWeight)
-            : Math.max(0, Math.round(Number(item.filamentCostCents) || 0));
+        const actualFilamentCost = saleFilaments.reduce(
+          (sum, selection) => sum + selection.costCents,
+          0,
+        );
+        const distinctMaterialIds = [
+          ...new Set(
+            saleFilaments
+              .map((selection) => selection.materialId)
+              .filter((id) => id > 0),
+          ),
+        ];
+        const filamentMaterialId =
+          distinctMaterialIds.length === 1 ? distinctMaterialIds[0] : 0;
         const values = {
           product_id: productId,
           article_name: scalarText(item.articleName, 'Artikel').trim(),
@@ -1905,6 +2254,32 @@ export async function POST(request: Request) {
         if (!created?.id)
           throw new Error('Verkaufsposition wurde nicht bestätigt.');
         createdIds.push(scalarText(created.id));
+        const now = new Date().toISOString();
+        for (const selection of saleFilaments) {
+          if (selection.grams <= 0 || selection.materialId <= 0) continue;
+          await env.DB.prepare(
+            `INSERT INTO inventory_sale_filaments
+               (online_sale_id,part_key,part_label,material_id,grams,cost_cents,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?)
+             ON CONFLICT(online_sale_id,part_key) DO UPDATE SET
+               part_label=excluded.part_label,
+               material_id=excluded.material_id,
+               grams=excluded.grams,
+               cost_cents=excluded.cost_cents,
+               updated_at=excluded.updated_at`,
+          )
+            .bind(
+              scalarText(created.id),
+              selection.partKey,
+              selection.partLabel,
+              String(selection.materialId),
+              selection.grams,
+              selection.costCents,
+              now,
+              now,
+            )
+            .run();
+        }
         orderKey = scalarText(created.orderKey || created.order_key, orderKey);
       }
       await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
@@ -2213,7 +2588,7 @@ export async function PATCH(request: Request) {
     body.entity === 'sales' && Array.isArray(body.values.items)
       ? (body.values.items as JsonRecord[])
       : null;
-  const values = safeValues(body.entity, body.values);
+  let values = safeValues(body.entity, body.values);
   const hasProductMetadata =
     body.entity === 'products' &&
     ['studioStatus', 'finalReviewed', 'finalizedAt', 'etsyListed'].some(
@@ -2224,9 +2599,13 @@ export async function PATCH(request: Request) {
     ['category', 'recurrence'].some((key) => key in body.values!);
   const hasChannelPrices =
     ['products', 'product_variants'].includes(body.entity) &&
-    ['etsyPriceCents', 'vintedPriceCents', 'marketPriceCents'].some(
-      (key) => key in body.values!,
-    );
+    [
+      'directPriceCents',
+      'etsyPriceCents',
+      'vintedPriceCents',
+      'ebayPriceCents',
+      'marketPriceCents',
+    ].some((key) => key in body.values!);
   const hasVariantDefectMetadata =
     body.entity === 'product_variants' &&
     'defectSourceVariantId' in body.values;
@@ -2239,6 +2618,29 @@ export async function PATCH(request: Request) {
     !hasVariantDefectMetadata
   )
     return Response.json({ error: 'Keine gültigen Felder.' }, { status: 400 });
+  const researchFields = marketResearchFields[body.entity];
+  const submittedResearchValues = Object.fromEntries(
+    Object.entries(values || {}).filter(([key]) => researchFields?.has(key)),
+  );
+  let previousResearchRow: JsonRecord | null = null;
+  if (researchFields && Object.keys(submittedResearchValues).length) {
+    const previous = await query(
+      accessToken,
+      body.entity,
+      `select=*&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
+    );
+    previousResearchRow = Array.isArray(previous)
+      ? ((previous[0] as JsonRecord | undefined) ?? null)
+      : null;
+    previousResearchRow = previousResearchRow
+      ? Object.fromEntries(
+          Object.entries(previousResearchRow).map(([key, value]) => [
+            toSnake(key),
+            value,
+          ]),
+        )
+      : null;
+  }
   try {
     if (body.entity === 'sales' && submittedSaleItems?.length) {
       const existing = await query(
@@ -2323,14 +2725,11 @@ export async function PATCH(request: Request) {
       }
     }
     let previousOnlineSale: JsonRecord | null = null;
-    if (
-      body.entity === 'online_sales' &&
-      ('isShipped' in body.values || 'quantity' in body.values)
-    ) {
+    if (body.entity === 'online_sales') {
       const previous = await query(
         accessToken,
         'online_sales',
-        `select=id,is_shipped,product_id,quantity&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
+        `select=id,is_shipped,product_id,quantity,filament_material_id,filament_grams&id=eq.${encodeURIComponent(String(body.id))}&limit=1`,
       );
       previousOnlineSale = Array.isArray(previous)
         ? ((previous[0] as JsonRecord | undefined) ?? null)
@@ -2344,6 +2743,56 @@ export async function PATCH(request: Request) {
         throw new Error(
           'Die Menge eines bereits versendeten Verkaufs kann erst geändert werden, nachdem der Versandstatus zurückgenommen wurde.',
         );
+      if (
+        'filamentMaterialId' in body.values ||
+        'filamentGrams' in body.values
+      ) {
+        const materialId = Math.trunc(
+          Number(
+            body.values.filamentMaterialId ??
+              previousOnlineSale?.filamentMaterialId,
+          ) || 0,
+        );
+        const grams = Math.max(
+          0,
+          Math.round(
+            Number(
+              body.values.filamentGrams ?? previousOnlineSale?.filamentGrams,
+            ) || 0,
+          ),
+        );
+        if (grams > 0) {
+          const foundMaterial = materialId
+            ? await query(
+                accessToken,
+                'materials',
+                `select=id,price_per_roll_cents,spool_weight_grams&id=eq.${encodeURIComponent(String(materialId))}&deleted_at=is.null&limit=1`,
+              )
+            : [];
+          const material = Array.isArray(foundMaterial)
+            ? (foundMaterial[0] as JsonRecord | undefined)
+            : undefined;
+          const rollPrice = Number(material?.pricePerRollCents);
+          const rollWeight = Number(material?.spoolWeightGrams);
+          if (!material || rollPrice <= 0 || rollWeight <= 0)
+            throw new Error(
+              'Bitte ein Filament mit Rollenpreis und Rollengewicht auswählen.',
+            );
+          values = {
+            ...values,
+            filament_material_id: materialId,
+            filament_grams: grams,
+            filament_cost_cents: Math.round((grams * rollPrice) / rollWeight),
+          };
+        } else {
+          values = {
+            ...values,
+            filament_material_id: materialId || null,
+            filament_grams: 0,
+            filament_cost_cents: 0,
+          };
+        }
+      }
     }
     const updateValues = entitiesWithUpdatedBy.has(body.entity)
       ? { ...values, updated_by: user.id || null }
@@ -2368,10 +2817,74 @@ export async function PATCH(request: Request) {
         body.values,
         user.id || null,
       );
-    if (hasProductMetadata)
-      await saveProductMetadata(String(body.id), body.values, user.id || null);
+    const metadataTransition = hasProductMetadata
+      ? await saveProductMetadata(String(body.id), body.values, user.id || null)
+      : null;
     if (hasExpenseMetadata)
       await saveExpenseMetadata(String(body.id), body.values, user.id || null);
+    const becameFinal =
+      metadataTransition?.previousStatus !== 'final' &&
+      metadataTransition?.reviewStatus === 'final';
+    const relevantChange = researchFieldsChanged(
+      previousResearchRow,
+      submittedResearchValues,
+      researchFields || new Set<string>(),
+    );
+    if (becameFinal || relevantChange) {
+      let researchProductId = body.entity === 'products' ? String(body.id) : '';
+      if (!researchProductId)
+        researchProductId = scalarText(
+          submittedResearchValues.product_id || previousResearchRow?.product_id,
+        );
+      if (!researchProductId && body.entity === 'product_filaments') {
+        const variantId = scalarText(
+          submittedResearchValues.product_variant_id ||
+            previousResearchRow?.product_variant_id,
+        );
+        if (variantId) {
+          const variants = await query(
+            accessToken,
+            'product_variants',
+            `select=product_id&id=eq.${encodeURIComponent(variantId)}&limit=1`,
+          );
+          researchProductId = Array.isArray(variants)
+            ? scalarText((variants[0] as JsonRecord | undefined)?.productId)
+            : '';
+        }
+      }
+      if (researchProductId) {
+        const metadata = await env.DB.prepare(
+          'SELECT review_status AS reviewStatus FROM inventory_product_metadata WHERE product_id=?',
+        )
+          .bind(researchProductId)
+          .first<JsonRecord>();
+        if (
+          becameFinal ||
+          inventoryReviewStatus(metadata?.reviewStatus) === 'final'
+        ) {
+          const fingerprint = JSON.stringify({
+            entity: body.entity,
+            id: String(body.id),
+            values: Object.fromEntries(
+              Object.entries(submittedResearchValues).sort(([left], [right]) =>
+                left.localeCompare(right),
+              ),
+            ),
+          });
+          const job = await enqueueMarketAnalysis(env, {
+            productId: researchProductId,
+            reason: becameFinal ? 'FINAL_TRANSITION' : 'PRODUCT_CHANGED',
+            fingerprint,
+          });
+          if (job)
+            waitUntil(
+              processMarketAnalysisJob(env, job, accessToken).catch(
+                () => undefined,
+              ),
+            );
+        }
+      }
+    }
     if (body.entity === 'online_sales' && previousOnlineSale) {
       const wasShipped = previousOnlineSale.isShipped === true;
       const isShipped = body.values.isShipped === true;
@@ -2587,6 +3100,12 @@ export async function DELETE(request: Request) {
           }),
         },
       );
+      await env.DB.prepare(
+        'DELETE FROM inventory_sale_filaments WHERE online_sale_id = ?',
+      )
+        .bind(String(body.id))
+        .run()
+        .catch(() => undefined);
       await rebuildMonthlyProductHighlights(accessToken).catch(() => null);
       return Response.json({ deleted: true, result });
     }

@@ -99,6 +99,8 @@ export const inventoryProductMetadata = sqliteTable(
     productId: text('product_id').primaryKey(),
     reviewStatus: text('review_status').notNull().default('draft'),
     finalizedAt: text('finalized_at'),
+    researchVersion: integer('research_version').notNull().default(0),
+    researchFingerprint: text('research_fingerprint'),
     etsyListed: integer('etsy_listed', { mode: 'boolean' })
       .notNull()
       .default(false),
@@ -110,13 +112,39 @@ export const inventoryProductMetadata = sqliteTable(
   ],
 );
 
+export const marketAnalysisJobs = sqliteTable(
+  'market_analysis_jobs',
+  {
+    id: text('id').primaryKey(),
+    productId: text('product_id').notNull(),
+    productVersion: integer('product_version').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    triggerReason: text('trigger_reason').notNull(),
+    status: text('status').notNull().default('QUEUED'),
+    runId: text('run_id'),
+    resultJson: text('result_json'),
+    errorJson: text('error_json').notNull().default('[]'),
+    startedAt: text('started_at'),
+    finishedAt: text('finished_at'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('idx_market_analysis_jobs_idempotency').on(table.idempotencyKey),
+    index('idx_market_analysis_jobs_product').on(table.productId, table.productVersion),
+    index('idx_market_analysis_jobs_status').on(table.status, table.createdAt),
+  ],
+);
+
 export const inventoryChannelPrices = sqliteTable(
   'inventory_channel_prices',
   {
     entityKind: text('entity_kind').notNull(),
     rowId: text('row_id').notNull(),
+    directPriceCents: integer('direct_price_cents'),
     etsyPriceCents: integer('etsy_price_cents'),
     vintedPriceCents: integer('vinted_price_cents'),
+    ebayPriceCents: integer('ebay_price_cents'),
     marketPriceCents: integer('market_price_cents'),
     updatedBy: text('updated_by'),
     updatedAt: text('updated_at').notNull(),
@@ -1015,6 +1043,23 @@ export const inventoryShippingDetails = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.sourceType, table.sourceId] }),
     index('idx_inventory_shipping_tracking').on(table.trackingNumber),
+  ],
+);
+
+export const inventorySaleFilaments = sqliteTable(
+  'inventory_sale_filaments',
+  {
+    onlineSaleId: text('online_sale_id').notNull(),
+    partKey: text('part_key').notNull(),
+    partLabel: text('part_label').notNull(),
+    materialId: text('material_id').notNull(),
+    grams: integer('grams').notNull(),
+    costCents: integer('cost_cents').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ columns: [table.onlineSaleId, table.partKey] }),
+    index('idx_inventory_sale_filaments_sale').on(table.onlineSaleId),
   ],
 );
 

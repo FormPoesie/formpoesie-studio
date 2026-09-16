@@ -114,7 +114,7 @@ const sections: Array<{
 }> = [
   { id: 'overview', label: 'Übersicht', icon: Boxes },
   { id: 'products', label: 'Artikel', icon: Package },
-  { id: 'pricing', label: 'Preiskalkulator', icon: Calculator },
+  { id: 'pricing', label: 'Preisvorschläge', icon: Calculator },
   { id: 'materials', label: 'Material', icon: Warehouse },
   { id: 'markets', label: 'Märkte', icon: MapPin },
   { id: 'shelves', label: 'Regalflächen', icon: Warehouse },
@@ -200,6 +200,20 @@ function productImagePath(product: Row) {
   );
 }
 
+function productImageCandidates(product: Row) {
+  const candidates = [
+    product.studioPrimaryImageUrl,
+    ...rows(product.variants).map((variant) => variant.imageUrl),
+    product.imageUri,
+    ...rows(product.studioAssets)
+      .filter((asset) => string(asset.assetKind) === 'image')
+      .map((asset) => asset.url),
+  ]
+    .map((value) => string(value).trim())
+    .filter(Boolean);
+  return [...new Set(candidates)];
+}
+
 function existingProductImagePath(product: Row) {
   const variants = rows(product.variants);
   return string(
@@ -215,7 +229,11 @@ function inventoryImageUrl(path: string) {
 }
 
 function InventoryImage({ product, alt }: { product: Row; alt: string }) {
-  const path = productImagePath(product);
+  const candidates = productImageCandidates(product);
+  const candidateKey = candidates.join('\u0000');
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  useEffect(() => setCandidateIndex(0), [candidateKey]);
+  const path = candidates[candidateIndex] || '';
   return (
     <div className="relative aspect-square overflow-hidden rounded-2xl bg-[#ebe5db]">
       {path ? (
@@ -226,6 +244,7 @@ function InventoryImage({ product, alt }: { product: Row; alt: string }) {
           unoptimized
           sizes="(max-width: 768px) 45vw, 220px"
           className="object-cover"
+          onError={() => setCandidateIndex((current) => current + 1)}
         />
       ) : (
         <div className="grid size-full place-items-center text-muted-foreground">
@@ -2741,7 +2760,63 @@ type GeneralCartItem = {
   salePriceCents: number;
   filamentMaterialId: string;
   filamentSearch: string;
+  filamentSelections: Array<{
+    key: string;
+    label: string;
+    grams: number;
+    materialId: string;
+    search: string;
+  }>;
 };
+
+function cashFilamentParts(product: Row, variant: Row) {
+  const variantId = string(variant.id);
+  const all = rows(product.filaments);
+  const shared = all.filter((row) => !string(row.productVariantId));
+  const own = all.filter(
+    (row) => variantId && string(row.productVariantId) === variantId,
+  );
+  const replaced = new Set(
+    own
+      .map((row) => string(row.part).trim().toLocaleLowerCase('de'))
+      .filter(Boolean),
+  );
+  const filaments = [
+    ...shared.filter(
+      (row) =>
+        !replaced.has(string(row.part).trim().toLocaleLowerCase('de')),
+    ),
+    ...own,
+  ];
+  const parts: Array<{
+    key: string;
+    label: string;
+    grams: number;
+    materialId: string;
+    search: string;
+  }> = [];
+  const variantGrams = number(variant.grams) + number(variant.wasteGrams);
+  if (variantGrams > 0)
+    parts.push({
+      key: `variant:${variantId || 'standard'}`,
+      label: string(variant.part || variant.name, 'Hauptteil'),
+      grams: variantGrams,
+      materialId: string(variant.materialId || object(variant.material).id),
+      search: '',
+    });
+  filaments.forEach((row, index) => {
+    const grams = number(row.grams) + number(row.wasteGrams);
+    if (grams <= 0) return;
+    parts.push({
+      key: `filament:${string(row.id, String(index))}`,
+      label: string(row.part || row.name, `Druckteil ${index + 1}`),
+      grams,
+      materialId: string(row.materialId || object(row.material).id),
+      search: '',
+    });
+  });
+  return parts;
+}
 
 const GENERAL_SALES_CHANNELS = [
   'Abholung',
@@ -3034,6 +3109,30 @@ function GeneralCashRegister({
       electricityCostCents: number;
       machineCostCents: number;
     }) => {
+      if (item.filamentSelections.length) {
+        const originalTotal = item.filamentSelections.reduce(
+          (sum, part) => sum + part.grams,
+          0,
+        );
+        const scale =
+          originalTotal > 0 ? production.filamentGrams / originalTotal : 1;
+        return {
+          ...production,
+          filamentCostCents: item.filamentSelections.reduce((sum, part) => {
+            const material = materials.find(
+              (entry) => string(entry.id) === part.materialId,
+            );
+            return (
+              sum +
+              filamentCostCents(
+                part.grams * scale,
+                number(material?.pricePerRollCents),
+                number(material?.spoolWeightGrams),
+              )
+            );
+          }, 0),
+        };
+      }
       const material = materials.find(
         (entry) => string(entry.id) === item.filamentMaterialId,
       );
@@ -3125,14 +3224,30 @@ function GeneralCashRegister({
   const adjustedMarginPercent = total > 0 ? (adjustedMargin / total) * 100 : 0;
   const incompleteFilamentItems = cart.filter((item) => {
     if (isDigitalInventoryProduct(item.product)) return false;
-    const material = materials.find(
-      (entry) => string(entry.id) === item.filamentMaterialId,
-    );
-    return (
-      !material ||
-      number(material.pricePerRollCents) <= 0 ||
-      number(material.spoolWeightGrams) <= 0
-    );
+    const selections = item.filamentSelections.length
+      ? item.filamentSelections
+      : [
+          {
+            materialId: item.filamentMaterialId,
+            grams: variantCostBreakdown(
+              item.product,
+              item.variant,
+              products,
+              components,
+            ).netGrams,
+          },
+        ];
+    return selections.some((selection) => {
+      if (selection.grams <= 0) return false;
+      const material = materials.find(
+        (entry) => string(entry.id) === selection.materialId,
+      );
+      return (
+        !material ||
+        number(material.pricePerRollCents) <= 0 ||
+        number(material.spoolWeightGrams) <= 0
+      );
+    });
   });
 
   function itemKey(product: Row, variant: Row) {
@@ -3160,6 +3275,7 @@ function GeneralCashRegister({
           relevantFilaments.find((row) => number(row.materialId) > 0)
             ?.materialId,
       );
+      const filamentSelections = cashFilamentParts(product, variant);
       return [
         ...current,
         {
@@ -3169,6 +3285,30 @@ function GeneralCashRegister({
           salePriceCents: price,
           filamentMaterialId: defaultMaterialId,
           filamentSearch: '',
+          filamentSelections:
+            filamentSelections.length > 0
+              ? filamentSelections
+              : [
+                  {
+                    key: 'aggregate',
+                    label: 'Gesamter Druck',
+                    grams:
+                      variantCostBreakdown(
+                        product,
+                        variant,
+                        products,
+                        components,
+                      ).netGrams +
+                      variantCostBreakdown(
+                        product,
+                        variant,
+                        products,
+                        components,
+                      ).wasteGrams,
+                    materialId: defaultMaterialId,
+                    search: '',
+                  },
+                ],
         },
       ];
     });
@@ -3183,6 +3323,25 @@ function GeneralCashRegister({
             : item,
         )
         .filter((item) => item.quantity > 0),
+    );
+  }
+
+  function patchFilamentSelection(
+    itemKeyValue: string,
+    partKey: string,
+    values: Partial<GeneralCartItem['filamentSelections'][number]>,
+  ) {
+    setCart((current) =>
+      current.map((item) =>
+        itemKey(item.product, item.variant) === itemKeyValue
+          ? {
+              ...item,
+              filamentSelections: item.filamentSelections.map((part) =>
+                part.key === partKey ? { ...part, ...values } : part,
+              ),
+            }
+          : item,
+      ),
     );
   }
 
@@ -3240,6 +3399,31 @@ function GeneralCashRegister({
             components,
           );
           const production = productionForCartItem(item);
+          const originalPartGrams = item.filamentSelections.reduce(
+            (sum, part) => sum + part.grams,
+            0,
+          );
+          const partScale =
+            originalPartGrams > 0
+              ? production.filamentGrams / originalPartGrams
+              : 1;
+          const filamentSelections = item.filamentSelections.map((part) => {
+            const material = materials.find(
+              (entry) => string(entry.id) === part.materialId,
+            );
+            const grams = Math.max(0, Math.round(part.grams * partScale));
+            return {
+              partKey: part.key,
+              partLabel: part.label,
+              materialId: number(part.materialId),
+              grams,
+              costCents: filamentCostCents(
+                grams,
+                number(material?.pricePerRollCents),
+                number(material?.spoolWeightGrams),
+              ),
+            };
+          });
           return {
             productId: number(item.product.id),
             articleName: string(item.product.name, 'Artikel'),
@@ -3252,6 +3436,7 @@ function GeneralCashRegister({
             filamentMaterialId: number(item.filamentMaterialId),
             filamentGrams: production.filamentGrams,
             filamentCostCents: production.filamentCostCents,
+            filamentSelections,
             electricityCostCents: production.electricityCostCents,
             machineCostCents: production.machineCostCents,
             accessoryCostCents:
@@ -3433,29 +3618,6 @@ function GeneralCashRegister({
               const unitCost = adjustedUnitCost(item);
               const itemMargin =
                 (item.salePriceCents - unitCost) * item.quantity;
-              const filamentQuery = item.filamentSearch
-                .trim()
-                .toLocaleLowerCase('de');
-              const matchingMaterials = materials.filter((material) =>
-                [
-                  materialChoiceLabel(material),
-                  material.name,
-                  material.materialType,
-                ]
-                  .join(' ')
-                  .toLocaleLowerCase('de')
-                  .includes(filamentQuery),
-              );
-              const selectedMaterial = materials.find(
-                (material) => string(material.id) === item.filamentMaterialId,
-              );
-              const visibleMaterials =
-                selectedMaterial &&
-                !matchingMaterials.some(
-                  (material) => string(material.id) === item.filamentMaterialId,
-                )
-                  ? [selectedMaterial, ...matchingMaterials]
-                  : matchingMaterials;
               return (
                 <div
                   key={key}
@@ -3468,56 +3630,90 @@ function GeneralCashRegister({
                     {cashVariantLabel(item.product, item.variant)}
                   </div>
                   {!isDigitalInventoryProduct(item.product) ? (
-                    <div className="mt-3 grid gap-2 rounded-lg border border-white/15 p-2">
-                      <div className="grid gap-1 text-xs text-white/65">
-                        <span>Verwendetes Filament suchen</span>
-                        <Input
-                          aria-label={`Filament für ${string(item.product.name)} suchen`}
-                          className="h-9 bg-white text-black"
-                          value={item.filamentSearch}
-                          onChange={(event) =>
-                            patchCart(key, {
-                              filamentSearch: event.target.value,
-                            })
-                          }
-                          placeholder="Marke, Farbe oder Art"
-                        />
-                      </div>
-                      <div className="grid gap-1 text-xs text-white/65">
-                        <span>Tatsächlich verwendete Rolle</span>
-                        <select
-                          aria-label={`Verwendetes Filament für ${string(item.product.name)}`}
-                          className="h-9 min-w-0 rounded-lg border border-white/20 bg-white px-2 text-sm text-black"
-                          value={item.filamentMaterialId}
-                          onChange={(event) =>
-                            patchCart(key, {
-                              filamentMaterialId: event.target.value,
-                            })
-                          }
-                        >
-                          <option value="">Filament auswählen</option>
-                          {visibleMaterials.map((material) => (
-                            <option
-                              key={string(material.id)}
-                              value={string(material.id)}
+                    <div className="mt-3 grid gap-2">
+                      {item.filamentSelections.map((part) => {
+                        const query = part.search
+                          .trim()
+                          .toLocaleLowerCase('de');
+                        const matching = materials.filter((material) =>
+                          [
+                            materialChoiceLabel(material),
+                            material.name,
+                            material.materialType,
+                          ]
+                            .join(' ')
+                            .toLocaleLowerCase('de')
+                            .includes(query),
+                        );
+                        const selected = materials.find(
+                          (material) =>
+                            string(material.id) === part.materialId,
+                        );
+                        const visible =
+                          selected &&
+                          !matching.some(
+                            (material) =>
+                              string(material.id) === part.materialId,
+                          )
+                            ? [selected, ...matching]
+                            : matching;
+                        return (
+                          <div
+                            key={part.key}
+                            className="grid gap-2 rounded-lg border border-white/15 p-2"
+                          >
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <strong>{part.label}</strong>
+                              <span className="text-white/60">
+                                {decimalInputValue(part.grams)} g
+                              </span>
+                            </div>
+                            <Input
+                              aria-label={`Filament für ${part.label} suchen`}
+                              className="h-9 bg-white text-black"
+                              value={part.search}
+                              onChange={(event) =>
+                                patchFilamentSelection(key, part.key, {
+                                  search: event.target.value,
+                                })
+                              }
+                              placeholder="Marke, Farbe oder Art"
+                            />
+                            <select
+                              aria-label={`Verwendetes Filament für ${part.label}`}
+                              className="h-9 min-w-0 rounded-lg border border-white/20 bg-white px-2 text-sm text-black"
+                              value={part.materialId}
+                              onChange={(event) =>
+                                patchFilamentSelection(key, part.key, {
+                                  materialId: event.target.value,
+                                })
+                              }
                             >
-                              {materialChoiceOption(material)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      {filamentQuery && !visibleMaterials.length ? (
-                        <p className="text-xs text-amber-200">
-                          Kein passendes Filament gefunden.
-                        </p>
-                      ) : null}
-                      {selectedMaterial &&
-                      (number(selectedMaterial.pricePerRollCents) <= 0 ||
-                        number(selectedMaterial.spoolWeightGrams) <= 0) ? (
-                        <p className="text-xs text-amber-200">
-                          Bei dieser Rolle fehlen Preis oder Rollengewicht.
-                        </p>
-                      ) : null}
+                              <option value="">Filament auswählen</option>
+                              {visible.map((material) => (
+                                <option
+                                  key={string(material.id)}
+                                  value={string(material.id)}
+                                >
+                                  {materialChoiceOption(material)}
+                                </option>
+                              ))}
+                            </select>
+                            {query && !visible.length ? (
+                              <p className="text-xs text-amber-200">
+                                Kein passendes Filament gefunden.
+                              </p>
+                            ) : null}
+                            {selected &&
+                            (number(selected.pricePerRollCents) <= 0 ||
+                              number(selected.spoolWeightGrams) <= 0) ? (
+                              <p className="text-xs text-amber-200">
+                                Bei dieser Rolle fehlen Preis oder Rollengewicht.
+                              </p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : null}
                   <div className="mt-3 grid grid-cols-[auto_1fr] gap-2">
@@ -5322,6 +5518,19 @@ function EntityEditor({
   const isSale = editor.entity === 'sales';
   const isOnline = editor.entity === 'online_sales';
   const isExpense = editor.entity === 'other_expenses';
+  const onlineProducts = rows(data.sales?.products).sort((left, right) =>
+    string(left.name).localeCompare(string(right.name), 'de'),
+  );
+  const onlineMaterials = rows(data.sales?.materials).sort((left, right) =>
+    materialChoiceLabel(left).localeCompare(materialChoiceLabel(right), 'de'),
+  );
+  const onlineProduct = onlineProducts.find(
+    (item) => string(item.id) === string(form.productId),
+  );
+  const onlineVariants = rows(onlineProduct?.variants);
+  const onlineMaterial = onlineMaterials.find(
+    (item) => string(item.id) === string(form.filamentMaterialId),
+  );
   async function saveEverything() {
     if (isProduct && editor?.row.id) {
       const manufacturingSaved =
@@ -5848,8 +6057,56 @@ function EntityEditor({
           ) : null}
           {isOnline ? (
             <>
-              {input('articleName', 'Artikel')}
-              {input('size', 'Variante / Größe')}
+              <label className="grid gap-1.5 text-sm font-medium text-foreground sm:col-span-2">
+                Artikel
+                <select
+                  className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                  value={string(form.productId)}
+                  onChange={(event) => {
+                    const selected = onlineProducts.find(
+                      (item) => string(item.id) === event.target.value,
+                    );
+                    setValue('productId', Number(event.target.value));
+                    if (selected) {
+                      setValue('articleName', selected.name);
+                      const firstVariant = rows(selected.variants)[0];
+                      if (firstVariant)
+                        setValue(
+                          'size',
+                          string(firstVariant.size || firstVariant.name),
+                        );
+                    }
+                  }}
+                >
+                  <option value="">Artikel auswählen</option>
+                  {onlineProducts.map((item) => (
+                    <option key={string(item.id)} value={string(item.id)}>
+                      {string(item.name)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {onlineVariants.length ? (
+                <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                  Variante / Größe
+                  <select
+                    className="h-9 rounded-lg border bg-white px-3 text-sm text-foreground"
+                    value={string(form.size)}
+                    onChange={(event) => setValue('size', event.target.value)}
+                  >
+                    {onlineVariants.map((item) => {
+                      const label = string(item.size || item.name, 'Standard');
+                      return (
+                        <option key={string(item.id)} value={label}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+              ) : (
+                input('size', 'Variante / Größe')
+              )}
               {input('quantity', 'Menge', 'number')}
               {input('date', 'Verkaufsdatum', 'date')}
               <label className="grid gap-1.5 text-sm font-medium text-foreground">
@@ -5884,6 +6141,44 @@ function EntityEditor({
                 label="Druckzeit"
                 value={number(form.printMinutes)}
                 onChange={(value) => setValue('printMinutes', value)}
+              />
+              <label className="grid gap-1.5 text-sm font-medium text-foreground sm:col-span-2">
+                Tatsächlich verwendetes Filament
+                <Input
+                  list={`sale-filaments-${string(editor.row.id, 'new')}`}
+                  value={onlineMaterial ? materialChoiceLabel(onlineMaterial) : ''}
+                  onChange={(event) => {
+                    const selected = onlineMaterials.find(
+                      (item) =>
+                        materialChoiceLabel(item) === event.target.value ||
+                        materialChoiceOption(item) === event.target.value,
+                    );
+                    if (selected) setValue('filamentMaterialId', selected.id);
+                    else if (!event.target.value)
+                      setValue('filamentMaterialId', null);
+                  }}
+                  placeholder="Marke oder Farbe suchen"
+                  className="bg-white text-foreground"
+                />
+                <datalist id={`sale-filaments-${string(editor.row.id, 'new')}`}>
+                  {onlineMaterials.map((item) => (
+                    <option key={string(item.id)} value={materialChoiceOption(item)} />
+                  ))}
+                </datalist>
+              </label>
+              {input('filamentGrams', 'Verwendetes Filament in g', 'number')}
+              <EuroField
+                label="Materialkosten (werden neu berechnet)"
+                value={
+                  onlineMaterial && number(form.filamentGrams) > 0
+                    ? Math.round(
+                        (number(form.filamentGrams) *
+                          number(onlineMaterial.pricePerRollCents)) /
+                          Math.max(1, number(onlineMaterial.spoolWeightGrams)),
+                      )
+                    : number(form.filamentCostCents)
+                }
+                onChange={() => undefined}
               />
               {input('printDeadline', 'Geplant für', 'date')}
               {input('shippingMethod', 'Versandart')}
@@ -6772,10 +7067,14 @@ const ManufacturingEditor = forwardRef<
                     )}
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
-                    Markt{' '}
+                    Direkt{' '}
+                    {cents(number(draft.directPriceCents ?? draft.priceCents))}
+                    {' · '}Markt{' '}
                     {cents(number(draft.marketPriceCents ?? draft.priceCents))}
                     {' · '}Vinted{' '}
                     {cents(number(draft.vintedPriceCents ?? draft.priceCents))}
+                    {' · '}eBay{' '}
+                    {cents(number(draft.ebayPriceCents ?? draft.priceCents))}
                     {' · '}Etsy{' '}
                     {cents(number(draft.etsyPriceCents ?? draft.priceCents))}
                   </span>

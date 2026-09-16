@@ -235,7 +235,7 @@ const navPrimary = [
   ['Kasse', CircleDollarSign],
   ['Produkte', Leaf],
   ['Etsy Workflow', Sparkles],
-  ['Preiskalkulator', Calculator],
+  ['Preisvorschläge', Calculator],
 ] as const;
 
 const navGroups = [
@@ -429,7 +429,7 @@ export default function Home() {
     if (label === 'Übersicht') {
       openHome();
     } else if (label === 'Produkte') openInventory('products');
-    else if (label === 'Preiskalkulator') openInventory('pricing');
+    else if (label === 'Preisvorschläge') openInventory('pricing');
     else if (label === 'Kasse') openInventory('cash');
     else if (label === 'Märkte') openInventory('markets');
     else if (label === 'Regalflächen') openInventory('shelves');
@@ -487,7 +487,7 @@ export default function Home() {
       );
     const inventoryTarget: Record<string, InventoryArea> = {
       Produkte: 'products',
-      Preiskalkulator: 'pricing',
+      Preisvorschläge: 'pricing',
       Kasse: 'cash',
       Märkte: 'markets',
       Regalflächen: 'shelves',
@@ -1499,7 +1499,7 @@ export default function Home() {
                     ? inventoryArea === 'markets'
                       ? 'Märkte'
                       : inventoryArea === 'pricing'
-                        ? 'Preiskalkulator'
+                        ? 'Preisvorschläge'
                         : inventoryArea === 'shelves'
                           ? 'Regalflächen'
                           : inventoryArea === 'cash'
@@ -4087,9 +4087,10 @@ function DashboardShippingEditor({
           ))}
         </select>
       </label>
-      <label className="grid gap-1 text-xs font-medium">
+      <label htmlFor="dashboard-tracking-number" className="grid gap-1 text-xs font-medium">
         Sendungsnummer
         <Input
+          id="dashboard-tracking-number"
           className="h-9 bg-white"
           value={trackingNumber}
           onChange={(event) => setTrackingNumber(event.target.value)}
@@ -4474,8 +4475,8 @@ function WeeklySuccesses({
             const article = (variant.article || {}) as Record<string, unknown>;
             const name = dashboardText(article.name, 'Artikel');
             counts.set(name, (counts.get(name) || 0) + quantity);
-            if (article.productId)
-              productIds.set(name, String(article.productId));
+            const productId = dashboardText(article.productId);
+            if (productId) productIds.set(name, productId);
           }
           revenue +=
             sale.pricingMode === 'TOTAL'
@@ -4488,7 +4489,8 @@ function WeeklySuccesses({
           pieces += quantity;
           revenue += quantity * Number(sale.salePriceCents || 0);
           counts.set(name, (counts.get(name) || 0) + quantity);
-          if (sale.productId) productIds.set(name, String(sale.productId));
+          const productId = dashboardText(sale.productId);
+          if (productId) productIds.set(name, productId);
         }
         const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
         setStats({

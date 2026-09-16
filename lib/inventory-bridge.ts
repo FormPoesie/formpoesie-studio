@@ -304,15 +304,63 @@ export function inventoryHeaders(accessToken?: string) {
   };
 }
 
+const studioAccessName = 'fp_inventory_access';
+
+function base64Url(bytes: Uint8Array) {
+  return btoa(String.fromCharCode(...bytes))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/g, '');
+}
+
+async function studioSignature(payload: string) {
+  const secret = process.env.STUDIO_SESSION_SECRET;
+  if (!secret) return '';
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  return base64Url(
+    new Uint8Array(
+      await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)),
+    ),
+  );
+}
+
+export async function createStudioSession(email: string) {
+  const payload = base64Url(
+    new TextEncoder().encode(
+      JSON.stringify({ email, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 }),
+    ),
+  );
+  return `${payload}.${await studioSignature(payload)}`;
+}
+
+function decodeBase64Url(value: string) {
+  const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+}
+
 export async function getInventoryUser(request: Request) {
-  const accessToken = readCookie(request, 'fp_inventory_access');
-  if (!accessToken) return null;
-  const response = await fetch(INVENTORY_SUPABASE_URL + '/auth/v1/user', {
-    headers: inventoryHeaders(accessToken),
-  });
-  return response.ok
-    ? ((await response.json()) as { email?: string; id?: string })
-    : null;
+  const token = readCookie(request, studioAccessName);
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return null;
+  const expected = await studioSignature(payload);
+  if (!expected || signature !== expected) return null;
+  try {
+    const session = JSON.parse(
+      new TextDecoder().decode(decodeBase64Url(payload)),
+    ) as { email?: string; exp?: number };
+    if (!session.email || !session.exp || session.exp <= Date.now())
+      return null;
+    return { id: 'studio-owner', email: session.email };
+  } catch {
+    return null;
+  }
 }
 
 export type InventoryProfile = {
@@ -325,6 +373,8 @@ export async function getInventoryProfile(
   accessToken: string,
   userId?: string,
 ) {
+  if (userId === 'studio-owner')
+    return { id: userId, name: 'FormPoesie', role: 'owner' };
   if (!accessToken || !userId) return null;
   const response = await fetch(
     `${INVENTORY_SUPABASE_URL}/rest/v1/profiles?select=id,name,role&id=eq.${encodeURIComponent(userId)}&limit=1`,

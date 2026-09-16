@@ -3,6 +3,7 @@ import type { ListingCandidate } from './market-intelligence';
 export type MarketResearchBindings = {
   MARKET_SEARCH_ENDPOINT?: string;
   MARKET_SEARCH_BEARER_TOKEN?: string;
+  SERPER_API_KEY?: string;
 };
 
 export type SourceAttempt = {
@@ -14,12 +15,29 @@ export type SourceAttempt = {
   error?: string;
 };
 
-type SearchHit = { title: string; url: string; description?: string };
+type SearchHit = {
+  title: string;
+  url: string;
+  description?: string;
+  priceCents?: number | null;
+  currency?: string | null;
+  seller?: string | null;
+  source?: string;
+};
 
 const USER_AGENT =
   'FormPoesieMarketWatch/1.0 (+https://formpoesie-masterbrain.formpoesie.workers.dev)';
 const robotsCache = new Map<string, { expires: number; text: string | null }>();
 const AUTOMATION_BLOCKED_HOSTS = ['ebay.com', 'ebay.de', 'kleinanzeigen.de'];
+
+function marketplacePlatform(hit: SearchHit) {
+  const page = new URL(hit.url);
+  const evidence = `${hit.seller || ''} ${hit.source || ''} ${page.hostname}`.toLowerCase();
+  if (evidence.includes('etsy')) return 'etsy';
+  if (evidence.includes('ebay')) return 'ebay';
+  if (evidence.includes('vinted')) return 'vinted';
+  return page.hostname.replace(/^www\./, '');
+}
 
 function decode(value: string) {
   return value
@@ -68,6 +86,79 @@ async function configuredSearch(
   limit: number,
   bindings: MarketResearchBindings,
 ) {
+  if (bindings.SERPER_API_KEY) {
+    const serperApiKey = bindings.SERPER_API_KEY;
+    const request = (endpoint: 'shopping' | 'search') =>
+      fetch(`https://google.serper.dev/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': serperApiKey,
+        },
+        body: JSON.stringify({ q: query, gl: 'de', hl: 'de', num: limit }),
+        signal: AbortSignal.timeout(12_000),
+      });
+    const [shoppingResponse, searchResponse] = await Promise.all([
+      request('shopping'),
+      request('search'),
+    ]);
+    if (!shoppingResponse.ok || !searchResponse.ok)
+      throw new Error(
+        `Serper-Suche antwortet mit ${shoppingResponse.ok ? searchResponse.status : shoppingResponse.status}.`,
+      );
+    const shoppingPayload = (await shoppingResponse.json()) as {
+      shopping?: Array<Record<string, unknown>>;
+    };
+    const searchPayload = (await searchResponse.json()) as {
+      organic?: Array<Record<string, unknown>>;
+    };
+    const money = (value: unknown) => {
+      const text = string(value).replace(/\s/g, '');
+      const match = text.match(/(\d[\d.]*(?:,\d{1,2})?|\d+(?:\.\d{1,2})?)/);
+      if (!match) return null;
+      const normalized = match[1].includes(',')
+        ? match[1].replace(/\./g, '').replace(',', '.')
+        : match[1];
+      const amount = Number(normalized);
+      return Number.isFinite(amount) && amount > 0
+        ? Math.round(amount * 100)
+        : null;
+    };
+    const shopping = (shoppingPayload.shopping || []).map((item) => ({
+      title: string(item.title),
+      url: string(item.link),
+      description: string(item.snippet),
+      priceCents: money(item.price),
+      currency: /€|EUR/i.test(string(item.price)) ? 'EUR' : null,
+      seller: string(item.source).trim() || null,
+      source: 'serper-shopping',
+    }));
+    const organic = (searchPayload.organic || []).map((item) => {
+      const snippet = string(item.snippet);
+      const priceMatch = snippet.match(
+        /(?:€\s*([\d.]+(?:,\d{1,2})?)|([\d.]+(?:,\d{1,2})?)\s*(?:€|EUR))/i,
+      );
+      const eurPrice = priceMatch
+        ? money(priceMatch[1] || priceMatch[2])
+        : null;
+      return {
+        title: string(item.title),
+        url: string(item.link),
+        description: snippet,
+        priceCents: eurPrice,
+        currency: eurPrice ? 'EUR' : null,
+        seller: null,
+        source: 'serper-organic',
+      };
+    });
+    return [...shopping, ...organic]
+      .filter((item) => /^https?:\/\//.test(item.url))
+      .filter(
+        (item, index, all) =>
+          all.findIndex((row) => row.url === item.url) === index,
+      )
+      .slice(0, limit * 2);
+  }
   if (!bindings.MARKET_SEARCH_ENDPOINT) return null;
   const url = new URL(bindings.MARKET_SEARCH_ENDPOINT);
   url.searchParams.set('q', query);
@@ -193,16 +284,33 @@ function firstObject(value: unknown) {
 
 function physicalKind(value: string): ListingCandidate['physicalOrDigital'] {
   if (
-    /\b(stl|3mf|obj file|digital download|download datei|druckdatei)\b/i.test(
+    /(?:\b(?:stl|3mf|obj)\s*(?:file|files|datei|dateien)?\b|\bdigital(?:e[rsn]?)?\s+(?:download|file|files|datei|dateien|produkt)\b|\binstant download\b|\bdownload[- ]?datei\b|\bdruckdatei\b|\bno physical item\b|\bkein physischer artikel\b|\bnur (?:die )?datei\b)/i.test(
       value,
     )
   )
     return 'digital';
+  // FormPoesie sells additively manufactured objects. Other physical goods
+  // (ceramic, wax, cast resin, etc.) are not valid pricing comparables.
   if (
-    /\b(shipping|versand|material|handmade|handgemacht|physical)\b/i.test(value)
+    /(?:\b3d[- ]?(?:printed|print|druck|gedruckt)\b|\b(?:pla|petg|abs|asa|tpu)\b|\b(?:fdm|filament)(?:druck| print| printed)?\b)/i.test(
+      value,
+    )
   )
     return 'physical';
   return 'unknown';
+}
+
+function bundleSize(value: string) {
+  const match = value.match(
+    /(?:\b(\d{1,2})\s*(?:er(?:[- ]?set)?|pcs?|pieces?|teilig(?:es)?\s+set)\b|\bset\s+(?:of\s+)?(\d{1,2})\b|\bthree[- ]piece\b)/i,
+  );
+  if (!match)
+    return /\b(?:set|bundle|pack|lot|collection|trio|paar|pair|mehrteilig)\b/i.test(value)
+      ? null
+      : 1;
+  if (/three[- ]piece/i.test(match[0])) return 3;
+  const amount = Number(match[1] || match[2]);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
 
 function priceCents(value: unknown) {
@@ -240,7 +348,9 @@ function parseProductJsonLd(
   const currency = string(offers?.priceCurrency).toUpperCase() || null;
   const material = string(product.material).trim() || null;
   const description = stripHtml(string(product.description));
-  const bundle = finite(product.numberOfItems || product.quantity);
+  const bundle =
+    finite(product.numberOfItems || product.quantity) ??
+    bundleSize(`${title} ${description}`);
   return {
     source: new URL(pageUrl).hostname,
     sourceUrl: pageUrl,
@@ -266,6 +376,8 @@ function parseProductJsonLd(
       availability: string(offers?.availability) || null,
       itemCondition: string(offers?.itemCondition) || null,
       sku: string(product.sku) || null,
+      observedAt: new Date().toISOString(),
+      bundleAmbiguous: bundle == null,
     },
   };
 }
@@ -308,7 +420,7 @@ export async function researchQuery(
     if (configured) {
       hits = configured;
       attempts.push({
-        source: 'configured-search',
+        source: bindings.SERPER_API_KEY ? 'serper' : 'configured-search',
         query,
         status: 'SUCCESS',
         found: hits.length,
@@ -326,9 +438,11 @@ export async function researchQuery(
     }
   } catch (error) {
     attempts.push({
-      source: bindings.MARKET_SEARCH_ENDPOINT
-        ? 'configured-search'
-        : 'bing-rss-discovery',
+      source: bindings.SERPER_API_KEY
+        ? 'serper'
+        : bindings.MARKET_SEARCH_ENDPOINT
+          ? 'configured-search'
+          : 'bing-rss-discovery',
       query,
       status: 'UNAVAILABLE',
       found: 0,
@@ -339,6 +453,35 @@ export async function researchQuery(
   }
   const candidates: ListingCandidate[] = [];
   for (const hit of hits) {
+    if (hit.priceCents && hit.currency) {
+      const page = new URL(hit.url);
+      candidates.push({
+        source: hit.source || page.hostname,
+        sourceUrl: hit.url,
+        platform: marketplacePlatform(hit),
+        title: hit.title,
+        seller: hit.seller || null,
+        physicalOrDigital: physicalKind(
+          `${hit.title} ${hit.description || ''} ${hit.url}`,
+        ),
+        currency: hit.currency,
+        regularPriceCents: hit.priceCents,
+        visibleCustomerPriceCents: hit.priceCents,
+        motif: hit.description || null,
+        bundleSize: bundleSize(`${hit.title} ${hit.description || ''}`),
+        sourceQualityScore: 0.68,
+        popularitySignals: {},
+        rawMetadata: {
+          discovery: hit.source || 'configured-search',
+          snippet: hit.description || null,
+          observedAt: new Date().toISOString(),
+          bundleAmbiguous:
+            bundleSize(`${hit.title} ${hit.description || ''}`) == null,
+        },
+      });
+      continue;
+    }
+    if (candidates.length >= 4) continue;
     try {
       const candidate = await inspectHit(hit);
       if (candidate) candidates.push(candidate);

@@ -1,12 +1,12 @@
 import {
-  INVENTORY_SUPABASE_URL,
+  createStudioSession,
   canManageInventory,
   getInventoryUser,
   getInventoryProfile,
-  inventoryHeaders,
   readCookie,
   sessionCookie,
 } from '@/lib/inventory-bridge';
+import { env } from 'cloudflare:workers';
 
 const accessName = 'fp_inventory_access';
 const refreshName = 'fp_inventory_refresh';
@@ -52,37 +52,7 @@ export async function GET(request: Request) {
       }),
     );
 
-  const refreshToken = readCookie(request, refreshName);
-  if (!refreshToken) return Response.json({ connected: false });
-  const refreshed = await fetch(
-    INVENTORY_SUPABASE_URL + '/auth/v1/token?grant_type=refresh_token',
-    {
-      method: 'POST',
-      headers: inventoryHeaders(),
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    },
-  );
-  if (!refreshed.ok) return Response.json({ connected: false });
-  const session = (await refreshed.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in?: number;
-    user?: { email?: string; id?: string };
-  };
-  const profile = await getInventoryProfile(
-    session.access_token,
-    session.user?.id,
-  );
-  return addSessionCookies(
-    Response.json({
-      connected: true,
-      email: session.user?.email || '',
-      name: profile?.name || '',
-      canManage: canManageInventory(session.user || null, profile),
-    }),
-    request,
-    session,
-  );
+  return Response.json({ connected: false });
 }
 
 export async function POST(request: Request) {
@@ -92,45 +62,40 @@ export async function POST(request: Request) {
       { error: 'E-Mail-Adresse und Passwort fehlen.' },
       { status: 400 },
     );
-  const response = await fetch(
-    INVENTORY_SUPABASE_URL + '/auth/v1/token?grant_type=password',
-    {
-      method: 'POST',
-      headers: inventoryHeaders(),
-      body: JSON.stringify({
-        email: body.email.trim(),
-        password: body.password,
-      }),
-    },
-  );
-  const result = (await response.json().catch(() => ({}))) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-    user?: { email?: string; id?: string };
-    error_description?: string;
-    msg?: string;
-  };
-  if (!response.ok || !result.access_token || !result.refresh_token)
+  const secrets = env as unknown as Record<string, string | undefined>;
+  const expectedEmail = (secrets.STUDIO_ADMIN_EMAIL || 'formpoesie@gmail.com')
+    .trim()
+    .toLocaleLowerCase('de');
+  if (
+    body.email.trim().toLocaleLowerCase('de') !== expectedEmail ||
+    !secrets.STUDIO_ADMIN_PASSWORD ||
+    body.password !== secrets.STUDIO_ADMIN_PASSWORD
+  )
     return Response.json(
-      {
-        error:
-          result.error_description ||
-          result.msg ||
-          'Anmeldung am Inventar ist fehlgeschlagen.',
-      },
+      { error: 'E-Mail-Adresse oder Passwort ist nicht korrekt.' },
       { status: 401 },
     );
-  const profile = await getInventoryProfile(
-    result.access_token,
-    result.user?.id,
-  );
+  const accessToken = await createStudioSession(expectedEmail);
+  if (!accessToken)
+    return Response.json(
+      {
+        error: 'Die sichere Anmeldung ist noch nicht vollständig eingerichtet.',
+      },
+      { status: 503 },
+    );
+  const result = {
+    access_token: accessToken,
+    refresh_token: accessToken,
+    expires_in: 60 * 60 * 24 * 30,
+  };
+  const user = { id: 'studio-owner', email: expectedEmail };
+  const profile = await getInventoryProfile(accessToken, user.id);
   return addSessionCookies(
     Response.json({
       connected: true,
-      email: result.user?.email || body.email,
+      email: expectedEmail,
       name: profile?.name || '',
-      canManage: canManageInventory(result.user || null, profile),
+      canManage: canManageInventory(user, profile),
     }),
     request,
     result as {

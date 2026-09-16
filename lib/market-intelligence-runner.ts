@@ -1,9 +1,4 @@
 import {
-  INVENTORY_SUPABASE_KEY,
-  INVENTORY_SUPABASE_URL,
-  inventoryHeaders,
-} from './inventory-bridge';
-import {
   MARKET_INTELLIGENCE_CONFIG,
   applyTrendHistory,
   calculateMarketSnapshot,
@@ -13,11 +8,13 @@ import {
   generateResearchQueries,
   marketTokens,
   normalizeMarketText,
+  observationsForVariant,
   researchPriority,
   type DiscoveredCluster,
   type MarketIntelligenceConfig,
   type MarketSnapshotValue,
   type PortfolioProduct,
+  type ScoredObservation,
 } from './market-intelligence';
 import { researchQuery, type MarketResearchBindings } from './market-research';
 import {
@@ -27,14 +24,15 @@ import {
 } from './pricing-config';
 import {
   calculatePhysicalRecommendation,
+  calculateDigitalRecommendation,
   type Competition,
   type Demand,
   type PhysicalPricingInput,
+  type DigitalPricingInput,
 } from './pricing-engine';
 
 export type MarketRunnerBindings = MarketResearchBindings & {
   DB: D1Database;
-  INVENTORY_SUPABASE_SERVICE_ROLE_KEY?: string;
 };
 
 type Row = Record<string, unknown>;
@@ -53,6 +51,15 @@ function string(value: unknown, fallback = '') {
 function finite(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function sizeClass(dimensionsMm: Array<number | null | undefined>) {
+  const largestCm = Math.max(0, ...dimensionsMm.filter((value): value is number => value != null).map((value) => value / 10));
+  if (!largestCm) return 'unknown';
+  if (largestCm <= 6) return 'micro';
+  if (largestCm <= 12) return 'small';
+  if (largestCm <= 25) return 'medium';
+  return 'large';
 }
 
 function rows(value: unknown) {
@@ -79,29 +86,12 @@ async function stableId(prefix: string, value: string) {
   return `${prefix}_${hash.slice(0, 24)}`;
 }
 
-function inventoryAuth(token: string) {
-  return {
-    ...inventoryHeaders(token),
-    Prefer: 'return=representation',
-  };
-}
-
-async function inventoryQuery(token: string, table: string, query: string) {
-  const response = await fetch(
-    `${INVENTORY_SUPABASE_URL}/rest/v1/${table}?${query}`,
-    {
-      headers: inventoryAuth(token),
-      signal: AbortSignal.timeout(20_000),
-    },
-  );
-  const payload = (await response.json().catch(() => null)) as unknown;
-  if (!response.ok) {
-    const error = payload as { message?: string } | null;
-    throw new Error(
-      error?.message || `Inventarabruf ${table}: Status ${response.status}.`,
-    );
-  }
-  return rows(payload);
+async function inventorySnapshot(db: D1Database, table: string) {
+  const snapshot = await db
+    .prepare('SELECT rows_json FROM inventory_snapshots WHERE table_name=?')
+    .bind(table)
+    .first<{ rows_json: string }>();
+  return rows(parse(snapshot?.rows_json, []));
 }
 
 function productKind(product: Row) {
@@ -111,22 +101,50 @@ function productKind(product: Row) {
     : 'physical';
 }
 
+function variantSetSize(variant: Row) {
+  const explicit = finite(variant.quantity);
+  if (explicit != null && explicit > 0) return Math.round(explicit);
+  const label = `${string(variant.name)} ${string(variant.size)}`;
+  const match = label.match(
+    /(?:\b(\d{1,2})\s*er(?:[- ]?set)?\b|\bset\s+(?:of\s+)?(\d{1,2})\b)/i,
+  );
+  const inferred = Number(match?.[1] || match?.[2]);
+  return Number.isFinite(inferred) && inferred > 0 ? inferred : 1;
+}
+
+function dimensionsFromSize(value: unknown) {
+  const matches = string(value)
+    .replace(/,/g, '.')
+    .match(/\d+(?:\.\d+)?/g)
+    ?.map(Number)
+    .filter((number) => Number.isFinite(number) && number > 0);
+  if (!matches || matches.length < 3) return {};
+  return {
+    widthMm: Math.round(matches[0] * 10),
+    depthMm: Math.round(matches[1] * 10),
+    heightMm: Math.round(matches[2] * 10),
+  };
+}
+
 function mapCatalogProduct(product: Row): PortfolioProduct {
   const variants = rows(product.variants);
-  const mappedVariants = variants.map((variant, index) => ({
-    id: string(variant.id, `variant-${index + 1}`),
-    name: string(variant.name || variant.size),
-    material: string(
-      (variant.material as Row | undefined)?.name || variant.material_name,
-    ),
-    size: string(variant.size),
-    widthMm: finite(variant.width_mm),
-    heightMm: finite(variant.height_mm),
-    depthMm: finite(variant.depth_mm),
-    setSize: finite(variant.quantity),
-    currentPriceCents: finite(variant.price_cents),
-    productionCostCents: finite(variant.production_cost_cents),
-  }));
+  const mappedVariants = variants.map((variant, index) => {
+    const parsedDimensions = dimensionsFromSize(variant.size);
+    return {
+      id: string(variant.id, `variant-${index + 1}`),
+      name: string(variant.name || variant.size),
+      material: string(
+        (variant.material as Row | undefined)?.name || variant.material_name,
+      ),
+      size: string(variant.size),
+      widthMm: finite(variant.width_mm) ?? parsedDimensions.widthMm ?? null,
+      heightMm: finite(variant.height_mm) ?? parsedDimensions.heightMm ?? null,
+      depthMm: finite(variant.depth_mm) ?? parsedDimensions.depthMm ?? null,
+      setSize: variantSetSize(variant),
+      currentPriceCents: finite(variant.price_cents),
+      productionCostCents: finite(variant.production_cost_cents),
+    };
+  });
   if (!mappedVariants.length) {
     mappedVariants.push({
       id: 'standard',
@@ -178,38 +196,65 @@ function mapCatalogProduct(product: Row): PortfolioProduct {
   };
 }
 
-async function loadCatalog(token: string): Promise<Catalog> {
-  const [rawProducts, sales, onlineSales] = await Promise.all([
-    inventoryQuery(
-      token,
-      'products',
-      'select=' +
-        encodeURIComponent(
-          '*,family:product_families(*),designer:designers(*),variants:product_variants(*,material:materials(*))',
-        ) +
-        '&deleted_at=is.null&archived_at=is.null&order=updated_at.desc',
-    ),
-    inventoryQuery(
-      token,
-      'sales',
-      'select=' +
-        encodeURIComponent(
-          'id,date,discount_cents,is_cancelled,items:sale_items(product_id,article_variant_id,quantity,unit_sale_price_cents,unit_cost_price_cents)',
-        ) +
-        '&deleted_at=is.null&order=date.desc',
-    ).catch(() => []),
-    inventoryQuery(
-      token,
-      'online_sales',
-      'select=id,product_id,date,quantity,sale_price_cents,channel&deleted_at=is.null&order=date.desc',
-    ).catch(() => []),
+async function loadCatalog(db: D1Database): Promise<Catalog> {
+  const [
+    productRows,
+    families,
+    designers,
+    variants,
+    materials,
+    salesRows,
+    saleItems,
+    onlineRows,
+  ] = await Promise.all([
+    inventorySnapshot(db, 'products'),
+    inventorySnapshot(db, 'product_families'),
+    inventorySnapshot(db, 'designers'),
+    inventorySnapshot(db, 'product_variants'),
+    inventorySnapshot(db, 'materials'),
+    inventorySnapshot(db, 'sales'),
+    inventorySnapshot(db, 'sale_items'),
+    inventorySnapshot(db, 'online_sales'),
   ]);
+  const rawProducts = productRows
+    .filter(
+      (product) => product.deleted_at == null && product.archived_at == null,
+    )
+    .map((product) => ({
+      ...product,
+      family:
+        families.find(
+          (family) => String(family.id) === String(product.family_id),
+        ) || null,
+      designer:
+        designers.find(
+          (designer) => String(designer.id) === String(product.designer_id),
+        ) || null,
+      variants: variants
+        .filter((variant) => String(variant.product_id) === String(product.id))
+        .map((variant) => ({
+          ...variant,
+          material:
+            materials.find(
+              (material) => String(material.id) === String(variant.material_id),
+            ) || null,
+        })),
+    }));
+  const sales = salesRows
+    .filter((sale) => sale.deleted_at == null)
+    .map((sale) => ({
+      ...sale,
+      items: saleItems.filter(
+        (item) => String(item.sale_id) === String(sale.id),
+      ),
+    }));
+  const onlineSales = onlineRows.filter((sale) => sale.deleted_at == null);
   const products = rawProducts
     .map(mapCatalogProduct)
     .filter((product) => product.id && product.name);
   if (!products.length)
     throw new Error(
-      'Der autonome Katalogabruf liefert keine Produkte. Für den Wochenlauf ist INVENTORY_SUPABASE_SERVICE_ROLE_KEY erforderlich; bestehende Market Intelligence bleibt aktiv.',
+      'Der autonome D1-Katalogabruf liefert keine Produkte; bestehende Market Intelligence bleibt aktiv.',
     );
   return { products, rawProducts, sales: [...sales, ...onlineSales] };
 }
@@ -452,10 +497,21 @@ function competitionClass(value: number | null): Competition {
   return 'low';
 }
 
+function observationChannel(observation: ScoredObservation) {
+  const value = normalizeMarketText(
+    `${observation.platform || ''} ${observation.seller || ''} ${observation.sourceUrl}`,
+  );
+  if (value.includes('etsy')) return 'etsy';
+  if (value.includes('ebay')) return 'ebay';
+  if (value.includes('vinted')) return 'vinted';
+  return null;
+}
+
 async function pricingForChange(
   env: MarketRunnerBindings,
   changeId: string,
   snapshot: MarketSnapshotValue,
+  observations: ScoredObservation[],
   affected: PortfolioProduct[],
   instant: string,
 ) {
@@ -475,6 +531,86 @@ async function pricingForChange(
     'market',
   ];
   for (const product of affected.filter(
+    (item) => item.physicalOrDigital === 'digital',
+  )) {
+    const profile = await env.DB.prepare(
+      `SELECT value_json AS valueJson,license_json AS licenseJson
+         FROM pricing_product_profiles WHERE inventory_product_id=?`,
+    )
+      .bind(product.id)
+      .first<Row>();
+    const values = (parse(profile?.valueJson, {}) || {}) as Row;
+    const license = (parse(profile?.licenseJson, null) || null) as DigitalPricingInput['license'];
+    await env.DB.prepare(
+      "UPDATE pricing_recommendations SET status='STALE_MARKET_DATA' WHERE inventory_product_id=? AND status='CURRENT'",
+    )
+      .bind(product.id)
+      .run();
+    for (const variant of product.variants) {
+      for (const channel of channels) {
+        const input: DigitalPricingInput = {
+          channel,
+          license,
+          modelComplexity: finite(values.modelComplexity) ?? 0.5,
+          demand: finite(values.demand) ?? 0.5,
+          differentiation: finite(values.differentiation) ?? 0.5,
+          utility: finite(values.utility) ?? 0.5,
+          printReadiness: finite(values.printReadiness) ?? 0.5,
+          competition: competitionClass(snapshot.competitionScore),
+          demandClass: demandClass(snapshot.externalDemandScore),
+        };
+        const result = calculateDigitalRecommendation(input);
+        const previous = await env.DB.prepare(
+          `SELECT recommended_price_cents AS price FROM pricing_recommendations
+             WHERE inventory_product_id=? AND inventory_variant_id=? AND channel=?
+             ORDER BY created_at DESC LIMIT 1`,
+        )
+          .bind(product.id, variant.id, channel)
+          .first<{ price: number | null }>();
+        const recommendationId = crypto.randomUUID();
+        const next = result.recommendedPrice == null
+          ? null
+          : Math.round(result.recommendedPrice * 100);
+        await env.DB.batch([
+          env.DB.prepare(
+            `INSERT INTO pricing_recommendations
+                (id,inventory_product_id,inventory_variant_id,channel,recommendation_kind,
+                 config_version,cogs_cents,active_price_snapshot_cents,recommended_price_cents,
+                 input_json,result_json,status,market_change_id,created_by,created_at)
+               VALUES (?,?,?,?,? ,?,NULL,?,?,?,?, 'MARKET_UPDATED_REVIEW',?,NULL,?)`,
+          ).bind(
+            recommendationId,
+            product.id,
+            variant.id,
+            channel,
+            'digital',
+            DEFAULT_PRICING_CONFIG.version,
+            variant.currentPriceCents,
+            next,
+            JSON.stringify(input),
+            JSON.stringify(result),
+            changeId,
+            instant,
+          ),
+          env.DB.prepare(
+            `INSERT INTO pricing_impacts
+                (id,market_change_id,product_id,variant_id,channel,
+                 previous_recommendation_cents,new_recommendation_cents,
+                 absolute_difference_cents,percentage_difference,status,recommendation_id,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,'REVIEW_REQUIRED',?,?)`,
+          ).bind(
+            crypto.randomUUID(), changeId, product.id, variant.id, channel,
+            previous?.price ?? null, next,
+            next == null || previous?.price == null ? null : next - previous.price,
+            next == null || !previous?.price ? null : (next - previous.price) / previous.price,
+            recommendationId, instant,
+          ),
+        ]);
+        count += 1;
+      }
+    }
+  }
+  for (const product of affected.filter(
     (item) => item.physicalOrDigital !== 'digital',
   )) {
     const profile = await env.DB.prepare(
@@ -489,13 +625,6 @@ async function pricingForChange(
       'figures',
     ) as MarketCategory;
     if (!(category in DEFAULT_PRICING_CONFIG.marketQuantiles)) continue;
-    const config = structuredClone(DEFAULT_PRICING_CONFIG);
-    config.marketQuantiles[category] = {
-      p25: snapshot.p25Cents / 100,
-      median: snapshot.medianCents / 100,
-      p75: snapshot.p75Cents / 100,
-      p90: snapshot.p90Cents / 100,
-    };
     const value = (parse(profile?.valueJson, {}) ||
       {}) as PhysicalPricingInput['value'];
     const safeValue = {
@@ -514,11 +643,37 @@ async function pricingForChange(
     for (const variant of product.variants) {
       const cogsCents = variant.productionCostCents;
       if (cogsCents == null || cogsCents <= 0) continue;
+      const targetBundle = Math.max(1, Math.round(variant.setSize || 1));
+      const variantCategory = (targetBundle > 1 ? 'sets' : category) as Exclude<MarketCategory, 'digital'>;
+      const variantObservations = observationsForVariant(observations, variant);
       for (const channel of channels) {
+        const channelRows = ['etsy', 'ebay', 'vinted'].includes(channel)
+          ? variantObservations.filter((row) => observationChannel(row) === channel)
+          : variantObservations;
+        const selectedRows = channelRows.length >= 3 ? channelRows : variantObservations;
+        const variantSnapshot = calculateMarketSnapshot(
+          selectedRows,
+          { salesScore: snapshot.internalSalesScore, salesTrend: snapshot.internalSalesTrend },
+        );
+        const config = structuredClone(DEFAULT_PRICING_CONFIG);
+        const researched =
+          variantSnapshot.sampleSize >= 3 &&
+          variantSnapshot.p25Cents != null &&
+          variantSnapshot.medianCents != null &&
+          variantSnapshot.p75Cents != null &&
+          variantSnapshot.p90Cents != null;
+        if (researched) {
+          config.marketQuantiles[variantCategory] = {
+            p25: variantSnapshot.p25Cents! / 100,
+            median: variantSnapshot.medianCents! / 100,
+            p75: variantSnapshot.p75Cents! / 100,
+            p90: variantSnapshot.p90Cents! / 100,
+          };
+        }
         const input: PhysicalPricingInput = {
           cogs: cogsCents / 100,
           channel,
-          category: category as Exclude<MarketCategory, 'digital'>,
+          category: variantCategory,
           tier: string(
             profile?.tier,
             'standard',
@@ -536,8 +691,17 @@ async function pricingForChange(
           demand: demandClass(snapshot.externalDemandScore),
           competition: competitionClass(snapshot.competitionScore),
           config,
+          parameterSources: {
+            marketQuantiles: researched ? 'RESEARCH' : 'DEFAULT',
+            bundleSize: 'AUTO',
+          },
         };
         const result = calculatePhysicalRecommendation(input);
+        if (!researched)
+          result.diagnostics.warnings = [
+            ...(result.diagnostics.warnings || []),
+            `Keine belastbare reale Marktstichprobe für ${targetBundle} Stück; zentrale Seed-Quantile verwendet.`,
+          ];
         const previous = await env.DB.prepare(
           `SELECT recommended_price_cents AS price FROM pricing_recommendations
              WHERE inventory_product_id=? AND inventory_variant_id=? AND channel=?
@@ -609,12 +773,15 @@ export async function runMarketIntelligence(
     inventoryAccessToken?: string;
     now?: Date;
     maxClusters?: number;
+    productId?: string;
   } = {},
 ) {
   const now = options.now || new Date();
   const instant = now.toISOString();
   const runId = `market_run_${crypto.randomUUID()}`;
-  let runKind = 'INCREMENTAL_MARKET_UPDATE';
+  let runKind = options.productId
+    ? 'FINAL_PRODUCT_ANALYSIS'
+    : 'INCREMENTAL_MARKET_UPDATE';
   const audit: Row = { clusters: [], sources: [], errors: [] };
   const counters = {
     clusters: 0,
@@ -634,33 +801,44 @@ export async function runMarketIntelligence(
     .bind(runId, runKind, instant)
     .run();
   try {
-    const token =
-      options.inventoryAccessToken ||
-      env.INVENTORY_SUPABASE_SERVICE_ROLE_KEY ||
-      INVENTORY_SUPABASE_KEY;
-    const catalog = await loadCatalog(token);
-    const fingerprint = await catalogFingerprint(catalog.products);
+    const catalog = await loadCatalog(env.DB);
+    const finalRows = options.productId
+      ? { results: [] as Array<{ productId: string }> }
+      : await env.DB.prepare(
+          "SELECT product_id AS productId FROM inventory_product_metadata WHERE review_status='final'",
+        ).all<{ productId: string }>();
+    const finalIds = new Set(
+      (finalRows.results || []).map((row) => string(row.productId)),
+    );
+    const products = options.productId
+      ? catalog.products.filter((product) => product.id === options.productId)
+      : catalog.products.filter((product) => finalIds.has(product.id));
+    if (!products.length)
+      throw new Error(
+        options.productId
+          ? `Der FINAL-Artikel ${options.productId} wurde im Inventar nicht gefunden.`
+          : 'Im Inventar sind keine finalisierten Artikel für Market Intelligence vorhanden.',
+      );
+    const fingerprint = await catalogFingerprint(products);
     const previousRun = await env.DB.prepare(
       "SELECT id FROM market_research_runs WHERE status IN ('SUCCESS','PARTIAL') AND id != ? LIMIT 1",
     )
       .bind(runId)
       .first();
-    if (!previousRun) runKind = 'FULL_BASELINE_DISCOVERY';
+    if (!previousRun && !options.productId) runKind = 'FULL_BASELINE_DISCOVERY';
     const config = await loadConfig(env.DB);
-    const discovered = discoverClusters(catalog.products);
-    const ids = await syncClusters(
-      env.DB,
-      discovered,
-      catalog.products,
-      instant,
-    );
+    const discovered = discoverClusters(products);
     const maxClusters = Math.max(
       1,
       options.maxClusters || config.maxClustersPerRun,
     );
     const clusterStateRows = await env.DB.prepare(
-      `SELECT normalized_key AS normalizedKey,status,research_priority AS researchPriority,
-              last_researched_at AS lastResearchedAt FROM market_clusters`,
+      `SELECT c.normalized_key AS normalizedKey,c.status,c.research_priority AS researchPriority,
+              c.last_researched_at AS lastResearchedAt,s.confidence,
+              ch.change_type AS lastChange
+         FROM market_clusters c
+         LEFT JOIN market_snapshots s ON s.id=c.last_valid_snapshot_id
+         LEFT JOIN market_changes ch ON ch.current_snapshot_id=s.id`,
     ).all<Row>();
     const clusterStates = new Map(
       (clusterStateRows.results || []).map((row) => [
@@ -668,7 +846,22 @@ export async function runMarketIntelligence(
         row,
       ]),
     );
-    const selected = [...discovered]
+    const eligible = options.productId
+      ? discovered
+      : discovered.filter((cluster) => {
+          const state = clusterStates.get(cluster.key);
+          if (!state?.lastResearchedAt) return true;
+          const ageDays =
+            (now.getTime() - new Date(string(state.lastResearchedAt)).getTime()) /
+            86_400_000;
+          return (
+            ageDays >= 30 ||
+            state.confidence === 'LOW' ||
+            state.lastChange === 'RELEVANT_CHANGE' ||
+            state.lastChange === 'MAJOR_CHANGE'
+          );
+        });
+    const selected = [...eligible]
       .sort((a, b) => {
         const left = clusterStates.get(a.key);
         const right = clusterStates.get(b.key);
@@ -678,6 +871,8 @@ export async function runMarketIntelligence(
           right?.status === 'NEW' || !right?.lastResearchedAt ? 1 : 0;
         return (
           rightNew - leftNew ||
+          (b.dimension === 'product' ? 1 : 0) -
+            (a.dimension === 'product' ? 1 : 0) ||
           (finite(right?.researchPriority) || 0) -
             (finite(left?.researchPriority) || 0) ||
           b.productIds.length - a.productIds.length ||
@@ -685,6 +880,7 @@ export async function runMarketIntelligence(
         );
       })
       .slice(0, maxClusters);
+    const ids = await syncClusters(env.DB, selected, products, instant);
     if (selected.length < discovered.length)
       (audit.errors as unknown[]).push({
         code: 'RESEARCH_BUDGET',
@@ -694,19 +890,43 @@ export async function runMarketIntelligence(
 
     for (const cluster of selected) {
       const clusterId = ids.get(cluster.key) as string;
-      const clusterProducts = catalog.products.filter((product) =>
+      const clusterProducts = products.filter((product) =>
         cluster.productIds.includes(product.id),
       );
       const queryRows = await env.DB.prepare(
-        `SELECT id,query FROM market_research_queries
+        `SELECT id,query,language FROM market_research_queries
            WHERE cluster_id=? AND status='ACTIVE'
-           ORDER BY COALESCE(yield_score,1) DESC,created_at ASC LIMIT ?`,
+           ORDER BY CASE
+                      WHEN query LIKE '%Halloween 3D printed buy%' THEN 0
+                      WHEN query LIKE '%Halloween 3D Druck kaufen%' THEN 1
+                      WHEN query LIKE '%3D printed%' THEN 2
+                      WHEN query LIKE '%3D Druck%' THEN 3
+                      ELSE 4
+                    END,
+                    LENGTH(query) ASC,
+                    COALESCE(yield_score,1) DESC,created_at ASC LIMIT 12`,
       )
-        .bind(clusterId, config.maxQueriesPerCluster)
-        .all<{ id: string; query: string }>();
+        .bind(clusterId)
+        .all<{ id: string; query: string; language: string }>();
+      const availableQueries = queryRows.results || [];
+      const selectedQueries = [
+        availableQueries.find((row) => /3D printed/i.test(row.query)),
+        availableQueries.find((row) => /3D Druck/i.test(row.query)),
+        ...availableQueries,
+      ]
+        .filter(
+          (
+            row,
+            index,
+            all,
+          ): row is { id: string; query: string; language: string } =>
+            Boolean(row) &&
+            all.findIndex((item) => item?.id === row?.id) === index,
+        )
+        .slice(0, config.maxQueriesPerCluster);
       const candidates = [];
       let queryIndex = 0;
-      for (const queryRow of queryRows.results || []) {
+      for (const queryRow of selectedQueries) {
         const before = new Set(
           candidates.map((candidate) => candidate.sourceUrl),
         ).size;
@@ -839,14 +1059,69 @@ export async function runMarketIntelligence(
           .run();
       }
       const internal = internalSignal(catalog.sales, cluster.productIds, now);
-      let snapshot = calculateMarketSnapshot(observations, internal, config);
+      const expectedKind = clusterProducts.every(
+        (product) => product.physicalOrDigital === 'digital',
+      )
+        ? 'digital'
+        : 'physical';
+      let snapshot = calculateMarketSnapshot(
+        observations,
+        internal,
+        config,
+        expectedKind,
+      );
+      const channelResearch = Object.fromEntries(
+        (['etsy', 'ebay', 'vinted'] as const).map((channel) => {
+          const rows = observations.filter(
+            (observation) => observationChannel(observation) === channel,
+          );
+          return [
+            channel,
+            calculateMarketSnapshot(rows, internal, config, expectedKind),
+          ];
+        }),
+      );
+      const variantSignals = clusterProducts.flatMap((product) =>
+        product.variants.map((variant) => {
+          const comparable = observationsForVariant(observations, variant);
+          const variantSnapshot = calculateMarketSnapshot(
+            comparable,
+            internal,
+            config,
+            expectedKind,
+          );
+          return {
+            productId: product.id,
+            variantId: variant.id,
+            variantName: variant.name,
+            bundleSize: variant.setSize,
+            sizeClass: sizeClass([
+              variant.widthMm,
+              variant.heightMm,
+              variant.depthMm,
+            ]),
+            sampleSize: variantSnapshot.sampleSize,
+            marketAnchorCents:
+              variantSnapshot.sampleSize >= 3
+                ? variantSnapshot.medianCents
+                : null,
+            confidence:
+              variantSnapshot.sampleSize >= 3
+                ? variantSnapshot.confidence
+                : 'LOW',
+          };
+        }),
+      );
       const history = await snapshotHistory(env.DB, clusterId);
       snapshot = applyTrendHistory(
         { ...snapshot, timestamp: instant },
         history,
         config,
       );
-      const valid = snapshot.sampleSize > 0 && snapshot.medianCents != null;
+      const valid =
+        snapshot.sampleSize >= 3 &&
+        snapshot.medianCents != null &&
+        snapshot.confidence !== 'LOW';
       const snapshotId = `snapshot_${crypto.randomUUID()}`;
       await env.DB.prepare(
         `INSERT INTO market_snapshots
@@ -895,6 +1170,15 @@ export async function runMarketIntelligence(
           JSON.stringify({
             physicalDigitalSeparated: true,
             ownPricesExcluded: true,
+            outlierMethod: 'tukey-iqr-1.5',
+            channelResearch,
+            variantSignals,
+            classification: {
+              segment: cluster.dimension === 'product' ? cluster.label : cluster.dimension,
+              reason: cluster.reasons,
+              productRole: clusterProducts[0]?.functionLabel ? 'functional' : 'decorative',
+              sizeClasses: Array.from(new Set(variantSignals.map((signal) => signal.sizeClass))),
+            },
           }),
         )
         .run();
@@ -902,8 +1186,11 @@ export async function runMarketIntelligence(
       if (!valid) {
         (audit.errors as unknown[]).push({
           clusterId,
-          code: 'LOW_DATA',
-          message: 'Keine belastbare externe Preisstichprobe.',
+          code: snapshot.sampleSize < 3 ? 'INSUFFICIENT_DATA' : 'LOW_CONFIDENCE',
+          message:
+            snapshot.sampleSize < 3
+              ? 'Weniger als drei belastbare externe Vergleichsangebote.'
+              : 'Die Marktstichprobe besitzt nur niedrige Confidence.',
         });
         continue;
       }
@@ -944,11 +1231,31 @@ export async function runMarketIntelligence(
         )
         .run();
       if (change.type !== 'NO_CHANGE') counters.changes += 1;
-      if (change.type === 'RELEVANT_CHANGE' || change.type === 'MAJOR_CHANGE') {
+      const existingMarketRecommendation = options.productId
+        ? await env.DB.prepare(
+            `SELECT id FROM pricing_recommendations
+             WHERE inventory_product_id=? AND market_change_id IS NOT NULL
+             LIMIT 1`,
+          )
+            .bind(options.productId)
+            .first()
+        : null;
+      const initialFinalBaseline = Boolean(
+        options.productId && !existingMarketRecommendation,
+      );
+      const pricingEligible = snapshot.sampleSize >= 3;
+      if (
+        pricingEligible &&
+        (Boolean(options.productId) ||
+          initialFinalBaseline ||
+          change.type === 'RELEVANT_CHANGE' ||
+          change.type === 'MAJOR_CHANGE')
+      ) {
         const impacts = await pricingForChange(
           env,
           changeId,
           snapshot,
+          observations,
           clusterProducts,
           instant,
         );
@@ -984,9 +1291,11 @@ export async function runMarketIntelligence(
           .bind(
             crypto.randomUUID(),
             'market-intelligence',
-            change.type === 'MAJOR_CHANGE'
-              ? `Wichtige Marktänderung: ${cluster.label}`
-              : `Marktupdate: ${cluster.label}`,
+            initialFinalBaseline
+              ? `Erste Marktpreis-Baseline: ${cluster.label}`
+              : change.type === 'MAJOR_CHANGE'
+                ? `Wichtige Marktänderung: ${cluster.label}`
+                : `Marktupdate: ${cluster.label}`,
             `${snapshot.confidence} Confidence · ${snapshot.sampleSize} Vergleichsangebote · ${impacts} Preisempfehlungen zur Prüfung`,
             instant,
             JSON.stringify({
@@ -1009,8 +1318,17 @@ export async function runMarketIntelligence(
     }
 
     const hasErrors = (audit.errors as unknown[]).length > 0;
+    const insufficient = (audit.errors as Array<{ code?: string }>).some(
+      (error) => error.code === 'INSUFFICIENT_DATA',
+    );
     const status =
-      counters.snapshots === 0 ? 'FAILED' : hasErrors ? 'PARTIAL' : 'SUCCESS';
+      counters.snapshots === 0 && selected.length > 0
+        ? 'FAILED'
+        : insufficient
+          ? 'INSUFFICIENT_DATA'
+          : hasErrors
+            ? 'PARTIAL'
+            : 'SUCCESS';
     await env.DB.prepare(
       `UPDATE market_research_runs SET run_kind=?,status=?,finished_at=?,catalog_fingerprint=?,
            cluster_count=?,query_count=?,found_count=?,rejected_count=?,comparable_count=?,

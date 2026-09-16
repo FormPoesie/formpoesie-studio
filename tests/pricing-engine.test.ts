@@ -1,20 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  applyRecommendationsToDraft,
+  calculateAllChannelRecommendations,
   calculateBWarePrice,
   calculateDefectScore,
   calculateDigitalRecommendation,
   calculateDiscountSafety,
+  calculateDemandPerformance,
+  calculateImpactMultiplier,
   calculateMarketCostPerSale,
   calculateMinimumContribution,
+  calculateMultipackPrice,
+  calculatePremiumGuidePrice,
   calculatePhysicalRecommendation,
   calculatePresenceFactor,
   evaluatePortfolioSignals,
   invertChannelFees,
   roundEtsyDigital,
   roundEtsyPhysical,
+  roundDirectPrice,
+  roundEbayPrice,
   roundMarketPrice,
+  roundVintedPrice,
   suggestDefectScores,
+  SegmentClassifier,
+  VariantParser,
   type DigitalLicense,
   type PhysicalPricingInput,
 } from '../lib/pricing-engine';
@@ -60,8 +71,50 @@ void test('01 kleines 30-g-Geschenkprodukt verwendet COGS und Marktanker getrenn
     widthCm: 3,
     heightCm: 3,
   });
-  assert.equal(result.minimumContribution, 5);
+  assert.equal(result.minimumContribution, 1.5);
   assert.ok((result.recommendedPrice || 0) >= (result.floorPrice || 0));
+});
+
+void test('01b Variantenparser erkennt bestehende Multipacks ohne Einzelartikel umzudeuten', () => {
+  assert.deepEqual(VariantParser.parseMetadata('3er Set'), {
+    unitCount: 3,
+    bundleType: 'multipack',
+    pricingRole: 'bundle',
+  });
+  assert.deepEqual(VariantParser.parseMetadata('Standard'), {
+    unitCount: 1,
+    bundleType: 'single',
+    pricingRole: 'base',
+  });
+});
+
+void test('01c kleine funktionale Teile erhalten das Micro-Segment', () => {
+  assert.equal(
+    SegmentClassifier.classify({
+      dimensions: { l: 4, w: 2, h: 1 },
+      keywords: ['Kabelhalter'],
+      isPremiumOrArt: false,
+    }),
+    'small_functional',
+  );
+});
+
+void test('01d Multipack bleibt über COGS-Floor und nutzt degressive Staffel', () => {
+  const three = calculateMultipackPrice(4.9, 3, 3);
+  const ten = calculateMultipackPrice(4.9, 10, 10);
+  assert.ok(three >= 4.5);
+  assert.ok(ten >= 11.5);
+  assert.ok(ten < 4.9 * 10);
+});
+
+void test('01e Premium-Leitplanke kann ausdrücklich mit Gewicht skalieren', () => {
+  assert.equal(
+    calculatePremiumGuidePrice(
+      { targetBasePrice: 16.9, scaleWithWeight: true, baseWeightGrams: 60 },
+      120,
+    ),
+    33.8,
+  );
 });
 
 void test('02 60-g-Gothic-Skeletthand erhält Gothic-Marktanker', () => {
@@ -149,6 +202,26 @@ void test('11 Digital ohne Redistribution-Recht ist blockiert', () => {
   });
   assert.equal(result.status, 'BLOCKED_LICENSE');
   assert.equal(result.recommendedPrice, undefined);
+});
+
+void test('11b eigener digitaler Entwurf bleibt ohne Fremdlizenz freigegeben', () => {
+  const result = calculateDigitalRecommendation({
+    channel: 'etsy',
+    license: {
+      ...digitalLicense,
+      isOwnDesign: true,
+      digitalRedistributionAllowed: false,
+      evidence: undefined,
+    },
+    modelComplexity: 0.7,
+    demand: 0.5,
+    differentiation: 0.8,
+    utility: 0.6,
+    printReadiness: 1,
+    competition: 'medium',
+  });
+  assert.equal(result.status, 'OK');
+  assert.ok((result.recommendedPrice || 0) > 0);
 });
 
 void test('12–14 Etsy-Inversion bildet normal, Offsite 12 % und Offsite 15 % exakt ab', () => {
@@ -291,9 +364,39 @@ void test('alle fünf physischen Kanäle werden unabhängig berechnet', () => {
 
 void test('fehlende Maße erzeugen keine scheinpräzise Marktberechnung', () => {
   const result = physical({ lengthCm: null, widthCm: null, heightCm: null });
-  assert.equal(result.marketPrice, undefined);
+  assert.ok((result.marketPrice || 0) > 0);
   assert.equal(result.confidence, 'low');
-  assert.equal(result.diagnostics.priceDriver, 'floor');
+  assert.equal(result.diagnostics.presenceFactor, undefined);
+  assert.equal(result.status, 'REVIEW');
+});
+
+void test('alle Kanäle werden in einem Lauf berechnet und Marktkosten nur dem Markt zugerechnet', () => {
+  const results = calculateAllChannelRecommendations({
+    cogs: 4, category: 'figures', tier: 'standard', lengthCm: 10, widthCm: 8,
+    heightCm: 15, value: neutralValue, demand: 'unknown', competition: 'unknown',
+    channelNonCogsCosts: { market: 20 },
+  });
+  assert.deepEqual(Object.keys(results), ['etsy', 'direct', 'vinted', 'ebay', 'market']);
+  assert.ok((results.market.floorPrice || 0) > (results.direct.floorPrice || 0));
+});
+
+void test('ungültige COGS und normalisierte Eingaben liefern konkrete Status statt NaN', () => {
+  assert.equal(physical({ cogs: -1 }).status, 'INVALID_COGS');
+  assert.equal(physical({ value: { ...neutralValue, finish: 1.1 } }).status, 'INVALID_PRICING_INPUT');
+});
+
+void test('Rabattdiagnose trennt Mindestbeitrag und Break-even', () => {
+  const safety = calculateDiscountSafety({ regularPrice: 20, cogs: 10, minimumContribution: 5, channel: 'direct' });
+  assert.ok(safety.maxDiscountBeforeBreakEven > safety.maxDiscountBeforeMinimumContributionViolation);
+});
+
+void test('Zero-Input-Übernahme schreibt Empfehlungen nur in eine neue Draft-Kopie', () => {
+  const persisted = { etsy: 19.95 };
+  const result = physical();
+  const draft = applyRecommendationsToDraft(persisted, { etsy: result });
+  assert.equal(persisted.etsy, 19.95);
+  assert.equal(draft.etsy, result.recommendedPrice);
+  assert.notEqual(draft, persisted);
 });
 
 void test('Portfolio schützt Kaltstart und Saison statt Slow Mover automatisch zu senken', () => {
@@ -315,4 +418,114 @@ void test('Portfolio erfindet keine Preise, Kosten oder Conversion-Daten', () =>
   assert.equal(result[0].realizedPrice, null);
   assert.equal(result[0].contributionMargin, null);
   assert.equal('conversionRate' in result[0], false);
+});
+
+void test('visuelle Wirkung unterscheidet einfache Form, Detail und Eyecatcher', () => {
+  assert.equal(calculateImpactMultiplier('SOLID'), 0.75);
+  assert.equal(calculateImpactMultiplier('DETAILED'), 1);
+  assert.equal(calculateImpactMultiplier('PREMIUM_IMPACT'), 1.35);
+
+  const solid = physical({ cogs: 1, channel: 'direct', impactType: 'SOLID' });
+  const detailed = physical({ cogs: 1, channel: 'direct', impactType: 'DETAILED' });
+  const premium = physical({ cogs: 1, channel: 'direct', impactType: 'PREMIUM_IMPACT' });
+  assert.ok((solid.marketPrice || 0) < (detailed.marketPrice || 0));
+  assert.ok((detailed.marketPrice || 0) < (premium.marketPrice || 0));
+  assert.notEqual(solid.recommendedPrice, premium.recommendedPrice);
+});
+
+void test('Nachfrage bleibt bei zu wenig Echtdaten neutral', () => {
+  const result = calculateDemandPerformance({
+    sales30: 0,
+    previous30: 0,
+    sales90: 0,
+  });
+  assert.equal(result.status, 'UNKNOWN');
+  assert.equal(result.multiplier, 1);
+  assert.equal(result.source, 'DEFAULT');
+});
+
+void test('starke echte Performance erhöht den Nachfragefaktor', () => {
+  const result = calculateDemandPerformance({
+    sales30: 12,
+    previous30: 5,
+    sales90: 22,
+    views30: 200,
+    favorites30: 18,
+    daysObserved: 30,
+    stockProduced90: 24,
+  });
+  assert.equal(result.status, 'HIGH');
+  assert.equal(result.multiplier, 1.2);
+  assert.equal(result.source, 'PERFORMANCE');
+});
+
+void test('viel Reichweite ohne Resonanz aktiviert Ladenhüter-Schutz', () => {
+  const result = calculateDemandPerformance({
+    sales30: 0,
+    previous30: 0,
+    sales90: 0,
+    views30: 1000,
+    favorites30: 0,
+    daysObserved: 30,
+  });
+  assert.equal(result.status, 'LOW');
+  assert.equal(result.multiplier, 0.85);
+});
+
+void test('Plattformpsychologie verschiebt das Marktquantil statt Etsy pauschal abzuleiten', () => {
+  const results = calculateAllChannelRecommendations({
+    cogs: 1,
+    category: 'figures',
+    tier: 'standard',
+    lengthCm: 10,
+    widthCm: 8,
+    heightCm: 15,
+    value: neutralValue,
+    demand: 'known',
+    competition: 'medium',
+    marketPsychologyByChannel: {
+      etsy: 'premium_seeking',
+      direct: 'balanced',
+      vinted: 'price_sensitive',
+      ebay: 'balanced',
+      market: 'balanced',
+    },
+    demandByChannel: { direct: 'very_known', vinted: 'niche' },
+    competitionByChannel: { direct: 'low', vinted: 'high' },
+  });
+  assert.ok((results.etsy.marketPrice || 0) > (results.direct.marketPrice || 0));
+  assert.ok((results.direct.marketPrice || 0) > (results.vinted.marketPrice || 0));
+  assert.equal(results.etsy.diagnostics.marketPsychology, 'premium_seeking');
+  assert.equal(results.vinted.diagnostics.marketPsychology, 'price_sensitive');
+  assert.ok(
+    (results.direct.diagnostics.demandCompetitionFactor || 0) >
+      (results.vinted.diagnostics.demandCompetitionFactor || 0),
+  );
+});
+
+void test('Direkt, Vinted und eBay besitzen getrennte psychologische Rundungen', () => {
+  assert.equal(roundDirectPrice(21.1), 21.5);
+  assert.equal(roundVintedPrice(21.1), 22);
+  assert.equal(roundEbayPrice(21.1), 21.99);
+});
+
+void test('reale Nachfrage kann je Kanal unabhängig wirken', () => {
+  const results = calculateAllChannelRecommendations({
+    cogs: 1,
+    category: 'figures',
+    tier: 'standard',
+    lengthCm: 10,
+    widthCm: 8,
+    heightCm: 15,
+    value: neutralValue,
+    demand: 'known',
+    competition: 'medium',
+    demandPerformanceByChannel: {
+      direct: { sales30: 12, previous30: 5, sales90: 22, views30: 200 },
+      vinted: { sales30: 0, previous30: 0, sales90: 0, views30: 1000, favorites30: 0 },
+    },
+  });
+  assert.equal(results.direct.diagnostics.demandPerformanceStatus, 'HIGH');
+  assert.equal(results.vinted.diagnostics.demandPerformanceStatus, 'LOW');
+  assert.ok((results.direct.marketPrice || 0) > (results.vinted.marketPrice || 0));
 });

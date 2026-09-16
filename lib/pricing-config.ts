@@ -1,4 +1,5 @@
 export type SalesChannel = 'etsy' | 'direct' | 'vinted' | 'ebay' | 'market';
+export type MarketPsychology = 'price_sensitive' | 'balanced' | 'premium_seeking';
 
 export type MarketCategory =
   | 'gothic'
@@ -24,7 +25,7 @@ export type ChannelPricingConfig = {
   feeVatRate: number;
   discountReserve: number;
   nonCogsCosts: number;
-  roundingStrategy: 'etsy-physical' | 'market' | 'commercial';
+  roundingStrategy: 'etsy-physical' | 'direct' | 'vinted' | 'ebay' | 'market';
 };
 
 export interface PricingConfig {
@@ -33,6 +34,17 @@ export interface PricingConfig {
     minimumAbsoluteContribution: number;
     minimumCogsContributionRate: number;
     defaultDiscountReserve: number;
+    normal: {
+      minimumAbsoluteContribution: number;
+      minimumCogsContributionRate: number;
+    };
+    micro: {
+      minimumAbsoluteContribution: number;
+      minimumCogsContributionRate: number;
+    };
+  };
+  bundles: {
+    degressions: Record<3 | 5 | 10, number>;
   };
   etsy: {
     transactionRate: number;
@@ -43,6 +55,7 @@ export interface PricingConfig {
     feeVatRate: number;
   };
   channels: Record<SalesChannel, ChannelPricingConfig>;
+  marketPsychology: Record<MarketPsychology, { quantileShift: number }>;
   market: {
     smallItemThreshold: number;
     smallItemStep: number;
@@ -58,6 +71,22 @@ export interface PricingConfig {
     minFactor: number;
     maxFactor: number;
     referenceLongestCm: Record<Exclude<MarketCategory, 'digital'>, number>;
+  };
+  impact: {
+    solid: number;
+    detailed: number;
+    premiumImpact: number;
+  };
+  demandPerformance: {
+    high: number;
+    normal: number;
+    low: number;
+    minimumReliableSales: number;
+    minimumReliableViews: number;
+    highConversionRate: number;
+    lowConversionRate: number;
+    highFavoriteVelocity: number;
+    lowFavoriteVelocity: number;
   };
   defect: {
     weights: {
@@ -89,11 +118,22 @@ export interface PricingConfig {
 }
 
 export const DEFAULT_PRICING_CONFIG: PricingConfig = {
-  version: '2026-09-11.1',
+  version: '2026-09-14.2',
   physical: {
     minimumAbsoluteContribution: 5,
     minimumCogsContributionRate: 0.4,
     defaultDiscountReserve: 0.15,
+    normal: {
+      minimumAbsoluteContribution: 5,
+      minimumCogsContributionRate: 0.4,
+    },
+    micro: {
+      minimumAbsoluteContribution: 1.5,
+      minimumCogsContributionRate: 0.4,
+    },
+  },
+  bundles: {
+    degressions: { 3: 0.75, 5: 0.65, 10: 0.55 },
   },
   etsy: {
     transactionRate: 0.065,
@@ -118,7 +158,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
       feeVatRate: 0,
       discountReserve: 0,
       nonCogsCosts: 0,
-      roundingStrategy: 'commercial',
+      roundingStrategy: 'direct',
     },
     vinted: {
       percentageFees: 0,
@@ -126,7 +166,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
       feeVatRate: 0,
       discountReserve: 0,
       nonCogsCosts: 0,
-      roundingStrategy: 'commercial',
+      roundingStrategy: 'vinted',
     },
     ebay: {
       percentageFees: 0,
@@ -134,7 +174,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
       feeVatRate: 0,
       discountReserve: 0,
       nonCogsCosts: 0,
-      roundingStrategy: 'commercial',
+      roundingStrategy: 'ebay',
     },
     market: {
       percentageFees: 0,
@@ -144,6 +184,11 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
       nonCogsCosts: 0,
       roundingStrategy: 'market',
     },
+  },
+  marketPsychology: {
+    price_sensitive: { quantileShift: -0.1 },
+    balanced: { quantileShift: 0 },
+    premium_seeking: { quantileShift: 0.1 },
   },
   market: {
     smallItemThreshold: 5,
@@ -171,6 +216,22 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
       hollow: 25,
       sets: 12,
     },
+  },
+  impact: {
+    solid: 0.75,
+    detailed: 1,
+    premiumImpact: 1.35,
+  },
+  demandPerformance: {
+    high: 1.2,
+    normal: 1,
+    low: 0.85,
+    minimumReliableSales: 5,
+    minimumReliableViews: 100,
+    highConversionRate: 0.04,
+    lowConversionRate: 0.005,
+    highFavoriteVelocity: 0.2,
+    lowFavoriteVelocity: 0.02,
   },
   defect: {
     weights: {

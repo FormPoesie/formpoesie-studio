@@ -130,6 +130,7 @@ export async function POST(request: Request) {
       action?: string;
       changeId?: string;
       maxClusters?: number;
+      productId?: string;
     };
     if (body.action === 'ignore-change') {
       if (!body.changeId)
@@ -148,6 +149,10 @@ export async function POST(request: Request) {
       inventoryAccessToken: accessToken,
       maxClusters:
         typeof body.maxClusters === 'number' ? body.maxClusters : undefined,
+      productId:
+        typeof body.productId === 'string' && body.productId.trim()
+          ? body.productId.trim()
+          : undefined,
     });
     return Response.json(result, { status: 201 });
   } catch (error) {

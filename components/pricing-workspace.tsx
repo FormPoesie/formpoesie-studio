@@ -17,17 +17,85 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { variantCostBreakdown } from '@/lib/inventory-production';
+import { inventoryReviewStatus } from '@/lib/inventory-bridge';
 import {
+  applyRecommendationsToDraft,
+  calculateAllChannelRecommendations,
+  calculateDigitalRecommendation,
   calculateMarketCostPerSale,
   evaluatePortfolioSignals,
   suggestDefectScores,
   type DefectInputs,
+  type DemandPerformanceInput,
+  type ImpactType,
   type PortfolioSale,
   type PriceRecommendation,
 } from '@/lib/pricing-engine';
-import type { MarketCategory, SalesChannel } from '@/lib/pricing-config';
+import type {
+  MarketCategory,
+  MarketPsychology,
+  SalesChannel,
+} from '@/lib/pricing-config';
 
 type Row = Record<string, unknown>;
+type ChannelPsychologyMap = Record<SalesChannel, MarketPsychology>;
+type ChannelMetricMap = Record<
+  SalesChannel,
+  { views30: string; favorites30: string; stockProduced90: string }
+>;
+type ChannelMarketMap = Record<
+  SalesChannel,
+  { demand: string; competition: string }
+>;
+
+const DEFAULT_CHANNEL_PSYCHOLOGY: ChannelPsychologyMap = {
+  etsy: 'premium_seeking',
+  direct: 'balanced',
+  vinted: 'price_sensitive',
+  ebay: 'balanced',
+  market: 'balanced',
+};
+
+const CHANNEL_LABELS: Record<SalesChannel, string> = {
+  etsy: 'Etsy',
+  direct: 'Direkt',
+  vinted: 'Vinted',
+  ebay: 'eBay',
+  market: 'Markt',
+};
+
+function emptyChannelMetrics(): ChannelMetricMap {
+  return Object.fromEntries(
+    (Object.keys(CHANNEL_LABELS) as SalesChannel[]).map((key) => [
+      key,
+      { views30: '', favorites30: '', stockProduced90: '' },
+    ]),
+  ) as ChannelMetricMap;
+}
+
+function emptyChannelMarket(): ChannelMarketMap {
+  return Object.fromEntries(
+    (Object.keys(CHANNEL_LABELS) as SalesChannel[]).map((key) => [
+      key,
+      { demand: 'unknown', competition: 'unknown' },
+    ]),
+  ) as ChannelMarketMap;
+}
+
+function normalizedSalesChannel(value: unknown): SalesChannel | null {
+  const key = string(value).trim().toLocaleLowerCase('de');
+  if (key.includes('etsy')) return 'etsy';
+  if (key.includes('vinted')) return 'vinted';
+  if (key.includes('ebay')) return 'ebay';
+  if (key.includes('markt')) return 'market';
+  if (
+    key.includes('direkt') ||
+    key.includes('abholung') ||
+    key.includes('formular')
+  )
+    return 'direct';
+  return null;
+}
 
 function object(value: unknown): Row {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -99,7 +167,10 @@ const affectedAreas = [
 ];
 
 function inferredCategory(product: Row): MarketCategory {
-  const value = string(product.category).toLocaleLowerCase('de');
+  const value =
+    `${string(product.name)} ${string(product.category)} ${string(product.productType)}`.toLocaleLowerCase(
+      'de',
+    );
   if (/stl|3mf|digital/.test(value)) return 'digital';
   if (/goth|horror|skelett|totenkopf/.test(value)) return 'gothic';
   if (/büste|bueste|histor/.test(value)) return 'historicalBusts';
@@ -109,6 +180,28 @@ function inferredCategory(product: Row): MarketCategory {
   if (/geschenk/.test(value)) return 'gifts';
   if (/mini|klein|anhänger|anhaenger/.test(value)) return 'smallItems';
   return 'figures';
+}
+
+function inferredImpactType(
+  product: Row,
+  category: MarketCategory,
+  tier = 'standard',
+): ImpactType {
+  const value =
+    `${string(product.name)} ${string(product.category)} ${string(product.productType)}`.toLocaleLowerCase(
+      'de',
+    );
+  if (
+    tier === 'ultra' ||
+    /eyecatcher|meisterwerk|hochdetaill|filigran|ornament/.test(value)
+  )
+    return 'PREMIUM_IMPACT';
+  if (
+    ['functional', 'smallItems', 'sets'].includes(category) ||
+    /box|kiste|clip|halter|adapter|sockel/.test(value)
+  )
+    return 'SOLID';
+  return 'DETAILED';
 }
 
 function Field({
@@ -219,6 +312,18 @@ function ResultCard({
         </p>
       </div>
     );
+  if (result.recommendedPrice == null)
+    return (
+      <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5">
+        <div className="flex items-center gap-2 font-semibold text-amber-900">
+          <AlertTriangle className="size-5" /> Preisempfehlung nicht verfügbar
+        </div>
+        <p className="mt-2 text-sm text-amber-800">
+          Status {result.status}:{' '}
+          {result.diagnostics.warnings?.join(' ') || 'Eingabedaten prüfen.'}
+        </p>
+      </div>
+    );
   const safety = result.discountSafety;
   return (
     <div className="rounded-2xl border bg-white/70 p-5 shadow-sm">
@@ -239,7 +344,9 @@ function ResultCard({
           <Badge variant="outline">Confidence {result.confidence}</Badge>
           {result.status !== 'OK' ? (
             <Badge className="bg-amber-100 text-amber-900">
-              Marktfit prüfen
+              {result.status === 'REVIEW_MARKET_FIT'
+                ? 'Marktfit prüfen'
+                : 'Prüfung empfohlen'}
             </Badge>
           ) : null}
         </div>
@@ -287,6 +394,24 @@ function ResultCard({
               Value-Faktor {result.diagnostics.valueFactor?.toFixed(2)}
             </li>
           ) : null}
+          <li>
+            Visuelle Wirkung {result.diagnostics.impactType || 'DETAILED'} ·
+            Faktor {result.diagnostics.impactMultiplier?.toFixed(2) || '1.00'}
+          </li>
+          <li>
+            Reale Nachfrage{' '}
+            {result.diagnostics.demandPerformanceStatus || 'UNKNOWN'} · Faktor{' '}
+            {result.diagnostics.demandIndex?.toFixed(2) || '1.00'}
+          </li>
+          <li>
+            Plattformpsychologie{' '}
+            {result.diagnostics.marketPsychology || 'balanced'} · Quantil-Shift{' '}
+            {(result.diagnostics.marketPsychologyShift || 0) >= 0 ? '+' : ''}
+            {result.diagnostics.marketPsychologyShift?.toFixed(2) || '0.00'}
+          </li>
+          {result.diagnostics.demandEvidence?.map((evidence) => (
+            <li key={evidence}>Datengrundlage: {evidence}</li>
+          ))}
           <li>
             Nachfrage/Konkurrenz{' '}
             {result.diagnostics.demandCompetitionFactor?.toFixed(2) ||
@@ -379,6 +504,158 @@ function Metric({
   );
 }
 
+function ChannelSummary({
+  result,
+  currentPrice,
+  draftPrice,
+  selected,
+  onSelect,
+}: {
+  result: PriceRecommendation;
+  currentPrice: number | null;
+  draftPrice?: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const label = CHANNEL_LABELS[result.channel];
+  const difference =
+    result.recommendedPrice != null && currentPrice != null
+      ? result.recommendedPrice - currentPrice
+      : null;
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`rounded-2xl border p-4 text-left transition ${selected ? 'border-[var(--fp-primary)] bg-[#eef2ef] shadow-sm' : 'bg-white/75 hover:border-[var(--fp-primary)]/45'}`}
+    >
+      <span className="flex items-center justify-between gap-2">
+        <strong>{label}</strong>
+        <Badge variant="outline">
+          {result.diagnostics.priceDriver === 'floor' ? 'Floor' : 'Markt'}
+        </Badge>
+      </span>
+      <span className="mt-3 grid grid-cols-[1fr_auto_1fr] items-end gap-2 tabular-nums">
+        <span>
+          <small className="block text-muted-foreground">Aktuell</small>
+          {euro(currentPrice)}
+        </span>
+        <span className="pb-0.5 text-muted-foreground">→</span>
+        <span>
+          <small className="block text-muted-foreground">Empfohlen</small>
+          <strong>{euro(result.recommendedPrice)}</strong>
+        </span>
+      </span>
+      <span className="mt-2 block text-xs text-muted-foreground">
+        {difference == null
+          ? 'Noch kein Vergleichspreis'
+          : `${difference >= 0 ? '+' : ''}${euro(difference)}`}
+        {' · '}Wirkung ×
+        {result.diagnostics.impactMultiplier?.toFixed(2) || '1.00'}
+        {' · '}Nachfrage ×{result.diagnostics.demandIndex?.toFixed(2) || '1.00'}
+        {' · '}Psychologie{' '}
+        {result.diagnostics.marketPsychology === 'price_sensitive'
+          ? 'preisorientiert'
+          : result.diagnostics.marketPsychology === 'premium_seeking'
+            ? 'premium'
+            : 'ausgewogen'}
+      </span>
+      {draftPrice != null ? (
+        <span className="mt-2 block text-xs font-medium text-[var(--fp-primary)]">
+          Im Draft: {euro(draftPrice)}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function ChannelMarketInputs({
+  channel,
+  market,
+  psychology,
+  metrics,
+  performance,
+  onMarketChange,
+  onPsychologyChange,
+  onMetricChange,
+}: {
+  channel: SalesChannel;
+  market: ChannelMarketMap[SalesChannel];
+  psychology: MarketPsychology;
+  metrics: ChannelMetricMap[SalesChannel];
+  performance: DemandPerformanceInput;
+  onMarketChange: (
+    key: keyof ChannelMarketMap[SalesChannel],
+    value: string,
+  ) => void;
+  onPsychologyChange: (value: MarketPsychology) => void;
+  onMetricChange: (
+    key: keyof ChannelMetricMap[SalesChannel],
+    value: string,
+  ) => void;
+}) {
+  return (
+    <div className="grid content-start gap-3 rounded-xl border bg-[var(--fp-paper)]/55 p-3">
+      <p className="font-semibold">{CHANNEL_LABELS[channel]}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <SelectField
+          label="Nachfrage"
+          value={market.demand}
+          onChange={(value) => onMarketChange('demand', value)}
+          options={[
+            { value: 'unknown', label: 'Unbekannt' },
+            { value: 'niche', label: 'Nische' },
+            { value: 'known', label: 'Bekannt' },
+            { value: 'very_known', label: 'Sehr bekannt' },
+            { value: 'trend', label: 'Trend' },
+          ]}
+        />
+        <SelectField
+          label="Konkurrenz"
+          value={market.competition}
+          onChange={(value) => onMarketChange('competition', value)}
+          options={[
+            { value: 'unknown', label: 'Unbekannt' },
+            { value: 'low', label: 'Niedrig' },
+            { value: 'medium', label: 'Mittel' },
+            { value: 'high', label: 'Hoch' },
+          ]}
+        />
+      </div>
+      <SelectField
+        label="Marktpsychologie"
+        value={psychology}
+        onChange={(value) => onPsychologyChange(value as MarketPsychology)}
+        options={[
+          { value: 'price_sensitive', label: 'Preisorientiert / vergleichend' },
+          { value: 'balanced', label: 'Ausgewogene Zahlungsbereitschaft' },
+          { value: 'premium_seeking', label: 'Premium- und Entdeckungsmarkt' },
+        ]}
+      />
+      <div className="grid grid-cols-3 gap-2">
+        <Field
+          label="Klicks 30 T."
+          value={metrics.views30}
+          onChange={(value) => onMetricChange('views30', value)}
+        />
+        <Field
+          label="Favoriten 30 T."
+          value={metrics.favorites30}
+          onChange={(value) => onMetricChange('favorites30', value)}
+        />
+        <Field
+          label="Produziert 90 T."
+          value={metrics.stockProduced90}
+          onChange={(value) => onMetricChange('stockProduced90', value)}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {performance.sales30} Verkäufe/30 T. · {performance.sales90} Verkäufe/90
+        T.
+      </p>
+    </div>
+  );
+}
+
 function MarketWatch({ productId = '' }: { productId?: string }) {
   const [data, setData] = useState<Row>({});
   const [busy, setBusy] = useState(false);
@@ -415,7 +692,7 @@ function MarketWatch({ productId = '' }: { productId?: string }) {
     const response = await fetch('/api/market-intelligence', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify(productId ? { productId } : {}),
     });
     const payload = (await response.json()) as { error?: string };
     setBusy(false);
@@ -442,29 +719,33 @@ function MarketWatch({ productId = '' }: { productId?: string }) {
         PARTIAL: 'Teilweise',
         RESEARCH_FAILED: 'Fehler',
         RUNNING: 'Läuft',
+        INSUFFICIENT_DATA: 'Zu wenig Vergleichsdaten',
+        LOW_CONFIDENCE: 'Geringe Sicherheit',
+        COMPLETED_NO_CHANGE: 'Geprüft, keine Änderung',
+        COMPLETED_PRICE_SIGNAL: 'Neue Preisempfehlung',
       } as Record<string, string>
     )[string(runData.status)] || 'Noch kein Lauf';
   return (
     <div className="grid gap-4">
-      {!productId ? (
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="font-heading text-3xl">Market Watch</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Sortimentsgesteuerte Wochenrecherche · aktive Preise bleiben
-              unverändert
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => void run()} disabled={busy}>
-            {busy ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <RefreshCw className="size-4" />
-            )}{' '}
-            Jetzt recherchieren
-          </Button>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-heading text-3xl">Market Watch</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {productId
+              ? 'Gezielte Artikelrecherche'
+              : 'Sortimentsgesteuerte Wochenrecherche'}{' '}
+            · aktive Preise bleiben unverändert
+          </p>
         </div>
-      ) : null}
+        <Button variant="outline" onClick={() => void run()} disabled={busy}>
+          {busy ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RefreshCw className="size-4" />
+          )}{' '}
+          {productId ? 'Artikel neu recherchieren' : 'Jetzt recherchieren'}
+        </Button>
+      </div>
       <div className="rounded-2xl border bg-white/70 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -676,7 +957,11 @@ function MarketWatch({ productId = '' }: { productId?: string }) {
 }
 
 export function PricingWorkspace({ data }: { data: Row }) {
-  const products = rows(data.products).filter((product) => !product.archivedAt);
+  const products = rows(data.products).filter(
+    (product) =>
+      !product.archivedAt &&
+      inventoryReviewStatus(product.studioStatus) === 'final',
+  );
   const components = rows(data.components);
   const [productId, setProductId] = useState('');
   const product =
@@ -695,13 +980,20 @@ export function PricingWorkspace({ data }: { data: Row }) {
     'physical',
   );
   const [channel, setChannel] = useState<SalesChannel>('etsy');
+  const [channelScope, setChannelScope] = useState<SalesChannel | 'all'>('all');
   const [tier, setTier] = useState('standard');
+  const [impactType, setImpactType] = useState<ImpactType>('DETAILED');
+  const [channelPsychology, setChannelPsychology] =
+    useState<ChannelPsychologyMap>(DEFAULT_CHANNEL_PSYCHOLOGY);
+  const [channelMetrics, setChannelMetrics] =
+    useState<ChannelMetricMap>(emptyChannelMetrics);
   const [season, setSeason] = useState('');
   const [assetId, setAssetId] = useState('');
   const [newAssetName, setNewAssetName] = useState('');
   const [pricingData, setPricingData] = useState<Row>({});
-  const [demand, setDemand] = useState('unknown');
-  const [competition, setCompetition] = useState('unknown');
+  const [channelMarket, setChannelMarket] =
+    useState<ChannelMarketMap>(emptyChannelMarket);
+  const { demand, competition } = channelMarket[channel];
   const [length, setLength] = useState('');
   const [width, setWidth] = useState('');
   const [height, setHeight] = useState('');
@@ -729,7 +1021,12 @@ export function PricingWorkspace({ data }: { data: Row }) {
   const [redistribution, setRedistribution] = useState(false);
   const [licenseEvidence, setLicenseEvidence] = useState('');
   const [leadProduct, setLeadProduct] = useState(false);
-  const [result, setResult] = useState<PriceRecommendation | null>(null);
+  const [priceDraft, setPriceDraft] = useState<
+    Partial<Record<SalesChannel, number>>
+  >({});
+  const [savedPrices, setSavedPrices] = useState<
+    Partial<Record<SalesChannel, number>>
+  >({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [affectedArea, setAffectedArea] = useState('Unterseite');
@@ -755,7 +1052,7 @@ export function PricingWorkspace({ data }: { data: Row }) {
   useEffect(() => {
     if (!selectedProductId) return;
     let cancelled = false;
-    void fetch('/api/pricing')
+    void fetch(`/api/pricing?productId=${encodeURIComponent(selectedProductId)}`)
       .then(async (response) => {
         const payload = (await response.json()) as Row & { error?: string };
         if (!response.ok)
@@ -771,9 +1068,19 @@ export function PricingWorkspace({ data }: { data: Row }) {
           category: selectedProductCategory,
         });
         const savedValue = object(profile?.value);
+        const savedPerformance = object(savedValue.performance);
+        const savedPerformanceByChannel = object(
+          savedValue.performanceByChannel,
+        );
+        const savedChannelMarket = object(savedValue.channelMarket);
+        const savedPsychology = object(savedValue.channelPsychology);
         const savedLicense = object(profile?.license);
+        const savedAsset = rows(payload.assets).find(
+          (item) => string(item.id) === string(profile?.assetId),
+        );
         setCategory(
           (string(profile?.marketCategory) as MarketCategory) ||
+            (string(savedAsset?.category) as MarketCategory) ||
             fallbackCategory,
         );
         setProductKind(
@@ -783,9 +1090,80 @@ export function PricingWorkspace({ data }: { data: Row }) {
             : 'physical',
         );
         setTier(string(profile?.tier, 'standard'));
+        const nextTier = string(profile?.tier, 'standard');
+        const savedImpact = string(profile?.shapeType) as ImpactType;
+        setImpactType(
+          ['SOLID', 'DETAILED', 'PREMIUM_IMPACT'].includes(savedImpact)
+            ? savedImpact
+            : inferredImpactType(product, fallbackCategory, nextTier),
+        );
+        setChannelMetrics(
+          Object.fromEntries(
+            (Object.keys(CHANNEL_LABELS) as SalesChannel[]).map((key) => {
+              const saved = object(savedPerformanceByChannel[key]);
+              const legacy = key === 'etsy' ? savedPerformance : {};
+              return [
+                key,
+                {
+                  views30:
+                    saved.views30 == null
+                      ? legacy.views30 == null
+                        ? ''
+                        : string(legacy.views30)
+                      : string(saved.views30),
+                  favorites30:
+                    saved.favorites30 == null
+                      ? legacy.favorites30 == null
+                        ? ''
+                        : string(legacy.favorites30)
+                      : string(saved.favorites30),
+                  stockProduced90:
+                    saved.stockProduced90 == null
+                      ? legacy.stockProduced90 == null
+                        ? ''
+                        : string(legacy.stockProduced90)
+                      : string(saved.stockProduced90),
+                },
+              ];
+            }),
+          ) as ChannelMetricMap,
+        );
+        setChannelPsychology({
+          ...DEFAULT_CHANNEL_PSYCHOLOGY,
+          ...Object.fromEntries(
+            (Object.keys(DEFAULT_CHANNEL_PSYCHOLOGY) as SalesChannel[])
+              .map((key) => [key, string(savedPsychology[key])])
+              .filter(([, value]) =>
+                ['price_sensitive', 'balanced', 'premium_seeking'].includes(
+                  value,
+                ),
+              ),
+          ),
+        } as ChannelPsychologyMap);
         setSeason(string(profile?.season));
-        setDemand(string(profile?.demand, 'unknown'));
-        setCompetition(string(profile?.competition, 'unknown'));
+        const legacyDemand =
+          string(profile?.demand) !== 'unknown' && string(profile?.demand)
+            ? string(profile?.demand)
+            : string(savedAsset?.demand, 'unknown');
+        const legacyCompetition =
+          string(profile?.competition) !== 'unknown' &&
+          string(profile?.competition)
+            ? string(profile?.competition)
+            : string(savedAsset?.competition, 'unknown');
+        setChannelMarket(
+          Object.fromEntries(
+            (Object.keys(CHANNEL_LABELS) as SalesChannel[]).map((key) => {
+              const saved = object(savedChannelMarket[key]);
+              return [
+                key,
+                {
+                  demand: string(saved.demand, legacyDemand),
+                  competition: string(saved.competition, legacyCompetition),
+                },
+              ];
+            }),
+          ) as ChannelMarketMap,
+        );
         setAssetId(string(profile?.assetId));
         setLength(
           profile?.lengthCm != null
@@ -813,7 +1191,7 @@ export function PricingWorkspace({ data }: { data: Row }) {
             ...current,
             ...Object.fromEntries(
               Object.entries(savedValue).filter(
-                ([, value]) => typeof value === 'number',
+                ([key, value]) => key in current && typeof value === 'number',
               ),
             ),
           }));
@@ -857,6 +1235,10 @@ export function PricingWorkspace({ data }: { data: Row }) {
     setVariantId(string(nextVariant?.id));
     setCategory(nextCategory);
     setProductKind(nextCategory === 'digital' ? 'digital' : 'physical');
+    setImpactType(inferredImpactType(nextProduct, nextCategory));
+    setChannelPsychology(DEFAULT_CHANNEL_PSYCHOLOGY);
+    setChannelMetrics(emptyChannelMetrics());
+    setChannelMarket(emptyChannelMarket());
     setLength(
       number(nextProduct.depthMm)
         ? String(number(nextProduct.depthMm) / 10)
@@ -872,113 +1254,427 @@ export function PricingWorkspace({ data }: { data: Row }) {
         ? String(number(nextProduct.heightMm) / 10)
         : '',
     );
-    setResult(null);
+    setPriceDraft({});
+    setSavedPrices({});
   }
 
   function updateDefectDefaults(area: string, level: typeof visibility) {
     setDefects(suggestDefectScores(area, level));
   }
 
-  async function calculate() {
-    setBusy(true);
-    setMessage('');
-    const marketCost =
-      channel === 'market'
-        ? calculateMarketCostPerSale(
-            numericInput(standFee),
-            numericInput(travelCost),
-            numericInput(marketExtra),
-            Math.max(1, numericInput(expectedSales)),
-          )
-        : 0;
-    const profile = {
+  const portfolioSales = useMemo(
+    () => normalizePortfolio(data, rows(pricingData.profiles)),
+    [data, pricingData.profiles],
+  );
+  const demandPerformanceByChannel = useMemo(() => {
+    const now = Date.now();
+    const liveSince = new Date(
+      string(product.finalizedAt || product.createdAt),
+    ).getTime();
+    return Object.fromEntries(
+      (Object.keys(CHANNEL_LABELS) as SalesChannel[]).map((nextChannel) => {
+        const relevant = portfolioSales.filter(
+          (sale) =>
+            sale.productId === selectedProductId &&
+            (!sale.variantId || !variantId || sale.variantId === variantId) &&
+            normalizedSalesChannel(sale.channel) === nextChannel,
+        );
+        const quantity = (fromDays: number, toDays: number) =>
+          relevant.reduce((sum, sale) => {
+            const age = (now - new Date(sale.soldAt).getTime()) / 86_400_000;
+            return age >= fromDays && age < toDays ? sum + sale.quantity : sum;
+          }, 0);
+        const metrics = channelMetrics[nextChannel];
+        return [
+          nextChannel,
+          {
+            sales30: quantity(0, 30),
+            previous30: quantity(30, 60),
+            sales90: quantity(0, 90),
+            views30: metrics.views30 ? numericInput(metrics.views30) : null,
+            favorites30: metrics.favorites30
+              ? numericInput(metrics.favorites30)
+              : null,
+            stockProduced90: metrics.stockProduced90
+              ? numericInput(metrics.stockProduced90)
+              : null,
+            daysObserved: Number.isFinite(liveSince)
+              ? Math.max(1, Math.min(90, (now - liveSince) / 86_400_000))
+              : 30,
+          },
+        ];
+      }),
+    ) as Record<SalesChannel, DemandPerformanceInput>;
+  }, [portfolioSales, selectedProductId, variantId, product, channelMetrics]);
+
+  const marketCost = useMemo(
+    () =>
+      calculateMarketCostPerSale(
+        numericInput(standFee),
+        numericInput(travelCost),
+        numericInput(marketExtra),
+        Math.max(1, numericInput(expectedSales)),
+      ),
+    [standFee, travelCost, marketExtra, expectedSales],
+  );
+  const profile = useMemo(
+    () => ({
       assetId: assetId || null,
       productKind,
       marketCategory: category,
       tier,
       season: season || null,
-      demand,
-      competition,
-      shapeType: category === 'hollow' ? 'hollow' : 'solid',
+      demand: channelMarket.etsy.demand,
+      competition: channelMarket.etsy.competition,
+      shapeType: impactType,
       lengthCm: numericInput(length) || null,
       widthCm: numericInput(width) || null,
       heightCm: numericInput(height) || null,
-      value: productKind === 'digital' ? digitalValues : values,
+      value:
+        productKind === 'digital'
+          ? {
+              ...digitalValues,
+              channelPsychology,
+              channelMarket,
+              performanceByChannel: channelMetrics,
+            }
+          : {
+              ...values,
+              channelPsychology,
+              channelMarket,
+              performanceByChannel: channelMetrics,
+            },
       license: {
+        isOwnDesign: !string(product.designerId),
         physicalCommercialUseAllowed: true,
         digitalRedistributionAllowed: redistribution,
         buyerCommercialUseAllowed: false,
         evidence: licenseEvidence || undefined,
       },
-    };
-    const profileResponse = await fetch('/api/pricing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'save-profile',
-        productId: string(product.id),
-        profile,
-      }),
-    });
-    if (!profileResponse.ok) {
-      const problem = (await profileResponse.json()) as { error?: string };
-      setMessage(problem.error || 'Profil konnte nicht gespeichert werden.');
-      setBusy(false);
-      return;
-    }
-    const input =
-      productKind === 'digital'
-        ? {
-            channel,
+    }),
+    [
+      assetId,
+      productKind,
+      category,
+      tier,
+      season,
+      channelMarket,
+      impactType,
+      channelPsychology,
+      length,
+      width,
+      height,
+      digitalValues,
+      values,
+      redistribution,
+      licenseEvidence,
+      channelMetrics,
+      product.designerId,
+    ],
+  );
+  const calculatedRecommendations = useMemo(() => {
+    const channels: SalesChannel[] = [
+      'etsy',
+      'direct',
+      'vinted',
+      'ebay',
+      'market',
+    ];
+    if (productKind === 'digital') {
+      return Object.fromEntries(
+        channels.map((nextChannel) => [
+          nextChannel,
+          calculateDigitalRecommendation({
+            channel: nextChannel,
             license: profile.license,
             ...digitalValues,
-            competition,
-            demandClass: demand,
+            competition: channelMarket[nextChannel].competition as
+              | 'low'
+              | 'medium'
+              | 'high'
+              | 'unknown',
+            demandClass: channelMarket[nextChannel].demand as
+              | 'niche'
+              | 'known'
+              | 'very_known'
+              | 'trend'
+              | 'unknown',
+            marketPsychology: channelPsychology[nextChannel],
             isLeadProduct: leadProduct,
-          }
-        : {
-            cogs,
-            channel,
-            category: category === 'digital' ? 'figures' : category,
-            tier,
-            lengthCm: numericInput(length) || null,
-            widthCm: numericInput(width) || null,
-            heightCm: numericInput(height) || null,
-            hollowBody: category === 'hollow',
-            highEndCollector: tier === 'ultra',
-            value: values,
-            demand,
-            competition,
-            buyerShipping: numericInput(buyerShipping),
-            channelNonCogsCost: marketCost,
-            offsiteRate: Number(offsite),
-          };
-    const response = await fetch('/api/pricing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action:
-          productKind === 'digital'
-            ? 'recommend-digital'
-            : 'recommend-physical',
-        productId: string(product.id),
-        variantId: string(variant.id),
-        activePrice: currentPrice,
-        input,
-      }),
-    });
-    const payload = (await response.json()) as {
-      error?: string;
-      result?: PriceRecommendation;
-    };
-    setBusy(false);
-    if (!response.ok) setMessage(payload.error || 'Berechnung fehlgeschlagen.');
-    else {
-      setResult(payload.result || null);
-      setMessage(
-        'Empfehlung und unveränderlicher Snapshot gespeichert. Der aktive Preis blieb unverändert.',
-      );
+          }),
+        ]),
+      ) as Record<SalesChannel, PriceRecommendation>;
     }
+    return calculateAllChannelRecommendations({
+      cogs,
+      category: category === 'digital' ? 'figures' : category,
+      tier: tier as 'standard' | 'premium' | 'ultra',
+      lengthCm: numericInput(length) || null,
+      widthCm: numericInput(width) || null,
+      heightCm: numericInput(height) || null,
+      hollowBody: category === 'hollow',
+      highEndCollector: tier === 'ultra',
+      value: values,
+      impactType,
+      demandPerformanceByChannel,
+      demand: demand as 'niche' | 'known' | 'very_known' | 'trend' | 'unknown',
+      competition: competition as 'low' | 'medium' | 'high' | 'unknown',
+      demandByChannel: Object.fromEntries(
+        (Object.keys(CHANNEL_LABELS) as SalesChannel[]).map((key) => [
+          key,
+          channelMarket[key].demand,
+        ]),
+      ) as Record<
+        SalesChannel,
+        'niche' | 'known' | 'very_known' | 'trend' | 'unknown'
+      >,
+      competitionByChannel: Object.fromEntries(
+        (Object.keys(CHANNEL_LABELS) as SalesChannel[]).map((key) => [
+          key,
+          channelMarket[key].competition,
+        ]),
+      ) as Record<SalesChannel, 'low' | 'medium' | 'high' | 'unknown'>,
+      marketPsychologyByChannel: channelPsychology,
+      buyerShipping: numericInput(buyerShipping),
+      channelNonCogsCost: 0,
+      channelNonCogsCosts: { market: marketCost },
+      parameterSources: {
+        cogs: 'AUTO',
+        dimensions: length && width && height ? 'AUTO' : 'REVIEW',
+        category: 'AUTO',
+        tier: 'DEFAULT',
+        demand: demand === 'unknown' ? 'DEFAULT' : 'MANUAL',
+        competition: competition === 'unknown' ? 'DEFAULT' : 'MANUAL',
+        value: 'AUTO',
+      },
+    });
+  }, [
+    productKind,
+    profile,
+    digitalValues,
+    competition,
+    demand,
+    channelMarket,
+    leadProduct,
+    channelPsychology,
+    cogs,
+    category,
+    tier,
+    length,
+    width,
+    height,
+    values,
+    impactType,
+    demandPerformanceByChannel,
+    buyerShipping,
+    marketCost,
+  ]);
+  const persistedMarketRecommendations = useMemo(() => {
+    const result: Partial<Record<SalesChannel, PriceRecommendation>> = {};
+    for (const row of rows(pricingData.recommendations)) {
+      if (
+        string(row.inventoryProductId) !== selectedProductId ||
+        string(row.inventoryVariantId) !== string(variant.id) ||
+        string(row.status) !== 'MARKET_UPDATED_REVIEW' ||
+        !row.marketChangeId
+      )
+        continue;
+      const nextChannel = normalizedSalesChannel(row.channel);
+      if (nextChannel && !result[nextChannel])
+        result[nextChannel] = object(
+          row.result,
+        ) as unknown as PriceRecommendation;
+    }
+    return result;
+  }, [pricingData.recommendations, selectedProductId, variant.id]);
+  const recommendations = useMemo(
+    () =>
+      Object.fromEntries(
+        (Object.keys(CHANNEL_LABELS) as SalesChannel[]).map((nextChannel) => [
+          nextChannel,
+          persistedMarketRecommendations[nextChannel] ||
+            calculatedRecommendations[nextChannel],
+        ]),
+      ) as Record<SalesChannel, PriceRecommendation>,
+    [calculatedRecommendations, persistedMarketRecommendations],
+  );
+  const latestAnalysisJob = useMemo(
+    () =>
+      rows(pricingData.marketAnalysisJobs).find(
+        (job) => string(job.productId) === selectedProductId,
+      ) || null,
+    [pricingData.marketAnalysisJobs, selectedProductId],
+  );
+  const analysisInProgress = ['QUEUED', 'RUNNING'].includes(
+    string(latestAnalysisJob?.status),
+  );
+  const hasPersistedMarketRecommendation =
+    Object.keys(persistedMarketRecommendations).length > 0;
+  const latestAnalysisSucceeded = [
+    'COMPLETED',
+    'COMPLETED_NO_CHANGE',
+    'COMPLETED_PRICE_SIGNAL',
+  ].includes(string(latestAnalysisJob?.status));
+  const marketResultUnavailable =
+    Boolean(latestAnalysisJob) &&
+    (!latestAnalysisSucceeded || !hasPersistedMarketRecommendation);
+  const result = recommendations[channel];
+
+  useEffect(() => {
+    if (!analysisInProgress) return;
+    const timer = window.setInterval(() => {
+      void fetch(`/api/pricing?productId=${encodeURIComponent(selectedProductId)}`)
+        .then(async (response) => {
+          if (response.ok) setPricingData((await response.json()) as Row);
+        })
+        .catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [analysisInProgress, selectedProductId]);
+
+  function currentPriceForChannel(nextChannel: SalesChannel) {
+    if (savedPrices[nextChannel] != null)
+      return savedPrices[nextChannel] as number;
+    const key = (
+      {
+        direct: 'directPriceCents',
+        etsy: 'etsyPriceCents',
+        vinted: 'vintedPriceCents',
+        ebay: 'ebayPriceCents',
+        market: 'marketPriceCents',
+      } as const
+    )[nextChannel];
+    return (
+      number(variant[key] ?? variant.priceCents ?? product.defaultPriceCents) /
+        100 || null
+    );
+  }
+
+  function applyRecommendations() {
+    setPriceDraft((current) =>
+      applyRecommendationsToDraft(current, recommendations),
+    );
+    setMessage(
+      'Empfehlungen wurden in den lokalen Artikeldraft übernommen. Noch nichts gespeichert.',
+    );
+  }
+
+  async function savePrices() {
+    if (!Object.keys(priceDraft).length) {
+      setMessage('Bitte zuerst „Preise übernehmen“ wählen.');
+      return;
+    }
+    setBusy(true);
+    setMessage('');
+    try {
+      const profileResponse = await fetch('/api/pricing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save-profile',
+          productId: string(product.id),
+          profile,
+        }),
+      });
+      if (!profileResponse.ok)
+        throw new Error('Pricing-Profil konnte nicht gespeichert werden.');
+      const centsValue = (value: number | undefined) =>
+        value == null ? undefined : Math.round(value * 100);
+      const response = await fetch('/api/inventory/workspace', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entity: 'product_variants',
+          id: variant.id,
+          values: {
+            priceCents: centsValue(priceDraft.direct),
+            directPriceCents: centsValue(priceDraft.direct),
+            etsyPriceCents: centsValue(priceDraft.etsy),
+            vintedPriceCents: centsValue(priceDraft.vinted),
+            ebayPriceCents: centsValue(priceDraft.ebay),
+            marketPriceCents: centsValue(priceDraft.market),
+          },
+        }),
+      });
+      if (!response.ok)
+        throw new Error('Kanalpreise konnten nicht gespeichert werden.');
+      const historyResponses = await Promise.all(
+        Object.entries(recommendations).map(([nextChannel, item]) =>
+          fetch('/api/pricing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action:
+                productKind === 'digital'
+                  ? 'recommend-digital'
+                  : 'recommend-physical',
+              productId: string(product.id),
+              variantId: string(variant.id),
+              activePrice: currentPriceForChannel(nextChannel as SalesChannel),
+              input:
+                productKind === 'digital'
+                  ? {
+                      channel: nextChannel,
+                      license: profile.license,
+                      ...digitalValues,
+                      competition:
+                        channelMarket[nextChannel as SalesChannel].competition,
+                      demandClass:
+                        channelMarket[nextChannel as SalesChannel].demand,
+                      marketPsychology:
+                        channelPsychology[nextChannel as SalesChannel],
+                      isLeadProduct: leadProduct,
+                    }
+                  : {
+                      cogs,
+                      channel: nextChannel,
+                      category: category === 'digital' ? 'figures' : category,
+                      tier,
+                      lengthCm: numericInput(length) || null,
+                      widthCm: numericInput(width) || null,
+                      heightCm: numericInput(height) || null,
+                      hollowBody: category === 'hollow',
+                      highEndCollector: tier === 'ultra',
+                      value: values,
+                      impactType,
+                      demandPerformance:
+                        demandPerformanceByChannel[nextChannel as SalesChannel],
+                      demand: channelMarket[nextChannel as SalesChannel].demand,
+                      competition:
+                        channelMarket[nextChannel as SalesChannel].competition,
+                      marketPsychology:
+                        channelPsychology[nextChannel as SalesChannel],
+                      buyerShipping: numericInput(buyerShipping),
+                      channelNonCogsCost:
+                        nextChannel === 'market' ? marketCost : 0,
+                    },
+              result: item,
+            }),
+          }),
+        ),
+      );
+      if (historyResponses.some((item) => !item.ok))
+        throw new Error(
+          'Preise wurden gespeichert, aber die Empfehlungshistorie ist unvollständig.',
+        );
+      setSavedPrices(priceDraft);
+      setPriceDraft({});
+      setMessage(
+        'Alle bestätigten Kanalpreise wurden gespeichert; Empfehlungshistorie wurde angelegt.',
+      );
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error
+          ? reason.message
+          : 'Preise konnten nicht gespeichert werden.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function calculate() {
+    applyRecommendations();
   }
 
   async function calculateBWare() {
@@ -1041,16 +1737,14 @@ export function PricingWorkspace({ data }: { data: Row }) {
     else {
       setAssetId(payload.id || '');
       setNewAssetName('');
-      const refreshed = await fetch('/api/pricing');
+      const refreshed = await fetch(
+        `/api/pricing?productId=${encodeURIComponent(selectedProductId)}`,
+      );
       if (refreshed.ok) setPricingData((await refreshed.json()) as Row);
       setMessage('Motiv-/Personen-Asset angelegt und ausgewählt.');
     }
   }
 
-  const portfolioSales = useMemo(
-    () => normalizePortfolio(data, rows(pricingData.profiles)),
-    [data, pricingData.profiles],
-  );
   const signals = useMemo(
     () =>
       evaluatePortfolioSignals(
@@ -1060,13 +1754,25 @@ export function PricingWorkspace({ data }: { data: Row }) {
       ),
     [portfolioSales],
   );
+  const recommendationValues = Object.values(recommendations);
+  const hasRecommendation = recommendationValues.some(
+    (recommendation) => recommendation.recommendedPrice != null,
+  );
+  const sharedBlocker =
+    recommendationValues.length > 0 &&
+    recommendationValues.every(
+      (recommendation) =>
+        recommendation.recommendedPrice == null &&
+        recommendation.status === recommendationValues[0]?.status,
+    );
 
   if (!products.length)
     return (
       <section className="mt-6 grid gap-5">
         <MarketWatch />
         <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Für einzelne Preisempfehlungen werden zuerst Inventarartikel benötigt.
+          Preisempfehlungen werden ausschließlich für finalisierte Artikel
+          erstellt. Entwürfe und Kundenaufträge bleiben außen vor.
         </div>
       </section>
     );
@@ -1088,7 +1794,7 @@ export function PricingWorkspace({ data }: { data: Row }) {
           value={string(variant.id)}
           onChange={(value) => {
             setVariantId(value);
-            setResult(null);
+            setPriceDraft({});
           }}
           options={(variants.length ? variants : [{}]).map((item, index) => ({
             value: string(item.id, `standard-${index}`),
@@ -1096,13 +1802,16 @@ export function PricingWorkspace({ data }: { data: Row }) {
           }))}
         />
         <SelectField
-          label="Kanal"
-          value={channel}
+          label="Plattformauswahl"
+          value={channelScope}
           onChange={(value) => {
-            setChannel(value as SalesChannel);
-            setResult(null);
+            const next = value as SalesChannel | 'all';
+            setChannelScope(next);
+            if (next !== 'all') setChannel(next);
+            setPriceDraft({});
           }}
           options={[
+            { value: 'all', label: 'Alle Kanäle gleichzeitig' },
             { value: 'etsy', label: 'Etsy' },
             { value: 'direct', label: 'Direkt' },
             { value: 'vinted', label: 'Vinted' },
@@ -1112,17 +1821,17 @@ export function PricingWorkspace({ data }: { data: Row }) {
         />
       </div>
       <Tabs defaultValue="pricing" className="mt-5">
-      <TabsList className="max-w-full overflow-x-auto">
-          <TabsTrigger value="pricing">
+        <TabsList className="max-w-full gap-1 overflow-x-auto p-1">
+          <TabsTrigger value="pricing" className="gap-2 px-3">
             <CircleDollarSign className="size-4" /> Preis
           </TabsTrigger>
-          <TabsTrigger value="market-watch">
+          <TabsTrigger value="market-watch" className="gap-2 px-3">
             <BarChart3 className="size-4" /> Market Watch
           </TabsTrigger>
-          <TabsTrigger value="bware">
+          <TabsTrigger value="bware" className="gap-2 px-3">
             <ShieldAlert className="size-4" /> B-Ware
           </TabsTrigger>
-          <TabsTrigger value="portfolio">
+          <TabsTrigger value="portfolio" className="gap-2 px-3">
             <TrendingUp className="size-4" /> Portfolio
           </TabsTrigger>
         </TabsList>
@@ -1135,249 +1844,409 @@ export function PricingWorkspace({ data }: { data: Row }) {
               <div>
                 <h2 className="font-heading text-2xl">Preisprofil</h2>
                 <p className="text-sm text-muted-foreground">
-                  COGS: {euro(cogs)} aus dem Produktionskostenrechner
+                  {productKind === 'digital'
+                    ? 'Digitalprodukt · keine physischen COGS'
+                    : `COGS: ${euro(cogs)} aus dem Produktionskostenrechner`}
                 </p>
               </div>
               <Badge variant="outline">Altpreis {euro(currentPrice)}</Badge>
             </div>
-            <div className="mt-5 grid gap-4">
-              <SelectField
-                label="Produkttyp"
-                value={productKind}
-                onChange={(value) =>
-                  setProductKind(value as 'physical' | 'digital')
-                }
-                options={[
-                  { value: 'physical', label: 'Physisches Produkt' },
-                  { value: 'digital', label: 'Digital STL / 3MF' },
-                ]}
-              />
-              <SelectField
-                label="Marktgruppe"
-                value={category}
-                onChange={(value) => setCategory(value as MarketCategory)}
-                options={categories}
-              />
-              <SelectField
-                label="Motiv / historische Person"
-                value={assetId}
-                onChange={setAssetId}
-                options={[
-                  { value: '', label: 'Noch nicht zugeordnet' },
-                  ...rows(pricingData.assets).map((asset) => ({
-                    value: string(asset.id),
-                    label: string(asset.name),
-                  })),
-                ]}
-              />
-              <div className="grid grid-cols-[1fr_auto] items-end gap-2">
-                <Field
-                  type="text"
-                  label="Neues Motiv-/Personen-Asset"
-                  value={newAssetName}
-                  onChange={setNewAssetName}
-                />
-                <Button
-                  variant="outline"
-                  onClick={() => void createAsset()}
-                  disabled={busy || !newAssetName.trim()}
-                >
-                  Anlegen
-                </Button>
-              </div>
-              <Field
-                type="text"
-                label="Saison (optional)"
-                value={season}
-                onChange={setSeason}
-              />
-              {productKind === 'physical' ? (
-                <>
-                  <SelectField
-                    label="Positionierung"
-                    value={tier}
-                    onChange={setTier}
-                    options={[
-                      { value: 'standard', label: 'Standard' },
-                      { value: 'premium', label: 'Premium' },
-                      { value: 'ultra', label: 'Ultra / Sammler' },
-                    ]}
-                  />
-                  <div className="grid grid-cols-3 gap-2">
-                    <Field
-                      label="Länge cm"
-                      value={length}
-                      onChange={setLength}
-                    />
-                    <Field
-                      label="Breite cm"
-                      value={width}
-                      onChange={setWidth}
-                    />
-                    <Field
-                      label="Höhe cm"
-                      value={height}
-                      onChange={setHeight}
-                    />
-                  </div>
-                </>
-              ) : null}
-              <div className="grid grid-cols-2 gap-3">
+            <details className="mt-5 rounded-xl border bg-white/70 p-4">
+              <summary className="cursor-pointer font-semibold">
+                Erweiterte Preisparameter
+              </summary>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Automatisch vorbelegt. Nur bei Bedarf manuell ändern.
+              </p>
+              <div className="mt-4 grid gap-4">
                 <SelectField
-                  label="Nachfrage"
-                  value={demand}
-                  onChange={setDemand}
+                  label="Produkttyp"
+                  value={productKind}
+                  onChange={(value) =>
+                    setProductKind(value as 'physical' | 'digital')
+                  }
                   options={[
-                    { value: 'unknown', label: 'Unbekannt' },
-                    { value: 'niche', label: 'Nische' },
-                    { value: 'known', label: 'Bekannt' },
-                    { value: 'very_known', label: 'Sehr bekannt' },
-                    { value: 'trend', label: 'Trend' },
+                    { value: 'physical', label: 'Physisches Produkt' },
+                    { value: 'digital', label: 'Digital STL / 3MF' },
                   ]}
                 />
                 <SelectField
-                  label="Konkurrenz"
-                  value={competition}
-                  onChange={setCompetition}
+                  label="Marktgruppe"
+                  value={category}
+                  onChange={(value) => setCategory(value as MarketCategory)}
+                  options={categories}
+                />
+                <SelectField
+                  label="Motiv / historische Person"
+                  value={assetId}
+                  onChange={setAssetId}
                   options={[
-                    { value: 'unknown', label: 'Unbekannt' },
-                    { value: 'low', label: 'Niedrig' },
-                    { value: 'medium', label: 'Mittel' },
-                    { value: 'high', label: 'Hoch' },
+                    { value: '', label: 'Noch nicht zugeordnet' },
+                    ...rows(pricingData.assets).map((asset) => ({
+                      value: string(asset.id),
+                      label: string(asset.name),
+                    })),
                   ]}
                 />
-              </div>
-              {productKind === 'physical' ? (
-                <div className="grid gap-3 border-t pt-4">
-                  {Object.entries(values).map(([key, value]) => (
-                    <ScoreField
-                      key={key}
-                      label={
-                        (
-                          {
-                            complexity: 'Komplexität',
-                            functionValue: 'Funktionswert',
-                            giftValue: 'Geschenkwert',
-                            collectorValue: 'Sammlerwert',
-                            personalization: 'Personalisierung',
-                            finish: 'Finish',
-                          } as Record<string, string>
-                        )[key]
-                      }
-                      value={value}
-                      onChange={(next) =>
-                        setValues((current) => ({ ...current, [key]: next }))
-                      }
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="grid gap-3 border-t pt-4">
-                  {Object.entries(digitalValues).map(([key, value]) => (
-                    <ScoreField
-                      key={key}
-                      label={
-                        (
-                          {
-                            modelComplexity: 'Modellkomplexität',
-                            demand: 'Nachfrage-Score',
-                            differentiation: 'Differenzierung',
-                            utility: 'Nutzwert',
-                            printReadiness: 'Druckbereitschaft',
-                          } as Record<string, string>
-                        )[key]
-                      }
-                      value={value}
-                      onChange={(next) =>
-                        setDigitalValues((current) => ({
-                          ...current,
-                          [key]: next,
-                        }))
-                      }
-                    />
-                  ))}
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={redistribution}
-                      onChange={(event) =>
-                        setRedistribution(event.target.checked)
-                      }
-                    />{' '}
-                    Digitale Weitergabe ausdrücklich erlaubt
-                  </label>
+                <div className="grid grid-cols-[1fr_auto] items-end gap-2">
                   <Field
                     type="text"
-                    label="Lizenznachweis"
-                    value={licenseEvidence}
-                    onChange={setLicenseEvidence}
+                    label="Neues Motiv-/Personen-Asset"
+                    value={newAssetName}
+                    onChange={setNewAssetName}
                   />
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={leadProduct}
-                      onChange={(event) => setLeadProduct(event.target.checked)}
-                    />{' '}
-                    Explizites Lead-Produkt (1,90 € möglich)
-                  </label>
+                  <Button
+                    variant="outline"
+                    onClick={() => void createAsset()}
+                    disabled={busy || !newAssetName.trim()}
+                  >
+                    Anlegen
+                  </Button>
                 </div>
-              )}
-              {channel === 'etsy' ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field
-                    label="Käuferversand €"
-                    value={buyerShipping}
-                    onChange={setBuyerShipping}
-                  />
-                  <SelectField
-                    label="Offsite-Szenario"
-                    value={offsite}
-                    onChange={setOffsite}
-                    options={[
-                      { value: '0', label: 'Ohne Offsite' },
-                      { value: '0.12', label: 'Offsite 12 %' },
-                      { value: '0.15', label: 'Offsite 15 %' },
-                    ]}
-                  />
+                <Field
+                  type="text"
+                  label="Saison (optional)"
+                  value={season}
+                  onChange={setSeason}
+                />
+                {productKind === 'physical' ? (
+                  <>
+                    <SelectField
+                      label="Positionierung"
+                      value={tier}
+                      onChange={setTier}
+                      options={[
+                        { value: 'standard', label: 'Standard' },
+                        { value: 'premium', label: 'Premium' },
+                        { value: 'ultra', label: 'Ultra / Sammler' },
+                      ]}
+                    />
+                    <SelectField
+                      label="Visuelle Wirkung"
+                      value={impactType}
+                      onChange={(value) => setImpactType(value as ImpactType)}
+                      options={[
+                        { value: 'SOLID', label: 'Einfach / massiv (0,75)' },
+                        { value: 'DETAILED', label: 'Detailliert (1,00)' },
+                        {
+                          value: 'PREMIUM_IMPACT',
+                          label: 'Premium-Wirkung (1,35)',
+                        },
+                      ]}
+                    />
+                    <div className="grid grid-cols-3 gap-2">
+                      <Field
+                        label="Länge cm"
+                        value={length}
+                        onChange={setLength}
+                      />
+                      <Field
+                        label="Breite cm"
+                        value={width}
+                        onChange={setWidth}
+                      />
+                      <Field
+                        label="Höhe cm"
+                        value={height}
+                        onChange={setHeight}
+                      />
+                    </div>
+                  </>
+                ) : null}
+                <div>
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    Verkäufe kommen automatisch aus dem Portfolio. Klicks und
+                    Favoriten nur eintragen, wenn echte Plattformdaten
+                    vorliegen.
+                  </p>
+                  <div
+                    className={
+                      channelScope === 'all' ? 'grid gap-3 2xl:grid-cols-2' : ''
+                    }
+                  >
+                    {(channelScope === 'all'
+                      ? (Object.keys(CHANNEL_LABELS) as SalesChannel[])
+                      : [channel]
+                    ).map((nextChannel) => (
+                      <ChannelMarketInputs
+                        key={nextChannel}
+                        channel={nextChannel}
+                        market={channelMarket[nextChannel]}
+                        psychology={channelPsychology[nextChannel]}
+                        metrics={channelMetrics[nextChannel]}
+                        performance={demandPerformanceByChannel[nextChannel]}
+                        onMarketChange={(key, value) =>
+                          setChannelMarket((current) => ({
+                            ...current,
+                            [nextChannel]: {
+                              ...current[nextChannel],
+                              [key]: value,
+                            },
+                          }))
+                        }
+                        onPsychologyChange={(value) =>
+                          setChannelPsychology((current) => ({
+                            ...current,
+                            [nextChannel]: value,
+                          }))
+                        }
+                        onMetricChange={(key, value) =>
+                          setChannelMetrics((current) => ({
+                            ...current,
+                            [nextChannel]: {
+                              ...current[nextChannel],
+                              [key]: value,
+                            },
+                          }))
+                        }
+                      />
+                    ))}
+                  </div>
                 </div>
-              ) : null}
-              {channel === 'market' ? (
-                <div className="grid grid-cols-2 gap-3 border-t pt-4">
-                  <Field
-                    label="Standgebühr €"
-                    value={standFee}
-                    onChange={setStandFee}
-                  />
-                  <Field
-                    label="Fahrtkosten €"
-                    value={travelCost}
-                    onChange={setTravelCost}
-                  />
-                  <Field
-                    label="Weitere Kosten €"
-                    value={marketExtra}
-                    onChange={setMarketExtra}
-                  />
-                  <Field
-                    label="Erwartete Verkäufe"
-                    value={expectedSales}
-                    onChange={setExpectedSales}
-                  />
-                </div>
-              ) : null}
-              <Button onClick={() => void calculate()} disabled={busy}>
+                {productKind === 'physical' ? (
+                  <div className="grid gap-3 border-t pt-4">
+                    {Object.entries(values).map(([key, value]) => (
+                      <ScoreField
+                        key={key}
+                        label={
+                          (
+                            {
+                              complexity: 'Komplexität',
+                              functionValue: 'Funktionswert',
+                              giftValue: 'Geschenkwert',
+                              collectorValue: 'Sammlerwert',
+                              personalization: 'Personalisierung',
+                              finish: 'Finish',
+                            } as Record<string, string>
+                          )[key]
+                        }
+                        value={value}
+                        onChange={(next) =>
+                          setValues((current) => ({ ...current, [key]: next }))
+                        }
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid gap-3 border-t pt-4">
+                    {Object.entries(digitalValues).map(([key, value]) => (
+                      <ScoreField
+                        key={key}
+                        label={
+                          (
+                            {
+                              modelComplexity: 'Modellkomplexität',
+                              demand: 'Nachfrage-Score',
+                              differentiation: 'Differenzierung',
+                              utility: 'Nutzwert',
+                              printReadiness: 'Druckbereitschaft',
+                            } as Record<string, string>
+                          )[key]
+                        }
+                        value={value}
+                        onChange={(next) =>
+                          setDigitalValues((current) => ({
+                            ...current,
+                            [key]: next,
+                          }))
+                        }
+                      />
+                    ))}
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={profile.license.isOwnDesign || redistribution}
+                        disabled={profile.license.isOwnDesign}
+                        onChange={(event) =>
+                          setRedistribution(event.target.checked)
+                        }
+                      />{' '}
+                      {profile.license.isOwnDesign
+                        ? 'Eigener Entwurf – digitale Veröffentlichung erlaubt'
+                        : 'Digitale Weitergabe ausdrücklich erlaubt'}
+                    </label>
+                    {!profile.license.isOwnDesign ? (
+                      <Field
+                        type="text"
+                        label="Lizenznachweis"
+                        value={licenseEvidence}
+                        onChange={setLicenseEvidence}
+                      />
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Kein Fremdlizenz-Nachweis erforderlich.
+                      </p>
+                    )}
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={leadProduct}
+                        onChange={(event) =>
+                          setLeadProduct(event.target.checked)
+                        }
+                      />{' '}
+                      Explizites Lead-Produkt (1,90 € möglich)
+                    </label>
+                  </div>
+                )}
+                {channelScope === 'all' || channel === 'etsy' ? (
+                  <div className="grid grid-cols-2 gap-3 rounded-xl border p-3">
+                    <p className="col-span-2 font-semibold">Etsy-Kanalkosten</p>
+                    <Field
+                      label="Käuferversand €"
+                      value={buyerShipping}
+                      onChange={setBuyerShipping}
+                    />
+                    <SelectField
+                      label="Offsite-Szenario"
+                      value={offsite}
+                      onChange={setOffsite}
+                      options={[
+                        { value: '0', label: 'Ohne Offsite' },
+                        { value: '0.12', label: 'Offsite 12 %' },
+                        { value: '0.15', label: 'Offsite 15 %' },
+                      ]}
+                    />
+                  </div>
+                ) : null}
+                {channelScope === 'all' || channel === 'market' ? (
+                  <div className="grid grid-cols-2 gap-3 rounded-xl border p-3">
+                    <p className="col-span-2 font-semibold">
+                      Markt-Kanalkosten
+                    </p>
+                    <Field
+                      label="Standgebühr €"
+                      value={standFee}
+                      onChange={setStandFee}
+                    />
+                    <Field
+                      label="Fahrtkosten €"
+                      value={travelCost}
+                      onChange={setTravelCost}
+                    />
+                    <Field
+                      label="Weitere Kosten €"
+                      value={marketExtra}
+                      onChange={setMarketExtra}
+                    />
+                    <Field
+                      label="Erwartete Verkäufe"
+                      value={expectedSales}
+                      onChange={setExpectedSales}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </details>
+            <div className="mt-4 grid gap-2">
+              <Button
+                onClick={() => calculate()}
+                disabled={busy || !hasRecommendation || analysisInProgress}
+              >
+                {analysisInProgress ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : null}
+                {analysisInProgress
+                  ? 'Marktprüfung läuft'
+                  : 'Preise übernehmen'}
+              </Button>
+              <Button
+                onClick={() => void savePrices()}
+                disabled={busy || !Object.keys(priceDraft).length}
+              >
                 {busy ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <Save className="size-4" />
                 )}{' '}
-                Empfehlung berechnen & speichern
+                Speichern
               </Button>
+              <p className="text-xs text-muted-foreground">
+                Automatische Empfehlungen verändern die Datenbank nicht. Erst
+                „Preise übernehmen“ füllt den Draft; „Speichern“ persistiert
+                ihn.
+              </p>
             </div>
           </div>
           <div className="grid content-start gap-5">
-            <MarketWatch productId={selectedProductId} />
-            <ResultCard result={result} currentPrice={currentPrice} />
+            <div>
+              <h2 className="font-heading text-2xl">Preisvorschläge</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Artikelwirkung, reale Nachfrage und kanalspezifische Kosten
+                werden getrennt bewertet.
+              </p>
+            </div>
+            {analysisInProgress ? (
+              <div
+                className="rounded-2xl border border-[#91a29d] bg-[#edf2f0] p-5 text-[#30443f]"
+                role="status"
+                aria-live="polite"
+              >
+                <div className="flex items-start gap-3">
+                  <Loader2 className="mt-0.5 size-5 shrink-0 animate-spin" />
+                  <div>
+                    <p className="font-semibold">
+                      Dieser Artikel wird am Markt geprüft
+                    </p>
+                    <p className="mt-1 text-sm leading-6">
+                      Vergleichsangebote werden gesucht, bewertet und
+                      anschließend in neue Preisvorschläge übersetzt. Bis dahin
+                      zeigen wir bewusst keine vorläufigen Modellpreise an.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : marketResultUnavailable ? (
+              <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                <p className="font-semibold">
+                  Noch keine marktvalidierte Preisempfehlung
+                </p>
+                <p className="mt-1">
+                  Analyse-Status: {string(latestAnalysisJob?.status)}. Die unten
+                  sichtbaren Werte sind derzeit nur kalkulatorische Modellwerte
+                  und keine Ergebnisse der Market Intelligence.
+                </p>
+              </div>
+            ) : null}
+            {analysisInProgress || marketResultUnavailable ? null : sharedBlocker ? (
+              <ResultCard
+                result={result}
+                currentPrice={currentPriceForChannel(channel)}
+              />
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {(Object.keys(recommendations) as SalesChannel[]).map(
+                    (nextChannel) => (
+                      <ChannelSummary
+                        key={nextChannel}
+                        result={recommendations[nextChannel]}
+                        currentPrice={currentPriceForChannel(nextChannel)}
+                        draftPrice={priceDraft[nextChannel]}
+                        selected={channel === nextChannel}
+                        onSelect={() => {
+                          setChannel(nextChannel);
+                          if (channelScope !== 'all')
+                            setChannelScope(nextChannel);
+                        }}
+                      />
+                    ),
+                  )}
+                </div>
+                <ResultCard
+                  result={result}
+                  currentPrice={currentPriceForChannel(channel)}
+                />
+              </>
+            )}
+            <details className="rounded-2xl border bg-white/60 p-4">
+              <summary className="cursor-pointer font-semibold">
+                Marktdaten anzeigen
+              </summary>
+              <div className="mt-4">
+                <MarketWatch productId={selectedProductId} />
+              </div>
+            </details>
           </div>
         </TabsContent>
         <TabsContent value="market-watch" className="mt-4">
@@ -1644,6 +2513,7 @@ function normalizePortfolio(data: Row, profiles: Row[]): PortfolioSale[] {
     result.push({
       productId,
       sku: string(sale.productId || sale.articleName, 'Unbekannt'),
+      variantId: string(sale.productVariantId || sale.variantId) || undefined,
       channel: string(sale.channel, 'Online'),
       soldAt: string(sale.date),
       quantity,

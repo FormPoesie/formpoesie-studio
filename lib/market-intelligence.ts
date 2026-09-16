@@ -32,10 +32,10 @@ export type MarketIntelligenceConfig = {
 };
 
 export const MARKET_INTELLIGENCE_CONFIG: MarketIntelligenceConfig = {
-  maxClustersPerRun: 12,
-  maxQueriesPerCluster: 5,
+  maxClustersPerRun: 1,
+  maxQueriesPerCluster: 4,
   maxResultsPerQuery: 8,
-  minComparability: 0.56,
+  minComparability: 0.5,
   minSampleSize: 5,
   trendConfirmationPeriods: 3,
   querySaturationNewResultRate: 0.12,
@@ -136,6 +136,8 @@ export type MarketSnapshotValue = {
   medianCents: number | null;
   p75Cents: number | null;
   p90Cents: number | null;
+  minCents?: number | null;
+  maxCents?: number | null;
   sampleSize: number;
   effectiveSampleSize: number;
   averageComparability: number | null;
@@ -150,6 +152,9 @@ export type MarketSnapshotValue = {
   adjustedTrend: number | null;
   trendState: TrendState;
   confidence: MarketConfidence;
+  confidenceScore?: number;
+  oldestObservation?: string | null;
+  newestObservation?: string | null;
 };
 
 const STOP_WORDS = new Set([
@@ -200,13 +205,51 @@ export function normalizeMarketText(value: unknown) {
 }
 
 export function marketTokens(...values: unknown[]) {
+  const normalized = normalizeMarketText(values.filter(Boolean).join(' '))
+    .replace(/\b(?:tea\s*light|candle)\s+holders?\b/g, 'teelichthalter')
+    .replace(/\bset\s+of\s+(?:3|three)\b/g, 'trio');
+  const aliases: Record<string, string> = {
+    '3er': 'trio',
+    three: 'trio',
+    geister: 'geist',
+    ghosts: 'geist',
+    ghost: 'geist',
+    tealight: 'teelichthalter',
+    candleholder: 'teelichthalter',
+    candleholders: 'teelichthalter',
+  };
   return Array.from(
     new Set(
-      normalizeMarketText(values.filter(Boolean).join(' '))
+      normalized
         .split(/\s+/)
+        .map((token) => aliases[token] || token)
         .filter((token) => token.length >= 3 && !STOP_WORDS.has(token)),
     ),
   );
+}
+
+function englishResearchLabel(label: string) {
+  const translations: Record<string, string> = {
+    geist: 'ghost',
+    trio: 'set',
+    teelichthalter: 'tealight holder',
+    kerzenhalter: 'candle holder',
+    halloween: 'Halloween',
+  };
+  return marketTokens(label)
+    .map((token) => translations[token] || token)
+    .join(' ');
+}
+
+function germanResearchLabel(label: string) {
+  const translations: Record<string, string> = {
+    geist: 'Geister',
+    trio: '3er Set',
+    teelichthalter: 'Teelichthalter',
+  };
+  return marketTokens(label)
+    .map((token) => translations[token] || token)
+    .join(' ');
 }
 
 function clusterKey(dimension: string, value: string) {
@@ -254,6 +297,9 @@ export function discoverClusters(
   for (const product of products) {
     const family = product.productType || product.category || product.name;
     const familyKey = clusterKey('product_type', family);
+    add(product, 'product', product.name, 0, familyKey, [
+      'Konkreter finalisierter Artikel',
+    ]);
     add(product, 'product_type', family, 1, null, [
       'Produkttyp aus dem Sortiment',
     ]);
@@ -274,7 +320,10 @@ export function discoverClusters(
   }
 
   return [...clusters.values()]
-    .filter((cluster) => cluster.level <= 2 || cluster.productIds.length > 1)
+    .filter(
+      (cluster) =>
+        cluster.dimension === 'product' || cluster.productIds.length > 1,
+    )
     .sort(
       (a, b) => a.level - b.level || b.productIds.length - a.productIds.length,
     );
@@ -285,11 +334,23 @@ export function generateResearchQueries(cluster: DiscoveredCluster) {
   const terms = cluster.terms.filter(
     (term) => !normalizeMarketText(label).includes(term),
   );
+  const productSpecific = cluster.dimension === 'product';
   const base = [
+    ...(productSpecific
+      ? [
+          { query: `${germanResearchLabel(label)} Halloween 3D Druck kaufen`, language: 'de', intent: 'comparison' },
+          { query: `${englishResearchLabel(label)} Halloween 3D printed buy`, language: 'en', intent: 'comparison' },
+          { query: `${germanResearchLabel(label)} physisch PLA FDM Etsy`, language: 'de', intent: 'comparison' },
+          { query: `${englishResearchLabel(label)} physical PLA FDM Etsy`, language: 'en', intent: 'comparison' },
+        ]
+      : []),
+    { query: `${label} Preis Etsy eBay kaufen`, language: 'de', intent: 'buy' },
     { query: `${label} kaufen`, language: 'de', intent: 'buy' },
     { query: `${label} handgemacht`, language: 'de', intent: 'comparison' },
-    { query: `${label} 3D Druck`, language: 'de', intent: 'comparison' },
-    { query: `${label} buy`, language: 'en', intent: 'buy' },
+    ...(!productSpecific
+      ? [{ query: `${label} 3D Druck`, language: 'de', intent: 'comparison' }]
+      : []),
+    { query: `${label} price Etsy eBay`, language: 'en', intent: 'buy' },
     { query: `${label} handmade`, language: 'en', intent: 'comparison' },
     ...terms.slice(0, 3).map((term) => ({
       query: `${label} ${term}`,
@@ -367,11 +428,16 @@ export function scoreComparability(
   const nameTerms = marketTokens(product.name, product.motif, product.person);
   const typeOverlap = jaccard(typeTerms, listingTerms);
   const nameOverlap = jaccard(nameTerms, listingTerms);
+  const coreNameMatches = new Set(nameTerms.filter((term) => listingTerms.includes(term))).size;
   let score =
     0.12 +
     jaccard(productTerms, listingTerms) * 0.28 +
     (typeOverlap > 0 ? 0.24 + typeOverlap * 0.08 : 0) +
     (nameOverlap > 0 ? 0.16 + nameOverlap * 0.08 : 0);
+  // Two matching semantic core terms (for example Geist +
+  // Teelichthalter) are stronger evidence than a diluted Jaccard score for a
+  // long product name. Manufacturing kind is validated separately.
+  if (coreNameMatches >= 2) score += 0.18;
   const material = jaccard(
     marketTokens(product.material),
     marketTokens(listing.material),
@@ -467,14 +533,35 @@ export function calculateMarketSnapshot(
   observations: ScoredObservation[],
   internal?: { salesScore?: number | null; salesTrend?: number | null },
   config = MARKET_INTELLIGENCE_CONFIG,
+  expectedKind: 'physical' | 'digital' = 'physical',
 ): MarketSnapshotValue {
-  const usable = observations.filter(
+  const candidates = observations.filter(
     (row) =>
       row.comparabilityScore >= config.minComparability &&
-      row.physicalOrDigital === 'physical' &&
+      row.physicalOrDigital === expectedKind &&
       (!row.currency || row.currency === 'EUR') &&
+      row.rawMetadata?.bundleAmbiguous !== true &&
       (visiblePrice(row) || 0) > 0,
   );
+  const sortedPrices = candidates
+    .map((row) => visiblePrice(row) as number)
+    .sort((left, right) => left - right);
+  const quantile = (position: number) => {
+    if (!sortedPrices.length) return null;
+    const index = (sortedPrices.length - 1) * position;
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    return sortedPrices[lower] + (sortedPrices[upper] - sortedPrices[lower]) * (index - lower);
+  };
+  const q25 = quantile(0.25);
+  const q75 = quantile(0.75);
+  const iqr = q25 != null && q75 != null ? q75 - q25 : null;
+  const usable = candidates.length >= 5 && iqr != null && iqr > 0
+    ? candidates.filter((row) => {
+        const price = visiblePrice(row) as number;
+        return price >= (q25 as number) - 1.5 * iqr && price <= (q75 as number) + 1.5 * iqr;
+      })
+    : candidates;
   const sellers = new Map<string, number>();
   const weighted = usable.map((row) => {
     const seller = normalizeMarketText(
@@ -533,10 +620,12 @@ export function calculateMarketSnapshot(
         ? 'MEDIUM'
         : 'LOW';
   return {
+    minCents: usable.length ? Math.min(...usable.map((row) => visiblePrice(row) as number)) : null,
     p25Cents: weightedQuantile(weighted, 0.25),
     medianCents: weightedQuantile(weighted, 0.5),
     p75Cents: weightedQuantile(weighted, 0.75),
     p90Cents: weightedQuantile(weighted, 0.9),
+    maxCents: usable.length ? Math.max(...usable.map((row) => visiblePrice(row) as number)) : null,
     sampleSize: usable.length,
     effectiveSampleSize,
     averageComparability,
@@ -551,7 +640,28 @@ export function calculateMarketSnapshot(
     adjustedTrend: null,
     trendState: 'BASELINE',
     confidence,
+    confidenceScore: confidencePoints,
+    oldestObservation: usable.length
+      ? usable.map((row) => typeof row.rawMetadata?.observedAt === 'string' ? row.rawMetadata.observedAt : '').filter(Boolean).sort()[0] || null
+      : null,
+    newestObservation: usable.length
+      ? usable.map((row) => typeof row.rawMetadata?.observedAt === 'string' ? row.rawMetadata.observedAt : '').filter(Boolean).sort().at(-1) || null
+      : null,
   };
+}
+
+/**
+ * Keeps only directly comparable bundle sizes. Ambiguous sets are excluded;
+ * no synthetic per-piece or cross-size price is created.
+ * the explicitly named 3er variant. Unknown bundle sizes conservatively
+ * count as one item.
+ */
+export function observationsForVariant(
+  observations: ScoredObservation[],
+  variant: PortfolioVariant,
+) {
+  const targetBundle = Math.max(1, Math.round(variant.setSize || 1));
+  return observations.filter((row) => row.bundleSize === targetBundle);
 }
 
 function relativeChange(before: number | null, after: number | null) {

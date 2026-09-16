@@ -120,12 +120,10 @@ void test('weekly change stores snapshots and recalculates every variant for all
     if (url.hostname.endsWith('supabase.co')) return Response.json([]);
     if (url.hostname === 'search.test')
       return Response.json({
-        results: [
-          {
-            title: 'Nachtwächter Kunstbüste aus PLA',
-            url: 'https://shop.test/listing/1',
-          },
-        ],
+        results: Array.from({ length: 3 }, (_, index) => ({
+          title: 'Nachtwächter Kunstbüste aus PLA',
+          url: `https://shop.test/listing/${index + 1}`,
+        })),
       });
     if (url.hostname === 'shop.test' && url.pathname === '/robots.txt')
       return new Response('User-agent: *\nAllow: /');
@@ -152,10 +150,60 @@ void test('weekly change stores snapshots and recalculates every variant for all
     sqlite.close();
   });
 
+  sqlite.exec(`
+    INSERT INTO inventory_product_metadata
+      (product_id,review_status,research_version,etsy_listed,created_at,updated_at)
+    VALUES ('product-1','final',0,0,'2026-09-01','2026-09-01');
+  `);
+  const catalogProduct = {
+    id: 'product-1',
+    name: 'Nachtwächter Büste',
+    category: 'Kunstbüste',
+    updated_at: '2026-09-01T00:00:00.000Z',
+    default_price_cents: 5900,
+  };
+  const catalogVariants = [
+    {
+      id: 'variant-small',
+      product_id: 'product-1',
+      name: 'Klein',
+      height_mm: 180,
+      price_cents: 5900,
+      production_cost_cents: 1400,
+    },
+    {
+      id: 'variant-large',
+      product_id: 'product-1',
+      name: 'Groß',
+      height_mm: 260,
+      price_cents: 7900,
+      production_cost_cents: 2200,
+    },
+  ];
+  const saveInventorySnapshot = (table: string, value: unknown[]) =>
+    sqlite
+      .prepare(
+        'INSERT OR REPLACE INTO inventory_snapshots (table_name,rows_json,updated_at) VALUES (?,?,?)',
+      )
+      .run(table, JSON.stringify(value), '2026-09-01');
+  saveInventorySnapshot('products', [catalogProduct]);
+  saveInventorySnapshot('product_variants', catalogVariants);
+  for (const table of [
+    'product_families',
+    'designers',
+    'materials',
+    'sales',
+    'sale_items',
+    'online_sales',
+  ])
+    saveInventorySnapshot(table, []);
+
   const baseline = await runMarketIntelligence(env, {
     now: new Date('2026-09-07T04:05:00.000Z'),
+    productId: 'product-1',
   });
   assert.equal(baseline.status, 'SUCCESS');
+  assert.equal(baseline.pricingImpacts, 10);
   assert.equal(
     sqlite
       .prepare(
@@ -181,7 +229,7 @@ void test('weekly change stores snapshots and recalculates every variant for all
 
   marketPrice = 70;
   const update = await runMarketIntelligence(env, {
-    now: new Date('2026-09-14T04:05:00.000Z'),
+    now: new Date('2026-10-12T04:05:00.000Z'),
   });
   assert.equal(update.changes, 1);
   assert.equal(update.pricingImpacts, 10);
@@ -191,7 +239,7 @@ void test('weekly change stores snapshots and recalculates every variant for all
         "SELECT COUNT(*) AS count FROM pricing_impacts WHERE status='REVIEW_REQUIRED'",
       )
       .get()?.count,
-    10,
+    20,
   );
   assert.deepEqual(
     sqlite
@@ -231,6 +279,7 @@ void test('weekly change stores snapshots and recalculates every variant for all
     .prepare('SELECT COUNT(*) AS count FROM market_snapshots')
     .get()?.count;
   catalogAvailable = false;
+  saveInventorySnapshot('products', []);
   await assert.rejects(() => runMarketIntelligence(env), /keine Produkte/);
   assert.equal(
     sqlite.prepare('SELECT COUNT(*) AS count FROM market_snapshots').get()

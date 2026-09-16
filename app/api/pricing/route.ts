@@ -48,7 +48,7 @@ async function loadPricingData(productId?: string) {
   const filter = productId ? ' WHERE inventory_product_id = ?' : '';
   const bind = <T extends { bind: (...values: unknown[]) => T }>(statement: T) =>
     productId ? statement.bind(productId) : statement;
-  const [profiles, assets, recommendations, bWare, outcomes] = await Promise.all([
+  const [profiles, assets, recommendations, bWare, outcomes, analysisJobs] = await Promise.all([
     bind(
       env.DB.prepare(
         `SELECT inventory_product_id AS inventoryProductId, asset_id AS assetId,
@@ -75,7 +75,7 @@ async function loadPricingData(productId?: string) {
                 active_price_snapshot_cents AS activePriceSnapshotCents,
                 recommended_price_cents AS recommendedPriceCents,
                 input_json AS inputJson, result_json AS resultJson,
-                created_at AS createdAt
+                status, market_change_id AS marketChangeId, created_at AS createdAt
          FROM pricing_recommendations${filter}
          ORDER BY created_at DESC LIMIT 100`,
       ),
@@ -98,6 +98,20 @@ async function loadPricingData(productId?: string) {
               updated_at AS updatedAt
        FROM market_pricing_outcomes ORDER BY updated_at DESC`,
     ).all(),
+    productId
+      ? env.DB.prepare(
+        `SELECT id,product_id AS productId,status,trigger_reason AS triggerReason,
+                run_id AS runId,result_json AS resultJson,error_json AS errorJson,
+                created_at AS createdAt,finished_at AS finishedAt
+         FROM market_analysis_jobs WHERE product_id=?
+         ORDER BY created_at DESC LIMIT 20`,
+      ).bind(productId).all()
+      : env.DB.prepare(
+        `SELECT id,product_id AS productId,status,trigger_reason AS triggerReason,
+                run_id AS runId,result_json AS resultJson,error_json AS errorJson,
+                created_at AS createdAt,finished_at AS finishedAt
+         FROM market_analysis_jobs ORDER BY created_at DESC LIMIT 20`,
+      ).all(),
   ]);
   return {
     config: DEFAULT_PRICING_CONFIG,
@@ -106,6 +120,7 @@ async function loadPricingData(productId?: string) {
     recommendations: hydrateRows(recommendations.results || []),
     bWareEvaluations: hydrateRows(bWare.results || []),
     marketOutcomes: hydrateRows(outcomes.results || []),
+    marketAnalysisJobs: hydrateRows(analysisJobs.results || []),
   };
 }
 
