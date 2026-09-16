@@ -1,7 +1,6 @@
 import vinext from 'vinext/server/fetch-handler';
 import { runMarketIntelligence } from '../lib/market-intelligence-runner';
 import { processMarketAnalysisJob } from '../lib/market-analysis-jobs';
-import { migrateLegacyInventoryImages } from '../lib/inventory-image-migration';
 
 type Bindings = {
   DB: D1Database;
@@ -35,7 +34,6 @@ export default {
     // The trigger runs hourly so daylight-saving time is handled in Berlin time.
     const parts = berlinParts(new Date(controller.scheduledTime));
     const jobs: Promise<unknown>[] = [];
-    jobs.push(migrateLegacyInventoryImages(env, 50));
     const queued = await env.DB.prepare(
       "SELECT id,product_id AS productId,product_version AS productVersion FROM market_analysis_jobs WHERE status='QUEUED' ORDER BY created_at LIMIT 3",
     ).all<{ id: string; productId: string; productVersion: number }>();

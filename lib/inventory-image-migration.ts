@@ -106,7 +106,14 @@ export async function migrateLegacyInventoryImages(
           headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
         },
       );
-      if (!response.ok || !response.body) continue;
+      if (!response.ok || !response.body) {
+        console.warn(
+          'legacy image migration download failed',
+          response.status,
+          path,
+        );
+        continue;
+      }
       const contentType = response.headers.get('content-type') || 'image/jpeg';
       const filename = `${id}.${extension(path, contentType)}`;
       const objectKey = `inventory-products/${candidate.productId}/image/${id}/${filename}`;
