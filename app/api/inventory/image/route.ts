@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   const accessToken = readCookie(request, 'fp_inventory_access');
   if (!accessToken)
     return Response.json({ error: 'Anmeldung erforderlich.' }, { status: 401 });
-  const rawPath = new URL(request.url).searchParams.get('path') || '';
+  let rawPath = new URL(request.url).searchParams.get('path') || '';
   if (/^https:\/\//i.test(rawPath)) {
     const url = new URL(rawPath);
     if (url.hostname !== new URL(INVENTORY_SUPABASE_URL).hostname)
@@ -28,7 +28,12 @@ export async function GET(request: Request) {
         { error: 'Bildquelle ist nicht erlaubt.' },
         { status: 400 },
       );
-    return Response.redirect(url.href, 302);
+    const marker = `/${bucket}/`;
+    const markerIndex = url.pathname.indexOf(marker);
+    if (markerIndex < 0) return Response.redirect(url.href, 302);
+    // Alte signierte Supabase-Adressen laufen ab. Aus dem gespeicherten URL
+    // wird deshalb immer der stabile Objektpfad extrahiert und neu signiert.
+    rawPath = decodeURIComponent(url.pathname.slice(markerIndex + marker.length));
   }
   const path = cleanObjectPath(rawPath);
   if (!path || path.includes('..'))
